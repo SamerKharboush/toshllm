@@ -288,10 +288,25 @@ struct MenuServerRow: View {
                 if running { c.restart(.fromDefaults()) }
             })
         }
-        return Binding(get: { c.profile?.localNetworkDiscovery ?? false }, set: { v in
+        // An added server always has a pinned list, and effectiveSettings() only applies a
+        // pinned field. Writing the profile value without pinning it left the toggle reading
+        // on while the engine was launched with --host 127.0.0.1.
+        return Binding(get: { isPinnedDiscovery ? (c.profile?.localNetworkDiscovery ?? false) : globalDiscover }, set: { v in
             c.profile?.localNetworkDiscovery = v
+            pinDiscovery()
             manager.persist()
             if running { c.restart(c.effectiveSettings()) }
         })
+    }
+
+    private var isPinnedDiscovery: Bool {
+        guard let pinned = c.profile?.pinned else { return true }
+        return pinned.contains(Profile.Pin.discovery)
+    }
+
+    private func pinDiscovery() {
+        guard var pinned = c.profile?.pinned, !pinned.contains(Profile.Pin.discovery) else { return }
+        pinned.append(Profile.Pin.discovery)
+        c.profile?.pinned = pinned
     }
 }

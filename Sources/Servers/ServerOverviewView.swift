@@ -51,6 +51,12 @@ struct ServerOverviewView: View {
                 Spacer(minLength: 0)
                 metric("cpu", value: ServerSettings.engineKind == "bundled" ? "llama.cpp" : loc.t("Personalizado", "Custom"), label: loc.t("Motor configurado", "Configured engine"))
             }
+            if let fit = server.fitNote {
+                Label(fit, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption).foregroundStyle(.orange)
+                    .help(loc.t("El motor no pudo ajustar la memoria y siguió con los parámetros dados.",
+                                "The engine could not fit memory and continued with the parameters as given."))
+            }
             if let plan = server.autoPlan {
                 VStack(alignment: .leading, spacing: 4) {
                     Label(AutoMemoryText.summary(plan, runtime: server.autoRuntime), systemImage: "memorychip")

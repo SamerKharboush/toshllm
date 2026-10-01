@@ -1,0 +1,27 @@
+diff --git a/ggml/src/ggml-metal/kernels/misc.metal b/ggml/src/ggml-metal/kernels/misc.metal
+--- a/ggml/src/ggml-metal/kernels/misc.metal
++++ b/ggml/src/ggml-metal/kernels/misc.metal
+@@ -218,17 +218,22 @@ kernel void kernel_timestep_embedding_f32(
+         float timestep = ((device float *)src0)[i];
+         // precise:: avoids the fast-math intrinsics, which lose precision on GCN
+         float freq = (float)precise::exp(-precise::log((float)args.max_period) * j / half_);
+         float arg = timestep * freq;
+         embed_data[j        ] = precise::cos(arg);
+         embed_data[j + half_] = precise::sin(arg);
+     }
+ 
+-    if (args.dim % 2 != 0 && tpitg.x == 0) {
++    // GCN/Tahiti miscompiles the `% 2` parity test below and takes this branch for an
++    // even dim. embed_data[2*half_] then lands one whole row past the row this
++    // threadgroup owns: it zeroes the next row's first element, and on the last row
++    // it writes past the end of dst into whatever tensor the allocator put next.
++    // Testing the row length is the same predicate in a form GCN compiles correctly.
++    if (half_ * 2 < args.dim && tpitg.x == 0) {
+         embed_data[2 * half_] = 0.f;
+     }
+ }
+ 
+ kernel void kernel_opt_step_adamw_f32(
+         constant    ggml_metal_kargs_opt_step_adamw & args,
+         device       float * x,
+         device const float * g,

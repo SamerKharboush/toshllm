@@ -1562,6 +1562,13 @@ final class ServerController: ObservableObject {
     @Published var autoRuntime: AutoMemoryRuntime?
     @Published var autoActual: AutoMemoryActual?
     @Published var autoPlanNote: String?
+    /// Set when the engine's --fit gave up and continued with the parameters as given.
+    @Published var fitNote: String?
+    private var fitNoteText: String {
+        (UserDefaults.standard.string(forKey: SettingsKeys.language) ?? "en") == "es"
+            ? "El ajuste de memoria no se aplicó"
+            : "Memory fitting did not apply"
+    }
     /// A starved host executor leaves the backend unusable; one restart per launch recovers it.
     private var recoveredFromExecutorFailure = false
 
@@ -1715,6 +1722,7 @@ final class ServerController: ObservableObject {
         autoPlan = nil
         autoRuntime = nil
         autoPlanNote = nil
+        fitNote = nil
         Task { [weak self] in
             if let pid = previousPID {
                 for _ in 0..<24 where kill(pid, 0) == 0 {
@@ -2303,6 +2311,19 @@ final class ServerController: ObservableObject {
         fileLog.append(text)
 
         for line in text.split(separator: "\n") {
+            // --fit can abort and the engine keeps going with the params as given, so the run
+            // looks fine and the lost fitting is only in the log. Surfaced next to the plan note.
+            if line.contains("not fitting params to free device memory"), fitNote == nil {
+                let reason = line
+                    .components(separatedBy: "not fitting params to free device memory: ")
+                    .last?
+                    .components(separatedBy: ";")
+                    .first?
+                    .trimmingCharacters(in: .whitespaces) ?? ""
+                fitNote = reason.isEmpty
+                    ? fitNoteText
+                    : "\(fitNoteText): \(reason)"
+            }
             if line.contains("mixed expert execution failed"), !recoveredFromExecutorFailure,
                state == .running, let settings = launchedSettings {
                 recoveredFromExecutorFailure = true
