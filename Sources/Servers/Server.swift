@@ -50,6 +50,7 @@ struct ServerSettings {
     /// to embedding use, so it's meant for a dedicated embedding-model server.
     var embeddings: Bool = false
     var agentToolsEnabled: Bool = false
+    var sympyEnabled: Bool = false
     var uiMcpProxy: Bool = false
     /// `--tools-runtime` target (`docker:image`, `podman:image`, `ssh:host`...). Empty
     /// runs the tools in the app's own environment, which is the engine default.
@@ -338,6 +339,11 @@ struct ServerSettings {
             args += ["--tools", "all"]
             if !toolsRuntime.isEmpty { args += ["--tools-runtime", toolsRuntime] }
         }
+        let sympyArguments = SymPyToolsService.serverArguments(enabled: sympyEnabled)
+        if !sympyArguments.isEmpty {
+            if !args.contains("--jinja") { args.append("--jinja") }
+            args += sympyArguments
+        }
         if uiMcpProxy { args.append("--ui-mcp-proxy") }
         if persistCache && effectiveFaAmd {
             args += ["--slot-save-path", Self.slotCacheDir(port: port).path]
@@ -403,6 +409,11 @@ struct ServerSettings {
         if agentToolsEnabled {
             args += ["--jinja", "--tools", "all"]
             if !toolsRuntime.isEmpty { args += ["--tools-runtime", toolsRuntime] }
+        }
+        let sympyArguments = SymPyToolsService.serverArguments(enabled: sympyEnabled)
+        if !sympyArguments.isEmpty {
+            if !args.contains("--jinja") { args.append("--jinja") }
+            args += sympyArguments
         }
         if uiMcpProxy { args.append("--ui-mcp-proxy") }
         if apiKeyEnabled { args += ["--api-key", Keychain.apiKey()] }
@@ -818,6 +829,7 @@ struct ServerSettings {
             extraArgs: d.string(forKey: SettingsKeys.extraArgs) ?? "",
             embeddings: bool(SettingsKeys.embeddings, false),
             agentToolsEnabled: bool(SettingsKeys.agentToolsEnabled, false),
+            sympyEnabled: bool(SettingsKeys.sympyEnabled, false),
             uiMcpProxy: bool(SettingsKeys.uiMcpProxy, false),
             toolsRuntime: (d.string(forKey: SettingsKeys.toolsRuntime) ?? "")
                 .trimmingCharacters(in: .whitespaces),

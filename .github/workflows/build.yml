@@ -8,6 +8,7 @@ on:
       - "Tests/**"
       - "Package.swift"
       - "Package.resolved"
+      - "helpers/**"
       - ".github/workflows/build.yml"
     tags: ["v*"]
   pull_request:
@@ -38,6 +39,10 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - run: swift test
+      - name: Symbolic math helper tests
+        run: |
+          ./scripts/build-sympy.sh
+          vendor/tosh-sympy/python/bin/python3 -I helpers/tosh-sympy/tests/test_helper.py
 
   build:
     # PRs validate a single variant; tags and manual runs build BOTH CPU variants
@@ -81,6 +86,19 @@ jobs:
           path: vendor
           # Per variant: the two ISA baselines produce different engine binaries.
           key: engines-${{ matrix.variant }}-${{ hashFiles('patches/**/*.patch', 'scripts/build-engines.sh') }}
+
+      # Pinned CPython and SymPy, checked against their SHA-256. Rebuilt every time: it is
+      # a download and an unpack, and the helper sources live outside the engine cache key.
+      - name: Build symbolic math runtime (x86_64)
+        if: github.event_name != 'pull_request' || steps.scope.outputs.build == 'true'
+        run: |
+          ARCH=x86_64 ./scripts/build-sympy.sh
+          PY=vendor/tosh-sympy/python/bin/python3
+          if "$PY" -I -c pass 2>/dev/null; then
+            "$PY" -I helpers/tosh-sympy/tests/test_helper.py
+          else
+            echo "x86_64 runtime cannot run on this runner; its tests ran in the unit test job"
+          fi
 
       - name: Run unit tests
         if: github.event_name == 'pull_request' && steps.scope.outputs.build == 'true'
@@ -135,7 +153,8 @@ jobs:
           # Sign inside out: --deep is deprecated and does not apply the hardened
           # runtime to the engine binaries, which notarization rejects.
           APP=dist/ToshLLM.app
-          for exe in "$APP/Contents/Resources/bin/"* "$APP/Contents/Resources/bin-image/"* "$APP/Contents/Resources/bin-audio/"*; do
+          for exe in "$APP/Contents/Resources/bin/"* "$APP/Contents/Resources/bin-image/"* "$APP/Contents/Resources/bin-audio/"* \
+                     "$APP/Contents/Resources/tosh-sympy/python/bin/python3"; do
             [ -f "$exe" ] || continue
             case "$exe" in *.metallib) continue;; esac
             codesign --force --timestamp --options runtime -s "$IDENTITY" "$exe"

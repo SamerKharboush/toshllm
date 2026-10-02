@@ -13,6 +13,7 @@ struct ChatAdvancedSettingsSection: View {
     @AppStorage(SettingsKeys.agentToolsEnabled) private var agentToolsEnabled = false
     @AppStorage(SettingsKeys.toolsRuntime) private var toolsRuntime = ""
     @AppStorage(SettingsKeys.jsSandboxEnabled) private var jsSandboxEnabled = false
+    @AppStorage(SettingsKeys.sympyEnabled) private var sympyEnabled = false
     @AppStorage(SettingsKeys.memoryToolsEnabled) private var memoryToolsEnabled = true
     @AppStorage(SettingsKeys.toolResultLimit) private var toolResultLimit = ToolResultLimit.defaultCharacters
     @State private var blockedToolModels: [String] = ToolSupport.blockedModels
@@ -250,6 +251,14 @@ struct ChatAdvancedSettingsSection: View {
                                        "Adds a tool that runs JavaScript in a sandbox for calculations or data transforms.")) {
                         SettingsToggle(isOn: $jsSandboxEnabled)
                     }
+                    if SymPyToolsService.runtimeDirectory() != nil {
+                        SettingsRow(icon: "function",
+                                    title: loc.t("Matemática simbólica (SymPy)", "Symbolic math (SymPy)"),
+                                    help: loc.t("Añade herramientas de matemática exacta: simplificar, resolver ecuaciones, derivar, integrar, matrices y verificar resultados. Va incluido en la app, no ejecuta código del modelo y no escribe archivos. Apagado no consume nada; encendido, el motor mantiene un proceso auxiliar pequeño y SymPy solo se carga al usarlo. Se aplica al reiniciar el servidor.",
+                                                "Adds exact math tools: simplify, solve equations, differentiate, integrate, matrices and checking results. It ships inside the app, runs no code from the model and writes no files. Off, it uses nothing; on, the engine keeps a small helper process and SymPy loads only when used. Applies when the server restarts.")) {
+                            SettingsToggle(isOn: $sympyEnabled)
+                        }
+                    }
                     integerStepper(loc.t("Turnos máximos del agente", "Maximum agent turns"),
                                    value: $agenticMaxTurns, range: 1...100,
                                    help: loc.t("Máximo de rondas herramienta→respuesta que el agente encadena en un turno antes de detenerse.",
@@ -461,6 +470,7 @@ struct ChatAdvancedSettingsSection: View {
         backendSampling = false; customJSON = ""; agenticMaxTurns = 10; pasteLongTextLength = 2500
         maxImageMegapixels = 1; pdfAsImages = false
         autoCompact = true; smoothTyping = true; agentToolsEnabled = false; jsSandboxEnabled = false
+        sympyEnabled = false
         memoryToolsEnabled = true; toolsRuntime = ""; toolResultLimit = ToolResultLimit.defaultCharacters
         archiveHookURL = ""; archiveHookSecret = ""
     }

@@ -91,6 +91,9 @@ enum SettingsKeys {
     static let agentToolsEnabled = "agentToolsEnabled"
     static let toolsRuntime = "toolsRuntime"
     static let jsSandboxEnabled = "jsSandboxEnabled"
+    /// Symbolic math tools from the bundled SymPy runtime. Off by default: on, the engine
+    /// keeps a small helper process beside each server.
+    static let sympyEnabled = "sympyEnabled"
     /// Characters of a tool result that reach the model; 0 sends it whole.
     static let toolResultLimit = "toolResultLimit"
     /// memory_list / memory_archive / memory_recall. Off for setups where an
@@ -256,7 +259,7 @@ enum SettingsKeys {
         audioGlossary, audioTranslationModel, audioVADMode,
         audioVADProfile, audioVADThreshold, audioVADMinSpeechMS,
         audioVADMinSilenceMS, audioVADMaxSpeechSeconds, audioVADSpeechPadMS,
-        extraArgs, embeddings, agentToolsEnabled, toolsRuntime, jsSandboxEnabled, toolResultLimit,
+        extraArgs, embeddings, agentToolsEnabled, toolsRuntime, jsSandboxEnabled, sympyEnabled, toolResultLimit,
         memoryToolsEnabled, toolsUnsupportedModels, mcpServers, uiMcpProxy,
         cacheTypeK, cacheTypeV, mlock, cacheRAM,
         parallelSlots, reasoningInline, serverDefaultReasoning, serverDefaultMaxTokens, specMTP, mtpDisabledModels, faAmd, prefetchExperts, ubatch,

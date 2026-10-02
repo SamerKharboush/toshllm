@@ -3,6 +3,12 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Added
+
+- **LLMs: symbolic math tools with SymPy.** The model can simplify and factor, solve equations, systems and differential equations, differentiate, integrate, take limits and series, work with matrices and Laplace and Fourier transforms, and check that two expressions are equivalent or that a solution holds, all exactly. Off by default, in chat settings under Agents; the runtime ships inside the app and adds 28 MB to the download. Details in [tosh-sympy](helpers/tosh-sympy/README.md).
+
 ## [0.87.13] - 2026-10-01
 
 ### Added

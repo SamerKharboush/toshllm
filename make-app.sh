@@ -73,6 +73,21 @@ else
     echo "WARNING: engines not built; run ./scripts/build-engines.sh first"
 fi
 
+# Symbolic math runtime (scripts/build-sympy.sh; optional). The app only offers the
+# setting when it is here.
+SYMPY_RUNTIME="vendor/tosh-sympy"
+if [ -x "$SYMPY_RUNTIME/python/bin/python3" ]; then
+    SYMPY_ARCH="${TOSH_ARCH:-$(uname -m)}"
+    if [ "$(awk '{print $NF}' "$SYMPY_RUNTIME/VERSION")" != "$SYMPY_ARCH" ]; then
+        echo "ERROR: vendor/tosh-sympy is not built for $SYMPY_ARCH; run ARCH=$SYMPY_ARCH ./scripts/build-sympy.sh" >&2
+        exit 1
+    fi
+    cp -R "$SYMPY_RUNTIME" "$APP/Contents/Resources/tosh-sympy"
+    echo "bundled symbolic math runtime ($(<"$SYMPY_RUNTIME/VERSION"))"
+else
+    echo "WARNING: symbolic math runtime not built; run ./scripts/build-sympy.sh to include it"
+fi
+
 # Web chat UI (served via llama-server --path). web-ui is the rebranded llama.cpp UI
 # built by scripts/rebrand-webui.sh; test-ui is the fallback console.
 mkdir -p "$APP/Contents/Resources/test-ui"
@@ -210,7 +225,8 @@ fi
 
 # a binary built for a newer macOS than the app's floor fails to launch on the testers'
 # systems with a dyld symbol error, and only there, so refuse to package it
-for exe in "$APP/Contents/Resources/bin/"* "$APP/Contents/Resources/bin-image/"* "$APP/Contents/Resources/bin-audio/"*; do
+for exe in "$APP/Contents/Resources/bin/"* "$APP/Contents/Resources/bin-image/"* "$APP/Contents/Resources/bin-audio/"* \
+           "$APP/Contents/Resources/tosh-sympy/python/bin/python3"; do
     [ -f "$exe" ] || continue
     case "$exe" in *.metallib) continue;; esac
     minos=$(otool -l "$exe" 2>/dev/null | awk '/LC_BUILD_VERSION/{f=1} f&&/^ *minos/{print $2; exit}')
@@ -224,5 +240,6 @@ done
 [ -x "$APP/Contents/Resources/bin/llama-server" ] && codesign --force -s - "$APP/Contents/Resources/bin/"*(.)
 [ -x "$APP/Contents/Resources/bin-image/sd-cli" ] && codesign --force -s - "$APP/Contents/Resources/bin-image/"*
 [ -x "$APP/Contents/Resources/bin-audio/whisper-cli" ] && codesign --force -s - "$APP/Contents/Resources/bin-audio/"*
+[ -x "$APP/Contents/Resources/tosh-sympy/python/bin/python3" ] && codesign --force -s - "$APP/Contents/Resources/tosh-sympy/python/bin/python3"
 codesign --force -s - "$APP"
 echo "Done: $APP"

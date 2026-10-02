@@ -719,6 +719,7 @@ final class ChatStore: ObservableObject {
             + "File tools work inside \($0). Use paths relative to it, and never call them for text that only exists in this conversation."
         } ?? system
         let toolsEnabled = UserDefaults.standard.bool(forKey: SettingsKeys.agentToolsEnabled)
+            || SymPyToolsService.isEnabled
         let javaScriptEnabled = UserDefaults.standard.bool(forKey: SettingsKeys.jsSandboxEnabled)
         let memoryToolsEnabled = ChatMemoryService.isEnabled
         let agentTurnLimit = Self.configuredAgentTurnLimit
@@ -843,7 +844,7 @@ final class ChatStore: ObservableObject {
 
                 if availableTools.isEmpty {
                     if toolsEnabled {
-                        availableTools = try await ChatToolsService.list(port: port)
+                        availableTools = try await ChatToolsService.listEnabled(port: port)
                         // without a folder these write wherever the engine happens to run,
                         // and the model invents paths for text that is not a file at all
                         if toolCwd == nil {
@@ -3694,8 +3695,7 @@ struct NativeChatView: View {
     private func refreshAvailableTools() async {
         loadingTools = true
         var tools: [BuiltinToolInfo] = []
-        if UserDefaults.standard.bool(forKey: SettingsKeys.agentToolsEnabled),
-           let builtins = try? await ChatToolsService.list(port: port) {
+        if let builtins = try? await ChatToolsService.listEnabled(port: port) {
             tools += builtins
         }
         if UserDefaults.standard.bool(forKey: SettingsKeys.jsSandboxEnabled) {

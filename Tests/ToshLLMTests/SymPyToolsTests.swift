@@ -1,0 +1,89 @@
+// ToshLLM - run LLMs locally on Intel Macs with AMD GPUs
+// Copyright (C) 2026 Engelbert Delgado <engeldlgado@gmail.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+import XCTest
+@testable import ToshLLM
+
+final class SymPyToolsTests: XCTestCase {
+    private func makeSettings() -> ServerSettings {
+        ServerSettings(serverBinary: "/usr/bin/true", modelPath: "/tmp/m.gguf", port: 8080,
+                       ngl: 99, ncmoe: 0, ctx: 8192, threads: 6, flashAttn: "auto",
+                       noMmap: true, jinja: true,
+                       vramReserveMB: 1024, gpuIndex: -1, extraArgs: "",
+                       cacheTypeK: "f16", cacheTypeV: "f16", mlock: false)
+    }
+
+    private func makeRuntime() throws -> URL {
+        let resources = FileManager.default.temporaryDirectory
+            .appendingPathComponent("tosh-sympy-test-\(UUID().uuidString)")
+        let bin = resources.appendingPathComponent("tosh-sympy/python/bin")
+        try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+        try FileManager.default.copyItem(atPath: "/usr/bin/true",
+                                         toPath: bin.appendingPathComponent("python3").path)
+        addTeardownBlock { try? FileManager.default.removeItem(at: resources) }
+        return resources
+    }
+
+    func testOffByDefault() {
+        XCTAssertFalse(makeSettings().sympyEnabled)
+        XCTAssertFalse(makeSettings().arguments.contains("--mcp-servers-json"))
+        XCTAssertTrue(SettingsKeys.resettableOptionKeys.contains(SettingsKeys.sympyEnabled))
+    }
+
+    func testDisabledAddsNothingEvenWithTheRuntimePresent() throws {
+        XCTAssertEqual(SymPyToolsService.serverArguments(enabled: false, resources: try makeRuntime()), [])
+    }
+
+    func testEnabledWithoutTheRuntimeAddsNothing() {
+        let empty = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        XCTAssertEqual(SymPyToolsService.serverArguments(enabled: true, resources: empty), [])
+        XCTAssertEqual(SymPyToolsService.serverArguments(enabled: true, resources: nil), [])
+    }
+
+    func testEnabledStartsTheHelperAsAnMCPServer() throws {
+        let resources = try makeRuntime()
+        let arguments = SymPyToolsService.serverArguments(enabled: true, resources: resources)
+        XCTAssertEqual(arguments.first, "--mcp-servers-json")
+        let config = try XCTUnwrap(JSONSerialization.jsonObject(
+            with: Data(try XCTUnwrap(arguments.last).utf8)) as? [String: Any])
+        let server = try XCTUnwrap((config["mcpServers"] as? [String: Any])?["sympy"] as? [String: Any])
+        let runtime = resources.appendingPathComponent("tosh-sympy").path
+        XCTAssertEqual(server["command"] as? String, runtime + "/python/bin/python3")
+        XCTAssertEqual(server["args"] as? [String], ["-I", "-B", runtime + "/tosh_sympy/server.py"])
+    }
+
+    func testToolNames() {
+        XCTAssertTrue(SymPyToolsService.isTool("sympy_expression"))
+        XCTAssertTrue(SymPyToolsService.isTool("sympy_verify"))
+        XCTAssertFalse(SymPyToolsService.isTool("read_file"))
+        XCTAssertFalse(SymPyToolsService.isTool("sympy"))
+    }
+
+    func testCallIsPresentedAsMath() {
+        let call = ChatToolCall(
+            name: "sympy_expression",
+            arguments: #"{"operation":"laplace_transform","expression":"exp(-a*t)"}"#,
+            result: #"{"success": true, "operation": "laplace_transform", "exact": "1/(a + s)", "latex": "x", "warnings": []}"#)
+        let presentation = ToolCallPresentation.make(call)
+        XCTAssertEqual(presentation.kind, .math)
+        XCTAssertEqual(presentation.title, "Laplace transform")
+        XCTAssertEqual(presentation.code, "exp(-a*t)")
+        XCTAssertEqual(presentation.result, "1/(a + s)")
+    }
+
+    func testReadableResults() {
+        XCTAssertEqual(
+            SymPyToolsService.readable(#"{"success":true,"exact":"sqrt(pi)","numeric":"1.77","warnings":["w"]}"#),
+            "sqrt(pi)\n≈ 1.77\n⚠︎ w")
+        XCTAssertEqual(
+            SymPyToolsService.readable(#"{"success":true,"equivalent":false,"difference":"1","warnings":[]}"#),
+            "equivalent: no\ndifference: 1")
+        XCTAssertEqual(
+            SymPyToolsService.readable(#"{"success":false,"operation":"factor","error":{"code":"timeout","message":"stopped"}}"#),
+            "stopped")
+        XCTAssertEqual(SymPyToolsService.readable("not json"), "not json")
+        XCTAssertEqual(SymPyToolsService.input(["equations": ["x = 1", "y = 2"]]), "x = 1\ny = 2")
+        XCTAssertEqual(SymPyToolsService.input(["matrix": [["1", 2], [3, "4"]]]), "1  2\n3  4")
+    }
+}
