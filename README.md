@@ -15,6 +15,22 @@ Native macOS app · Metal acceleration · No cloud, no accounts, no per-token co
 
 ### [⬇️ Download the latest release](https://github.com/engeldlgado/toshllm/releases/latest) · [📝 Changelog](CHANGELOG.md)
 
+> ### Fork release: v0.87.14-beta.1
+>
+> This fork publishes its own downloadable build:
+> **[⬇️ ToshLLM-v0.87.14-beta.1.dmg](https://github.com/SamerKharboush/toshllm/releases/download/v0.87.14-beta.1/ToshLLM-v0.87.14-beta.1.dmg)**
+> ([release notes](https://github.com/SamerKharboush/toshllm/releases/tag/v0.87.14-beta.1) ·
+> [checksums](https://github.com/SamerKharboush/toshllm/releases/download/v0.87.14-beta.1/checksums.txt))
+>
+> **This particular `.dmg` is built for AVX-but-not-AVX2 Intel CPUs** (Ivy Bridge and
+> similar, e.g. a Xeon E5-2697 v2). Upstream's normal build needs AVX2 and dies with
+> "illegal hardware instruction" on those machines. macOS quarantines an unsigned build,
+> so right-click the app once and choose **Open**.
+>
+> What this fork changes is listed under [Fork changes](#fork-changes) below. Everything
+> else, including the 0.87.13 Dynamic MoE work, is upstream's and unchanged.
+
+
 *[Versión en español más abajo](#toshllm-en-español)*
 
 <img src="Assets/home.jpg" alt="ToshLLM home screen — hardware detection and model recommendations" width="760">
@@ -121,6 +137,101 @@ For scale, the same gpt-oss-20B run against the Apple Silicon numbers posted in 
 | tg128 | 95.0 | 63.3 | 64.3 | 95.9 |
 
 A 2021 card holds its own: it trails the M3 Max on short prompts, leads it from 8k tokens up, and generates at the same rate as an M4 Max. Two things to keep in mind. The M3 Max `tg128` is low because that run was heat throttled, as the maintainer notes in the linked reply, so the M4 Max figure is the one to compare generation against; both it and the run here measured generation on its own, which is what avoids the throttling. And the file is not the same: theirs is the stock MXFP4 build, ours a `Q4_K_M` repack. That matters less than the name suggests, because **87% of our file is still MXFP4** — the 72 expert tensors keep the model's native format, and only the remaining 13% (attention, embeddings, norms) is repacked to Q8_0/Q5_0/Q4_K, which is why it weighs 10.81 GiB against their 11.27.
+
+## Fork changes
+
+Everything below is this fork's own work on top of upstream 0.87.13. Measured on a dual-
+FirePro-D700 Mac Pro (Xeon E5-2697 v2, AVX1 no AVX2, 64 GB RAM).
+
+### Engine defects fixed
+
+**A model with a timestep embedding produced wrong tokens on GCN cards.** The Metal
+kernel's odd-dimension branch compiled to the wrong arm for the even dimensions these
+models use, so it wrote one row past the row the threadgroup owned: it zeroed the next
+row's first element, and on the last row it wrote past the end of the destination into
+whatever tensor the allocator put there. A 14B model read a prompt at about 21 tokens a
+second instead of 43 and generated the wrong output. The backend suite went from a failure
+of 0.0029 relative error to exact.
+
+**Forcing cross-GPU events on a layer split hung the server.** The destination's wait was
+encoded into a *new* command buffer, which queued the copy behind whatever the destination
+already had. A destination parked on a long graph could not drain the hand-off that graph
+was itself waiting on, so the pair stalled until the Metal watchdog killed the buffer —
+surfacing as an unexplained `res = -3` with no diagnostic. The wait is now bounded
+(`TOSH_MGPU_XDEV_TIMEOUT_MS`, default 2000 ms); on timeout it drains both queues, completes
+the sequence by hand so the next hand-off is not left waiting on a signal nobody sends,
+and falls back to the generic path.
+
+**A memset overran its buffer.** `NSMakeRange(bid_dst.offs, bid_dst.offs + size)` passed an
+end offset where a length belongs, so the fill ran `offs` bytes past the region the caller
+asked for.
+
+Both engine fixes are in `patches/llama/0125` and `0126`.
+
+### App behaviour fixed
+
+**The LAN host toggle did nothing.** `ToshLLMApp.swift` wrote `localNetworkDiscovery` to the
+profile but never read it back, and the server's pinned list only ever contained `model`, so
+`applyPinned` dropped it. The engine bound to localhost regardless of the setting.
+
+**A fit abort was silent.** When `--fit` gives up, the engine keeps going with the params as
+given, so the run looks fine and the lost fitting is only in the log. It now surfaces as a
+label next to the plan note.
+
+### Defaults changed
+
+**Splitting across every GPU is now the default on a machine with two or more cards.** A
+fresh install previously used a single GPU regardless of the hardware, so a model too large
+for one card failed to load and a model that fits was left on one card for no reason. The
+default applies only while the setting is unset; turning it off in Settings keeps that
+choice.
+
+Two flags are now gated on measurement rather than being offered unconditionally:
+
+- **Cross-GPU peer access** only turns on when the hardware actually reports a bridged peer
+  group. Measured on this machine: 41.40 prompt tok/s without it, 43.07 with. On hardware
+  without a bridge it changed nothing, so it now stays off.
+- **Cross-GPU events** only turn on for a tensor split. On a layer split they measured the
+  same either way (14B at 512 prompt tokens: 21.24 with, 21.29 without), so there is nothing
+  to gain by forcing them on.
+
+The VRAM fit estimator read the split setting with a default of off, so a fresh two-card
+machine was sized as if it were single-card. That is fixed too.
+
+### Build fixes
+
+- `ChatTab.swift` and `DesignSystem/Views.swift` used `sharedBackgroundVisibility` and
+  `ToolbarSpacer`, which exist only in the macOS 26 SDK. A runtime `#available` is not
+  enough — the compiler still resolves the symbol — so the app failed to build on an older
+  toolchain. Both are now behind `#if compiler(>=6.2)`, matching what the rest of the app
+  already did for `glassEffect`.
+- `VideoGenTab.swift` returned an `NSImage` across an actor boundary. The decode now returns
+  `[Data]` and the image is built on the main actor.
+- `make-app.sh` hard-exited when precompiled Metal kernels were absent. Precompiling them
+  needs Xcode's `metal` compiler, which Command Line Tools does not ship. Those three guards
+  are now warnings; the engine binaries are still bundled unconditionally.
+- `scripts/build-engines.sh` gained a `TOSH_AVX1=1` ISA variant for AVX-but-no-AVX2 chips,
+  which is what this machine is. Without it the engine is built for AVX2 and dies with SIGILL.
+
+### Measured on this hardware
+
+| | |
+|---|---|
+| 14B Q4_K_M, both D700s, layer split | prompt 21.25 tok/s, generate 5.08 tok/s |
+| 27B, both D700s, layer split | prompt 11.51 tok/s, generate 6.20 tok/s |
+| chat through the shipped binary | coherent, `finish_reason: stop`, 5.05 tok/s |
+| engine backend suite | 10701 / 10701 |
+
+### Known gaps
+
+- Cross-GPU events still only apply to a tensor split.
+- A 27B Qwen3.5 model cannot be split by tensor: an internal SSM state tensor's width does
+  not divide evenly. The engine now names the operation and the dimensions instead of failing
+  a bare assertion. Its layer split, which is what that model uses, is unaffected.
+- The `.dmg` from this release has no precompiled Metal kernels, because no Xcode `metal`
+  compiler was available on the build machine. The engine compiles its own at first launch.
+- The `NSMakeRange` fix has no numerical A/B: the overfill only manifests as a buffer overrun
+  on a path the local models do not exercise.
 
 ## Install
 
