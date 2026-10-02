@@ -77,18 +77,25 @@ Firellama runs the biggest models this Mac Pro can hold at the fastest tok/s it 
 
 ## Blocked
 
-- **The app does not compile on this machine, before any of these tickets.** Two pre-existing
-  errors, confirmed on a stashed clean tree:
-  - `Sources/Video/VideoGenTab.swift:806` — `[NSObject]` assigned to `[NSImage]`.
-  - `Sources/Chat/ChatTab.swift:64` — the type-checker times out on `body`; splitting it into
-    `sidebar` / `detail` / `windowToolbar` gets past it, but then
-    `ToolbarItem.sharedBackgroundVisibility` needs the macOS 26 SDK and this box has 15.5 with
-    no Xcode, so the symbol does not exist to compile against.
-  Both were left untouched: a build fix that cannot be tested here is not worth shipping, and
-  ChatTab needs a real 26 SDK regardless.
+- ~~The app does not compile on this machine.~~ **Cleared 2026-10-02 (beta.2).** Both errors are
+  fixed: `VideoGenTab` returns `[Data]` via `displayFrameData(_:)` and builds the image on the main
+  actor; `ChatTab` and `DesignSystem/Views.swift` put `sharedBackgroundVisibility` and
+  `ToolbarSpacer` behind `#if compiler(>=6.2)`, which resolves the symbol problem without needing a
+  real 26 SDK. `swift build` is green and the beta.2 bundle is installed and measured.
+- **`swift test` cannot run on this machine**: no XCTest module, because the box has Command Line
+  Tools and no Xcode app. `swift build` works. That is a property of the machine, not the code —
+  it runs anywhere Xcode is installed, and CI runs it on `macos-26`.
 - The 27B `qwen35` SSM state reshape cannot be tensor-split at all: `ne[0]=6144` does not
   divide `ne[0]=9216`. That limit stands and layers are the model's only option. What changed
   is how it is reported: the engine exits 86 naming the op and dimensions, and the app retries
   once with layers by itself (ticket 13). Marking the tensor unsplittable would hand the
   scheduler a split state that does not describe the data, so the failure stays loud.
-- Ticket 09's LAN curl needs a second host and a working build.
+- Ticket 09's LAN curl is done from a second IP on the same host, not a second physical machine.
+  Still owed.
+- Notarization needs an Apple Developer identity and the notary-tool credentials. The pipeline is
+  wired in `build.yml` and skips cleanly when they are absent.
+- No arm64 or universal build has been produced. The machinery exists (`build-engines.sh`
+  `ARCH=universal`, `make-app.sh` `TOSH_ARCH=universal`) but has never been run for arm64.
+
+See `docs/agents/apple-silicon-handoff.md` for the full open-work list and the gates.
+
