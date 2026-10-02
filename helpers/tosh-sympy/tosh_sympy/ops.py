@@ -3,6 +3,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """The mathematical operations behind the tools. Every input goes through mathlang."""
 
+import re
+
 import mpmath
 import sympy as sp
 from sympy.printing.str import StrPrinter
@@ -15,6 +17,11 @@ MAX_MATRIX_SIDE = 16
 MAX_EQUATIONS = 16
 MAX_PRECISION = 1000
 DEFAULT_PRECISION = 15
+MAX_QUADRATURE_DIGITS = 50
+QUADRATURE_TOLERANCE = 8
+
+# remarks gathered while a request is parsed, before its reply exists
+_notes = []
 
 
 class _Printer(StrPrinter):
@@ -49,6 +56,9 @@ class Reply:
 
     def value(self, value, precision, numeric=True):
         """The main result: exact text, LaTeX, and a decimal value when it is a number."""
+        if value is sp.nan:
+            raise MathError("no_result", "SymPy returned an undefined value (nan); "
+                            "the quantity may diverge or not exist")
         self.fields["exact"] = self.text(value)
         try:
             latex = sp.latex(value)
@@ -63,8 +73,15 @@ class Reply:
 
     def done(self, **extra):
         self.fields.update(extra)
-        self.fields["warnings"] = self.warnings
+        self.fields["warnings"] = self.warnings + _notes
         return self.fields
+
+    def open(self, unevaluated, what):
+        """A valid request SymPy could not close: says so instead of passing the input back as a result."""
+        self.fields.update(success=False, exact=None, unevaluated=self.text(unevaluated), timed_out=False,
+                           error={"code": "no_closed_form",
+                                  "message": f"SymPy found no closed form for this {what}."})
+        return self.done()
 
 
 def _decimal(value, precision):
@@ -116,11 +133,28 @@ def _precision(args):
     return digits
 
 
+def _declared(args):
+    """Names the request itself calls variables."""
+    names = []
+    for key in ("variable", "transform_variable"):
+        if isinstance(args.get(key), str):
+            names.append(args[key].strip())
+    if isinstance(args.get("variables"), list):
+        names += [name.strip() for name in args["variables"] if isinstance(name, str)]
+    for key in ("assumptions", "substitutions", "solution"):
+        if isinstance(args.get(key), dict):
+            names += [name.strip() for name in args[key] if isinstance(name, str)]
+    return names
+
+
 def _context(args, functions=None):
     assumptions = args.get("assumptions")
     if assumptions is not None and not isinstance(assumptions, dict):
         raise MathError("invalid_arguments", "'assumptions' must be an object")
-    return Context(assumptions, functions)
+    context = Context(assumptions, functions, _declared(args))
+    if context.declared:
+        _notes.append("e is a variable in this request; write E or exp(1) for Euler's number")
+    return context
 
 
 def _expression(args, context, name="expression"):
@@ -140,9 +174,58 @@ def _variable(args, context, expr, name="variable"):
     return free[0]
 
 
-def _unevaluated(reply, value, kinds, what):
-    if isinstance(value, sp.Basic) and value.has(*kinds):
-        reply.warnings.append(f"no closed form found for the {what}; the result is left unevaluated")
+def _is_open(value, *kinds):
+    return isinstance(value, sp.Basic) and value.has(*kinds)
+
+
+def _quadrature(expr, variable, lower, upper, digits):
+    """A definite integral by tanh-sinh quadrature: (value, error estimate, good digits).
+
+    None unless two different subdivisions of the interval agree, which is what a
+    singularity inside it breaks.
+    """
+    work = min(digits, MAX_QUADRATURE_DIGITS) + 15
+    with mpmath.workdps(work):
+        def integrand(point):
+            value = expr.evalf(work, subs={variable: sp.Float(point, work)})
+            if not value.is_number or value.has(sp.nan, sp.zoo, sp.oo, -sp.oo):
+                raise ValueError("the integrand is not finite")
+            return value._to_mpmath(mpmath.mp.prec)
+
+        try:
+            a, b = (bound.evalf(work)._to_mpmath(mpmath.mp.prec) for bound in (lower, upper))
+            whole, _ = mpmath.quad(integrand, [a, b], error=True)
+            cuts = [a + (b - a) * mpmath.mpf(c) for c in ("0.31", "0.5", "0.73")]
+            split, estimate = mpmath.quad(integrand, [a, *cuts, b], error=True)
+        except (ValueError, ZeroDivisionError, TypeError, OverflowError, AttributeError):
+            return None
+        estimate = max(abs(whole - split), estimate)
+        scale = max(1, abs(split))
+        if not mpmath.isfinite(split) or estimate > scale * mpmath.mpf(10) ** -QUADRATURE_TOLERANCE:
+            return None
+        good = min(digits, MAX_QUADRATURE_DIGITS)
+        if estimate:
+            good = max(6, min(good, int(-mpmath.log10(estimate / scale)) - 1))
+        return sp.sympify(split).evalf(good), mpmath.nstr(estimate, 2), good
+
+
+def _numeric_integral(reply, expr, variable, bounds, precision, timed_out):
+    """Fills the reply with a numerical value when the integral is one a number can stand for."""
+    if not bounds or expr.free_symbols - {variable}:
+        return False
+    if not all(bound.is_number and bound.is_finite and bound.is_real for bound in bounds):
+        return False
+    outcome = _quadrature(expr, variable, *bounds, precision)
+    if outcome is None:
+        return False
+    value, estimate, digits = outcome
+    reply.fields.update(success=True, exact=None, unevaluated=reply.text(sp.Integral(expr, (variable, *bounds))),
+                        numeric=reply.text(value), method="numerical_integration", error_estimate=estimate,
+                        precision=digits, timed_out_symbolic=timed_out)
+    reply.fields.pop("error", None)
+    reply.fields.pop("timed_out", None)
+    reply.warnings.append("no closed form was obtained; the value is a numerical approximation, not an exact result")
+    return True
 
 
 # expression tool
@@ -199,9 +282,13 @@ def _integrate(args, reply):
     expr = _expression(args, context)
     variable = _variable(args, context, expr)
     bounds = _bounds(args, context)
+    precision = _precision(args)
     result = sp.integrate(expr, (variable, *bounds) if bounds else variable)
-    _unevaluated(reply, result, (sp.Integral,), "integral")
-    reply.value(result, _precision(args))
+    if _is_open(result, sp.Integral):
+        if _numeric_integral(reply, expr, variable, bounds, precision, False):
+            return reply.done()
+        return reply.open(result, "integral")
+    reply.value(result, precision)
     if not bounds:
         reply.fields["note"] = "antiderivative, constant of integration omitted"
     return reply.done()
@@ -216,7 +303,11 @@ def _ranged(function, kinds, what):
         if bounds is None:
             raise MathError("invalid_arguments", "'lower' and 'upper' are required")
         result = function(expr, (variable, *bounds))
-        _unevaluated(reply, result, kinds, what)
+        if _is_open(result, *kinds):
+            return reply.open(result, what)
+        if result.has(sp.RisingFactorial, sp.FallingFactorial):
+            # products come back as ratios of factorials that usually collapse, e.g. to n + 1
+            result = sp.simplify(result)
         reply.value(result, _precision(args))
         return reply.done()
     return run
@@ -237,12 +328,41 @@ def _limit(args, reply):
     except ValueError as error:
         # SymPy raises when the one-sided limits differ
         raise MathError("no_result", str(error)[:300])
-    _unevaluated(reply, result, (sp.Limit,), "limit")
+    if _is_open(result, sp.Limit):
+        return reply.open(result, "limit")
     reply.value(result, _precision(args))
     return reply.done()
 
 
-def _series(args, reply):
+def _ring_series(expr, variable, order):
+    """Expansion at 0 through SymPy's ring series, far quicker on composed functions.
+
+    Its result is accepted only if the remainder shrinks like variable**order at two
+    points; anything else returns None and the general routine takes over.
+    """
+    if expr.free_symbols != {variable}:
+        return None
+    try:
+        from sympy.polys.ring_series import rs_series
+        raw = rs_series(expr, variable, order).as_expr()
+        if not raw.is_polynomial(variable):
+            return None
+        poly = sp.Poly(raw, variable)
+        kept = sum(coefficient * variable**power for (power,), coefficient in poly.terms() if power < order)
+        step = sp.Rational(1, 32)
+        far, near = (abs(sp.N((expr - kept).subs(variable, h), 30)) for h in (step, step / 2))
+    except Exception:
+        return None
+    if not (far.is_number and near.is_number and far.is_finite and near.is_finite):
+        return None
+    if far == 0 and near == 0:
+        return kept
+    if near == 0 or far / near < sp.Rational(3, 4) * 2**order:
+        return None
+    return kept
+
+
+def _series_parts(args):
     context = _context(args)
     expr = _expression(args, context)
     variable = _variable(args, context, expr)
@@ -250,7 +370,13 @@ def _series(args, reply):
     order = _take(args, "order", "int", 6)
     if not 1 <= order <= 30:
         raise MathError("invalid_arguments", "'order' must be between 1 and 30")
-    result = sp.series(expr, variable, point, order)
+    return expr, variable, point, order
+
+
+def _series(args, reply):
+    expr, variable, point, order = _series_parts(args)
+    fast = _ring_series(expr, variable, order) if point == 0 else None
+    result = sp.series(expr, variable, point, order) if fast is None else fast + sp.O(variable**order)
     reply.value(result, _precision(args), numeric=False)
     reply.fields["polynomial"] = reply.text(result.removeO())
     return reply.done()
@@ -264,7 +390,8 @@ def _transform(function, kind, default_from, default_to):
         source = context.symbol(given or default_from)
         target = context.symbol(_take(args, "transform_variable", "math", default_to))
         result = function(expr, source, target)
-        _unevaluated(reply, result, (kind,), "transform")
+        if _is_open(result, kind):
+            return reply.open(result, "transform")
         reply.value(result, _precision(args), numeric=False)
         return reply.done()
     return run
@@ -282,7 +409,8 @@ def _unknowns(args, context, relations):
         return [context.symbol(name.strip()) for name in given]
     free = sorted(set().union(*(r.free_symbols for r in relations)), key=lambda s: s.name)
     if not free:
-        raise MathError("invalid_arguments", "the equations have no variables")
+        raise MathError("invalid_arguments", "the equations have no variables; name the unknowns in "
+                        "'variables' (that also makes e a variable instead of Euler's number)")
     return free
 
 
@@ -312,11 +440,16 @@ def _solve(args, reply):
         except Exception:
             pass
         return reply.done()
-    solutions = sp.solve(relations, unknowns, dict=True)
+    try:
+        solutions = sp.solve(relations, unknowns, dict=True)
+    except NotImplementedError as error:
+        raise MathError("not_supported", f"SymPy cannot solve this exactly: {str(error)[:200]}. "
+                        "For a numerical root use nsolve with an initial_guess.")
     reply.value(solutions, precision, numeric=False)
     _solution_rows(reply, solutions, precision)
     if not solutions:
-        reply.warnings.append("no solution found; this does not prove that none exists")
+        reply.warnings.append("no solution found; this does not prove that none exists. "
+                              "For a numerical root use nsolve with an initial_guess")
     return reply.done(count=len(solutions))
 
 
@@ -349,6 +482,9 @@ def _nsolve(args, reply):
     unknowns = _unknowns(args, context, relations)
     if any(not isinstance(r, sp.Eq) for r in relations) or len(relations) != len(unknowns):
         raise MathError("invalid_arguments", "nsolve needs as many equations as variables")
+    if args.get("initial_guess") is None:
+        raise MathError("invalid_arguments", "nsolve needs 'initial_guess': one starting value per "
+                        "variable; it is never guessed for you")
     guesses = [parse_expression(g, context) for g in _take(args, "initial_guess", "list", required=True)]
     if len(guesses) != len(unknowns) or any(g.free_symbols for g in guesses):
         raise MathError("invalid_arguments", "'initial_guess' needs one number per variable")
@@ -381,10 +517,32 @@ def _nsolve(args, reply):
 
 
 def _ode_context(args):
-    name = check_identifier((_take(args, "function", "math", "y")).strip())
-    variable = check_identifier((_take(args, "variable", "math", "x")).strip())
+    name = _take(args, "function", "math", "y").strip()
+    variable = _take(args, "variable", "math")
+    # "y(x)" names both the function and its variable
+    written = re.fullmatch(r"(\w+)\((\w+)\)", name)
+    if written:
+        name, variable = written.group(1), variable or written.group(2)
+    name = check_identifier(name)
+    variable = check_identifier((variable or "x").strip())
     context = _context(args, {name: variable})
     return context, context.functions[name](context.function_variables[name])
+
+
+def _dsolve_other_methods(reply, equation, function, conditions):
+    """SymPy's first choice of method crashed: try the others it lists for this equation."""
+    for hint in sp.classify_ode(equation, function)[1:]:
+        if hint.endswith("_Integral"):
+            continue
+        try:
+            result = sp.dsolve(equation, function, hint=hint, ics=conditions or None)
+        except Exception:
+            continue
+        reply.fields["method"] = hint
+        if "series" in hint:
+            reply.warnings.append("no closed form was found; this is a power series solution")
+        return result
+    raise MathError("not_supported", "SymPy could not solve this differential equation")
 
 
 def _dsolve(args, reply):
@@ -395,7 +553,10 @@ def _dsolve(args, reply):
     conditions = {}
     for key, value in (_take(args, "initial_conditions", "dict") or {}).items():
         conditions[parse_expression(key, context)] = parse_expression(value, context)
-    result = sp.dsolve(relations[0], function, ics=conditions or None)
+    try:
+        result = sp.dsolve(relations[0], function, ics=conditions or None)
+    except (TypeError, AttributeError, IndexError, KeyError):
+        result = _dsolve_other_methods(reply, relations[0], function, conditions)
     solutions = result if isinstance(result, list) else [result]
     reply.value(solutions[0] if len(solutions) == 1 else solutions, _precision(args), numeric=False)
     reply.fields["solutions"] = [reply.text(s) for s in reply.items(solutions)]
@@ -503,6 +664,32 @@ def _matrix_operation(operation):
 
 # verify tool
 
+_PROBES = (sp.Rational(-7, 3), sp.Rational(5, 4), sp.Rational(-1, 2), sp.Integer(3), sp.Rational(11, 7))
+
+
+def _counterexample(expr):
+    """Values of the variables at which expr is clearly not zero, if a few trials find any."""
+    symbols = sorted(expr.free_symbols, key=lambda s: s.name)
+    for shift in range(len(_PROBES)):
+        point = {}
+        for index, symbol in enumerate(symbols):
+            value = _PROBES[(index + shift) % len(_PROBES)]
+            if symbol.is_integer:
+                value = sp.Integer(sp.floor(value * 3))
+            if symbol.is_positive or symbol.is_nonnegative:
+                value = abs(value)
+            elif symbol.is_negative or symbol.is_nonpositive:
+                value = -abs(value)
+            point[symbol] = value
+        try:
+            value = sp.N(expr.subs(point), 30)
+        except Exception:
+            continue
+        if value.is_number and value.is_finite and abs(value) > sp.Float("1e-15"):
+            return point
+    return None
+
+
 def _is_zero(expr):
     """True, False, or None when SymPy cannot decide."""
     simplified = sp.simplify(expr)
@@ -511,16 +698,30 @@ def _is_zero(expr):
     verdict = simplified.equals(0)
     if verdict is None and not simplified.free_symbols:
         verdict = bool(abs(sp.N(simplified, 50)) < sp.Float("1e-40"))
+    if verdict is None and _counterexample(simplified) is not None:
+        # one point where the difference is not zero settles it
+        verdict = False
     return verdict, simplified
 
 
 def _equivalent(args, reply):
+    # values to test were given: the request is a solution check under the wrong name
+    if args.get("solution") is not None and (args.get("equations") is not None or args.get("right") is not None):
+        reply.fields["operation"] = "solution"
+        reply.warnings.append("treated as a solution check because 'solution' was given")
+        if args.get("equations") is not None:
+            args = {k: v for k, v in args.items() if k not in ("left", "right")}
+        return _check_solution(args, reply)
     context = _context(args)
     left = _expression(args, context, "left")
     right = _expression(args, context, "right")
     verdict, difference = _is_zero(left - right)
     reply.fields["equivalent"] = verdict
     reply.fields["difference"] = reply.text(difference)
+    if verdict is False and difference.free_symbols:
+        point = _counterexample(difference)
+        if point:
+            reply.fields["differs_at"] = {symbol.name: reply.text(value) for symbol, value in point.items()}
     try:
         reply.fields["difference_latex"] = reply.text(sp.latex(difference))
     except Exception:
@@ -531,6 +732,23 @@ def _equivalent(args, reply):
 
 
 def _check_solution(args, reply):
+    # a model checking one equation tends to fill left and right, as it does for equivalent
+    if args.get("equations") is None and args.get("left") is not None and args.get("right") is not None:
+        args = {**args, "equations": [f"{_take(args, 'left', 'math')} = {_take(args, 'right', 'math')}"]}
+    # or it writes the candidate there, as name and value
+    elif args.get("solution") is None and isinstance(args.get("left"), str) and args.get("right") is not None \
+            and args["left"].strip().isidentifier():
+        args = {**args, "solution": {args["left"].strip(): args["right"]}}
+    # an equation with derivatives names its unknown function; the candidate is that function
+    candidate = args.get("solution")
+    text = " ".join(str(e) for e in args.get("equations") or [] if isinstance(e, str))
+    named = re.search(r"([A-Za-z]\w*)\s*'|\bd\d?([A-Za-z]\w*)/d\w|(?:diff|Derivative)\(\s*([A-Za-z]\w*)", text)
+    if args.get("function") is None and isinstance(candidate, dict) and named:
+        function = next(group for group in named.groups() if group)
+        offered = {k: v for k, v in candidate.items() if str(v).strip() != k.strip()}
+        if function not in offered and len(offered) == 1:
+            offered = {function: next(iter(offered.values()))}
+        args = {**args, "function": function, "solution": offered}
     functions = None
     if args.get("function") is not None:
         context, function = _ode_context(args)
@@ -601,6 +819,79 @@ def failure(operation, code, message):
     return {"success": False, "operation": operation, "error": {"code": code, "message": message}}
 
 
+# after a timeout
+
+def _timed_out(operation, seconds, what="The calculation did not finish"):
+    return {"success": False, "operation": operation, "timed_out": True,
+            "error": {"code": "timeout",
+                      "message": f"{what} within the {seconds:g} s computation budget."}, "warnings": []}
+
+
+def _recover_integral(args, base, emit):
+    context = _context(args)
+    expr = _expression(args, context)
+    variable = _variable(args, context, expr)
+    bounds = _bounds(args, context)
+    reply = Reply("integrate")
+    base.update(exact=None, unevaluated=reply.text(sp.Integral(expr, (variable, *bounds) if bounds else variable)))
+    emit(dict(base))
+    reply.fields = base
+    precision = _precision(args)
+    if _numeric_integral(reply, expr, variable, bounds, precision, True):
+        emit(dict(reply.done()))
+    if not bounds or not expr.has(sp.sin, sp.cos, sp.tan, sp.cot, sp.sinh, sp.cosh, sp.tanh):
+        return reply.done()
+    # products of trigonometric functions and exponentials often close once written as exponentials
+    result = sp.simplify(sp.integrate(sp.expand(expr.rewrite(sp.exp)), (variable, *bounds)))
+    if _is_open(result, sp.Integral) or result.has(sp.nan, sp.zoo):
+        return reply.done()
+    numeric = base.get("numeric") if base.get("method") == "numerical_integration" else None
+    if numeric is not None and abs(sp.N(result, 20) - sp.Float(numeric, 20)) > sp.Float("1e-6") * max(1, abs(sp.Float(numeric, 20))):
+        return reply.done()
+    exact = Reply("integrate")
+    exact.value(result, precision)
+    exact.warnings.append("the first attempt ran out of time; this was found after rewriting the "
+                          "trigonometric functions as exponentials")
+    return exact.done(method="exponential_rewrite", timed_out_symbolic=True)
+
+
+def _recover_series(args, base, emit):
+    expr, variable, point, order = _series_parts(args)
+    reply = Reply("series")
+    base.update(exact=None, expression=reply.text(expr), variable=variable.name, point=reply.text(point), order=order)
+    emit(dict(base))
+    for lower in range(4, order, 4):
+        result = sp.series(expr, variable, point, lower)
+        base["partial"] = {"order": lower, "exact": reply.text(result), "polynomial": reply.text(result.removeO())}
+        base["warnings"] = [f"only the expansion to order {lower} finished in time; no higher terms are known"]
+        emit(dict(base))
+    return base
+
+
+def _recover_dsolve(args, base, emit):
+    context, _ = _ode_context(args)
+    base.update(exact=None, unevaluated=[Reply("dsolve").text(r) for r in _relations(args, context)])
+    return base
+
+
+_RECOVERY = {"integrate": _recover_integral, "series": _recover_series, "dsolve": _recover_dsolve}
+
+
+def after_timeout(operation, arguments, seconds, emit):
+    """Runs in a fresh worker once a request has been stopped: what can still be said about it."""
+    what = "No closed form was obtained" if operation == "integrate" else "The calculation did not finish"
+    base = _timed_out(operation, seconds, what)
+    recover = _RECOVERY.get(operation)
+    if recover is None or not isinstance(arguments, dict):
+        return base
+    del _notes[:]
+    emit(dict(base))
+    try:
+        return recover(arguments, base, emit)
+    except Exception:
+        return base
+
+
 def run(operation, arguments):
     if not isinstance(arguments, dict):
         return failure(operation, "invalid_arguments", "arguments must be an object")
@@ -608,6 +899,11 @@ def run(operation, arguments):
     if handler is None:
         return failure(str(operation)[:40], "unknown_operation",
                        "'operation' must be one of: " + ", ".join(OPERATIONS))
+    del _notes[:]
+    if operation == "expand" and (arguments.get("order") is not None or arguments.get("point") is not None):
+        # only a series has an order or a point
+        operation, handler = "series", OPERATIONS["series"]
+        _notes.append("treated as a series expansion because an order or a point was given")
     try:
         return handler(arguments, Reply(operation))
     except MathError as error:

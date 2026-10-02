@@ -83,6 +83,12 @@ final class SymPyToolsTests: XCTestCase {
             SymPyToolsService.readable(#"{"success":false,"operation":"factor","error":{"code":"timeout","message":"stopped"}}"#),
             "stopped")
         XCTAssertEqual(SymPyToolsService.readable("not json"), "not json")
+        XCTAssertEqual(
+            SymPyToolsService.readable(#"{"success":true,"exact":null,"unevaluated":"Integral(x**x, (x, 0, 1))","numeric":"0.78","method":"numerical_integration","warnings":[]}"#),
+            "Integral(x**x, (x, 0, 1))\n≈ 0.78")
+        XCTAssertEqual(
+            SymPyToolsService.readable(#"{"success":false,"timed_out":true,"exact":null,"unevaluated":"Integral(f(x), x)","error":{"code":"timeout","message":"No closed form."},"warnings":[]}"#),
+            "No closed form.\nIntegral(f(x), x)")
         XCTAssertEqual(SymPyToolsService.input(["equations": ["x = 1", "y = 2"]]), "x = 1\ny = 2")
         XCTAssertEqual(SymPyToolsService.input(["matrix": [["1", 2], [3, "4"]]]), "1  2\n3  4")
     }

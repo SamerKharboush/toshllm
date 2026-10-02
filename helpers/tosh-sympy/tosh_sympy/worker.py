@@ -73,7 +73,13 @@ def main():
                 reply = ops.failure(operation if isinstance(operation, str) else None,
                                     "invalid_arguments", str(error))
             else:
-                reply = ops.run(operation, {k: v for k, v in arguments.items() if k != "operation"})
+                plain = {k: v for k, v in arguments.items() if k != "operation"}
+                if "after_timeout" in request:
+                    reply = ops.after_timeout(
+                        operation, plain, request["after_timeout"],
+                        lambda partial: print(json.dumps({"progress": partial}), file=reply_stream, flush=True))
+                else:
+                    reply = ops.run(operation, plain)
         except MemoryError:
             os._exit(86)
         except Exception as error:

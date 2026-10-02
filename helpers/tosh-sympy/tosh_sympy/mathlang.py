@@ -48,6 +48,9 @@ CONSTANTS = {
     "EulerGamma": sp.EulerGamma, "GoldenRatio": sp.GoldenRatio, "Catalan": sp.Catalan,
 }
 
+# names a request may claim back as plain variables by declaring them
+DECLARABLE = {"e"}
+
 ASSUMPTIONS = (
     "real", "positive", "negative", "nonnegative", "nonpositive", "nonzero",
     "integer", "rational", "complex", "even", "odd", "prime",
@@ -179,7 +182,8 @@ def check_identifier(name):
 class Context:
     """Symbols and undefined functions shared by every expression of one request."""
 
-    def __init__(self, assumptions=None, functions=None):
+    def __init__(self, assumptions=None, functions=None, declared=()):
+        self.declared = DECLARABLE.intersection(declared)
         self.assumptions = {}
         for name, flags in (assumptions or {}).items():
             check_identifier(name)
@@ -201,7 +205,13 @@ class Context:
 
     def symbol(self, name):
         check_identifier(name)
-        if name in CONSTANTS or name in FUNCTIONS or name in self.functions:
+        if name in self.declared:
+            pass
+        elif name in DECLARABLE:
+            raise MathError("invalid_arguments",
+                            f"'{name}' is Euler's number here; to use it as a variable, name it in "
+                            "'variable' or 'variables'")
+        elif name in CONSTANTS or name in FUNCTIONS or name in self.functions:
             raise MathError("invalid_arguments", f"'{name}' cannot be used as a variable")
         if name not in self.symbols:
             self.symbols[name] = sp.Symbol(name, **self.assumptions.get(name, {}))
@@ -404,11 +414,27 @@ class _Parser:
             if name not in _TUPLE_FUNCTIONS:
                 args = [self._value(a) for a in args]
             return self._call(name, function, args)
-        if name in CONSTANTS:
+        if name in CONSTANTS and name not in self.context.declared:
             return CONSTANTS[name]
+        leibniz = self.leibniz(name)
+        if leibniz is not None:
+            return leibniz
         if self.at("(") and len(name) > 1:
             raise MathError("unknown_function", f"'{name[:40]}' is not a supported function")
         return self.context.symbol(name)
+
+    def leibniz(self, name):
+        """dy/dx and d2y/dx2, for a function the request declared."""
+        match = re.fullmatch(r"d([2-9]?)([A-Za-z]\w*)", name)
+        if match is None or match.group(2) not in self.context.functions or not self.at("/"):
+            return None
+        order, function = match.group(1), match.group(2)
+        variable = self.context.function_variables[function]
+        following = self.tokens[self.position + 1] if self.position + 1 < len(self.tokens) else (None, None)
+        if following != ("id", f"d{variable.name}{order}"):
+            return None
+        self.position += 2
+        return sp.Derivative(self.context.functions[function](variable), (variable, int(order or 1)))
 
     @staticmethod
     def _call(name, function, args):

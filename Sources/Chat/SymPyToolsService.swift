@@ -60,10 +60,17 @@ enum SymPyToolsService {
         guard let data = result.data(using: .utf8),
               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { return result }
-        if let error = object["error"] as? [String: Any], let message = error["message"] as? String {
-            return message
-        }
         var lines: [String] = []
+        if let error = object["error"] as? [String: Any], let message = error["message"] as? String {
+            // a timeout or an open integral still says what was asked and what is known
+            guard object["timed_out"] != nil else { return message }
+            lines.append(message)
+            if let unevaluated = object["unevaluated"] as? String { lines.append(unevaluated) }
+            if let partial = object["partial"] as? [String: Any], let exact = partial["exact"] as? String {
+                lines.append(exact)
+            }
+            return lines.joined(separator: "\n")
+        }
         if let equivalent = object["equivalent"] {
             lines.append("equivalent: \(text(equivalent))")
             if let difference = object["difference"] as? String, difference != "0" {
@@ -78,7 +85,11 @@ enum SymPyToolsService {
                 }
             }
         }
-        if let exact = object["exact"] as? String { lines.append(exact) }
+        if let exact = object["exact"] as? String {
+            lines.append(exact)
+        } else if let unevaluated = object["unevaluated"] as? String {
+            lines.append(unevaluated)
+        }
         if let numeric = object["numeric"] as? String { lines.append("≈ \(numeric)") }
         for warning in object["warnings"] as? [String] ?? [] { lines.append("⚠︎ \(warning)") }
         return lines.isEmpty ? result : lines.joined(separator: "\n")

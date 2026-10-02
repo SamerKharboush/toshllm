@@ -114,6 +114,27 @@ final class SymPyEngineIntegrationTests: XCTestCase {
                                                       "left": "(x + 1)**2", "right": "x**2 + 2*x"])
         XCTAssertTrue(verified.content.contains(#""equivalent": false"#), verified.content)
 
+        let solved = try await run("sympy_solve", ["operation": "solve", "equations": ["e**2 - 4 = 0"],
+                                                   "variables": ["e"]])
+        XCTAssertTrue(solved.content.contains(#""solutions": [{"e": "-2"}, {"e": "2"}]"#), solved.content)
+
+        let determinant = try await run("sympy_matrix", ["operation": "determinant",
+                                                         "matrix": [["1", "2"], ["3", "4"]]])
+        XCTAssertTrue(determinant.content.contains(#""exact": "-2""#), determinant.content)
+
+        let numeric = try await run("sympy_expression", ["operation": "integrate", "expression": "exp(sin(x))",
+                                                         "variable": "x", "lower": "0", "upper": "1"])
+        XCTAssertFalse(numeric.isError)
+        XCTAssertTrue(numeric.content.contains(#""method": "numerical_integration""#), numeric.content)
+        XCTAssertEqual(SymPyToolsService.readable(numeric.content).components(separatedBy: "\n").prefix(2).joined(separator: " "),
+                       "Integral(exp(sin(x)), (x, 0, 1)) ≈ 1.63186960841805")
+
+        // no closed form is an answer, not a failed call
+        let open = try await run("sympy_expression", ["operation": "integrate", "expression": "sin(sin(x))",
+                                                      "variable": "x"])
+        XCTAssertFalse(open.isError)
+        XCTAssertTrue(open.content.contains(#""code": "no_closed_form""#), open.content)
+
         let injected = try await run("sympy_expression", ["operation": "simplify",
                                                           "expression": "__import__('os').system('id')"])
         XCTAssertTrue(injected.isError)

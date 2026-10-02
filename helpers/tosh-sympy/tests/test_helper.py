@@ -41,7 +41,7 @@ class Helper:
     def call(self, tool, **arguments):
         result = self.rpc("tools/call", {"name": tool, "arguments": arguments})["result"]
         reply = json.loads(result["content"][0]["text"])
-        assert result["isError"] == (not reply["success"]), result
+        assert result["isError"] == (not reply["success"] and "timed_out" not in reply), result
         return reply
 
     def close(self):
@@ -55,7 +55,7 @@ def expression(helper, operation, text, **arguments):
 
 def error_code(reply):
     assert reply["success"] is False, reply
-    assert set(reply) == {"success", "operation", "error"}, reply
+    assert {"success", "operation", "error"} <= set(reply), reply
     assert set(reply["error"]) == {"code", "message"}, reply
     return reply["error"]["code"]
 
@@ -291,6 +291,187 @@ def test_memory_limit(_):
         assert expression(helper, "factor", "x**2 - 1")["success"] is True
     finally:
         helper.close()
+
+
+def test_e_is_a_variable_only_when_declared(h):
+    reply = h.call("solve", operation="solve", equations=["e**2 - 4 = 0"], variables=["e"])
+    assert reply["solutions"] == [{"e": "-2"}, {"e": "2"}], reply
+    assert "e is a variable" in reply["warnings"][0], reply
+    reply = expression(h, "differentiate", "e**3 + E*e", variable="e")
+    assert reply["exact"] == "3*e**2 + E", reply
+    assert error_code(h.call("solve", operation="solve", equations=["e**2 - 4 = 0"])) == "invalid_arguments"
+
+
+def test_euler_constant(h):
+    assert expression(h, "evaluate", "E")["numeric"] == "2.71828182845905"
+    assert expression(h, "evaluate", "e")["numeric"] == "2.71828182845905"
+    assert expression(h, "simplify", "log(E) + log(e) + log(exp(1))")["exact"] == "3"
+    assert expression(h, "evaluate", "E", variable="E")["exact"] == "E"
+
+
+def test_definite_integral_falls_back_to_a_number(h):
+    reply = expression(h, "integrate", "exp(sin(x))", variable="x", lower="0", upper="1")
+    assert reply["success"] is True and reply["exact"] is None, reply
+    assert reply["method"] == "numerical_integration" and reply["timed_out_symbolic"] is False
+    assert reply["numeric"] == "1.63186960841805" and reply["precision"] == 15, reply
+    assert reply["unevaluated"] == "Integral(exp(sin(x)), (x, 0, 1))" and reply["warnings"], reply
+    reply = expression(h, "integrate", "x**x", lower="0", upper="1", precision=30)
+    assert reply["numeric"] == "0.783430510712134407059264386527", reply
+
+
+def test_no_number_for_a_divergent_integral(h):
+    for text in ("exp(sin(x))/x", "x**x/(x - 1/2)", "exp(sin(x))/(x - 0.3)**2"):
+        reply = expression(h, "integrate", text, variable="x", lower="0", upper="1")
+        assert error_code(reply) == "no_closed_form" and "numeric" not in reply, reply
+        assert reply["timed_out"] is False and reply["exact"] is None and "Integral" in reply["unevaluated"]
+    assert error_code(expression(h, "integrate", "1/(sin(x) - 1/2)", lower="0", upper="1")) == "no_result"
+
+
+def test_no_number_without_numeric_bounds(h):
+    reply = expression(h, "integrate", "exp(sin(a*x))", variable="x", lower="0", upper="1")
+    assert error_code(reply) == "no_closed_form" and "numeric" not in reply, reply
+    reply = expression(h, "integrate", "sin(sin(x))", variable="x")
+    assert error_code(reply) == "no_closed_form" and reply["unevaluated"] == "Integral(sin(sin(x)), x)", reply
+
+
+def test_open_sum_is_not_a_result(h):
+    reply = expression(h, "summation", "1/(k**3 + 1)", variable="k", lower="1", upper="oo")
+    assert error_code(reply) == "no_closed_form" and reply["unevaluated"].startswith("Sum("), reply
+
+
+def test_series_fast_path_matches(h):
+    started = time.monotonic()
+    reply = expression(h, "series", "exp(sin(x))", order=20)
+    assert time.monotonic() - started < 5, "the composed series should not need the slow routine"
+    assert reply["exact"].startswith("1 + x + x**2/2 - x**4/8 - x**5/15 - x**6/240 + x**7/90 + 31*x**8/5760"), reply
+    assert reply["exact"].endswith("O(x**20)"), reply
+    assert expression(h, "series", "1/(1 - x)", order=4)["exact"] == "1 + x + x**2 + x**3 + O(x**4)"
+    assert expression(h, "series", "sin(x)/x", order=6)["exact"] == "1 - x**2/6 + x**4/120 + O(x**6)"
+    assert expression(h, "series", "sin(a*x)", variable="x", order=4)["polynomial"] == "-a**3*x**3/6 + a*x"
+
+
+def test_dsolve_survives_a_failing_method(h):
+    reply = h.call("solve", operation="dsolve", equations=["y' = x**2 + y**2"])
+    assert reply["success"] and reply["method"] == "1st_power_series" and reply["warnings"], reply
+
+
+def test_nsolve_never_guesses(h):
+    reply = h.call("solve", operation="nsolve", equations=["cos(x) = x"])
+    assert error_code(reply) == "invalid_arguments" and "initial_guess" in reply["error"]["message"]
+    reply = h.call("solve", operation="solve", equations=["x*exp(x) + sin(x) = 2"])
+    assert error_code(reply) == "not_supported" and "nsolve" in reply["error"]["message"]
+
+
+def test_timed_out_indefinite_integral(_):
+    helper = Helper(TOSH_SYMPY_TIMEOUT_MS=100)
+    try:
+        reply = expression(helper, "integrate", "1/(1 + x**3 + sin(x))", variable="x")
+        assert error_code(reply) == "timeout" and reply["timed_out"] is True, reply
+        assert reply["exact"] is None and "numeric" not in reply, reply
+        assert reply["unevaluated"] == "Integral(1/(x**3 + sin(x) + 1), x)", reply
+        assert expression(helper, "factor", "x**2 - 1")["exact"] == "(x - 1)*(x + 1)"
+    finally:
+        helper.close()
+
+
+def test_timed_out_definite_integral_gets_a_number(_):
+    helper = Helper(TOSH_SYMPY_TIMEOUT_MS=100)
+    try:
+        reply = expression(helper, "integrate", "exp(sin(x))", variable="x", lower="0", upper="1")
+        assert reply["success"] is True and reply["exact"] is None, reply
+        assert reply["timed_out_symbolic"] is True and reply["method"] == "numerical_integration", reply
+        assert reply["numeric"] == "1.63186960841805", reply
+        assert expression(helper, "expand", "(x + 1)**2")["exact"] == "x**2 + 2*x + 1"
+    finally:
+        helper.close()
+
+
+def test_timed_out_series_reports_what_finished(_):
+    helper = Helper(TOSH_SYMPY_TIMEOUT_MS=100)
+    try:
+        reply = expression(helper, "series", "log(x)*exp(sin(x))", point="1", order=6)
+        assert error_code(reply) == "timeout" and reply["timed_out"] is True and reply["exact"] is None, reply
+        assert (reply["expression"], reply["variable"], reply["point"], reply["order"]) == \
+            ("exp(sin(x))*log(x)", "x", "1", 6), reply
+        assert reply["partial"]["order"] == 4 and "O((x - 1)**4" in reply["partial"]["exact"], reply
+        assert expression(helper, "factor", "x**2 - 1")["success"] is True
+    finally:
+        helper.close()
+
+
+def test_timed_out_ode(_):
+    helper = Helper(TOSH_SYMPY_TIMEOUT_MS=100)
+    try:
+        reply = helper.call("solve", operation="dsolve", equations=["y'' + y = tan(x)"])
+        assert error_code(reply) == "timeout" and reply["timed_out"] is True, reply
+        assert reply["unevaluated"] == ["y(x) + Derivative(y(x), (x, 2)) = tan(x)"], reply
+        assert helper.call("solve", operation="solve", equations=["x = 1"])["success"] is True
+    finally:
+        helper.close()
+
+
+def test_same_answer_in_every_worker(_):
+    seeds = set()
+    for _ in range(3):
+        probe = subprocess.run(
+            [PYTHON, "-P", "-s", "-B", "-c", "print(hash('x'))"], capture_output=True, text=True,
+            env={"PYTHONHASHSEED": "1"}).stdout.strip()
+        seeds.add(probe)
+    assert len(seeds) == 1, seeds
+    helper = Helper()
+    try:
+        started = time.monotonic()
+        reply = expression(helper, "integrate", "1/(1 + x**3 + sin(x))", variable="x")
+        assert error_code(reply) == "no_closed_form" and time.monotonic() - started < 10, reply
+    finally:
+        helper.close()
+
+
+def test_calls_in_the_shapes_models_use(h):
+    reply = h.call("verify", operation="solution", left="x**2 - 5*x + 6", right="0", solution={"x": "4"})
+    assert reply["satisfied"] is False and reply["checks"][0]["residual"] == "2", reply
+    reply = h.call("verify", operation="equivalent", left="x**2 - 2*x - 3", right="0",
+                   equations=["x**2 - 2*x - 3 = 0"], solution={"x": "3"})
+    assert reply["operation"] == "solution" and reply["satisfied"] is True and reply["warnings"], reply
+    reply = h.call("verify", operation="solution", equations=["y' = 2*x"], solution={"x": "x", "y": "x**2"})
+    assert reply["satisfied"] is True, reply
+    reply = h.call("verify", operation="solution", equations=["y'' + 4*y = 0"], solution={"x": "sin(2*x)"})
+    assert reply["satisfied"] is True, reply
+    reply = h.call("verify", operation="solution", left="y", right="exp(3*x)", equations=["y' - 3*y = 0"], function="y")
+    assert reply["satisfied"] is True, reply
+    reply = expression(h, "expand", "log(1 + x)", order=5)
+    assert reply["operation"] == "series" and reply["exact"] == "x - x**2/2 + x**3/3 - x**4/4 + O(x**5)", reply
+    assert expression(h, "expand", "(x + 1)**2")["operation"] == "expand"
+
+
+def test_leibniz_notation(h):
+    reply = h.call("solve", operation="dsolve", equations=["dy/dx = 3x**2"], function="y")
+    assert reply["exact"] == "y(x) = C1 + x**3", reply
+    reply = h.call("solve", operation="dsolve", equations=["d2y/dx2 + y = 0"])
+    assert reply["exact"] == "y(x) = C1*sin(x) + C2*cos(x)", reply
+    reply = h.call("solve", operation="dsolve", equations=["diff(y(x), x) = 3*x**2"], function="y(x)")
+    assert reply["exact"] == "y(x) = C1 + x**3", reply
+    assert expression(h, "simplify", "dy/dx")["exact"] == "dy/dx"
+
+
+def test_counterexample_settles_non_equivalence(h):
+    reply = h.call("verify", operation="equivalent", left="sqrt(x**2)", right="x")
+    assert reply["equivalent"] is False and reply["differs_at"] == {"x": "-7/3"}, reply
+    reply = h.call("verify", operation="equivalent", left="sqrt(x**2)", right="x", assumptions={"x": ["positive"]})
+    assert reply["equivalent"] is True, reply
+
+
+def test_product_is_simplified(h):
+    reply = expression(h, "product", "1 + 1/k", variable="k", lower="1", upper="n")
+    assert reply["exact"] == "n + 1", reply
+
+
+def test_definitions_stay_small(h):
+    tools = h.rpc("tools/list")["result"]["tools"]
+    assert len(json.dumps(tools)) < 4200, len(json.dumps(tools))
+    assert expression(h, "laplace_transform", "exp(-a*t)", transform_variable="s")["exact"] == "1/(a + s)"
+    assert h.call("matrix", operation="determinant", matrix=[["x", "1"], ["1", "x"]],
+                  assumptions={"x": ["real"]})["exact"] == "x**2 - 1"
 
 
 def test_idle_worker_is_released(_):

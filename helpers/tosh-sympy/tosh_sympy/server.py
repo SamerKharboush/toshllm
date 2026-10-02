@@ -35,7 +35,13 @@ def _setting(name, default, low, high):
         return default
 
 
-TIMEOUT_SECONDS = _setting("TOSH_SYMPY_TIMEOUT_MS", 15000, 100, 25000) / 1000
+TIMEOUT_SECONDS = _setting("TOSH_SYMPY_TIMEOUT_MS", 15000, 100, 20000) / 1000
+# after a timeout a fresh worker gets this long to say what it still can about the request
+RECOVERY_SECONDS = 5
+# SymPy's heuristics walk sets, so with Python's random string hashing the same integral
+# takes under a second in one process and never finishes in the next. A fixed seed makes
+# every worker behave the same.
+HASH_SEED = "1"
 MEMORY_LIMIT = int(_setting("TOSH_SYMPY_MEMORY_MB", 1024, 128, 16384)) * 1024 * 1024
 IDLE_SECONDS = _setting("TOSH_SYMPY_IDLE_SECONDS", 300, 1, 86400)
 
@@ -88,11 +94,14 @@ class Worker:
 
     def start(self):
         self.stop()
+        # -P -s instead of -I: the environment is the two variables below and nothing else,
+        # and the hash seed has to get through
         self.process = subprocess.Popen(
-            [sys.executable, "-I", "-B", os.path.join(HOME, "tosh_sympy", "worker.py")],
+            [sys.executable, "-P", "-s", "-B", os.path.join(HOME, "tosh_sympy", "worker.py")],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
             cwd="/", close_fds=True,
-            env={"TOSH_SYMPY_BACKSTOP_SECONDS": str(int(TIMEOUT_SECONDS) + 5)})
+            env={"PYTHONHASHSEED": HASH_SEED,
+                 "TOSH_SYMPY_BACKSTOP_SECONDS": str(int(TIMEOUT_SECONDS) + 5)})
         ready = self._read(time.monotonic() + STARTUP_SECONDS)
         if not isinstance(ready, dict) or not ready.get("ready"):
             self.stop()
@@ -140,13 +149,39 @@ class Worker:
         if isinstance(reply, dict):
             return reply
         self.stop()
+        if reply == "timeout":
+            return self._recover(name, arguments, operation)
         messages = {
-            "timeout": f"the calculation did not finish in {TIMEOUT_SECONDS:g} seconds and was stopped",
             "memory_limit": f"the calculation needed more than {MEMORY_LIMIT // (1024 * 1024)} MB and was stopped",
             "output_too_large": "the result is too large to return",
             "worker_crashed": "the SymPy runtime stopped unexpectedly",
         }
         return _failure(operation, reply, messages[reply])
+
+
+    def _recover(self, name, arguments, operation):
+        """The request is dead. A new worker reports what is known: at least that it timed out."""
+        best = {"success": False, "operation": operation, "timed_out": True, "warnings": [],
+                "error": {"code": "timeout", "message":
+                          f"The calculation did not finish within the {TIMEOUT_SECONDS:g} s computation budget."}}
+        try:
+            self.start()
+            self.process.stdin.write(json.dumps({"tool": name, "arguments": arguments,
+                                                 "after_timeout": TIMEOUT_SECONDS}).encode() + b"\n")
+            self.process.stdin.flush()
+        except (OSError, RuntimeError):
+            self.stop()
+            return best
+        deadline = time.monotonic() + RECOVERY_SECONDS
+        while True:
+            reply = self._read(deadline)
+            if not isinstance(reply, dict):
+                self.stop()
+                return best
+            if "progress" not in reply:
+                self.last_used = time.monotonic()
+                return reply
+            best = reply["progress"]
 
 
 def _respond(message_id, result=None, error=None):
@@ -178,7 +213,8 @@ def _handle(message, worker):
         reply = worker.call(params.get("name"), params.get("arguments") or {})
         _respond(message_id, {
             "content": [{"type": "text", "text": json.dumps(reply)}],
-            "isError": not reply.get("success", False),
+            # a request that ran out of time or has no closed form was still a valid call
+            "isError": not reply.get("success", False) and "timed_out" not in reply,
         })
     else:
         _respond(message_id, error={"code": -32601, "message": f"method not found: {str(method)[:60]}"})
