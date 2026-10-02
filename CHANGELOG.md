@@ -3,6 +3,18 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.87.14-beta.2] - 2026-10-02
+
+### Fixed
+
+- **LLMs: a model that cannot be split by tensor now falls back to a layer split instead of
+  failing.** Some models carry a recurrent-state tensor whose width does not divide evenly, so
+  no two-way tensor split of it exists. The engine used to abort with a bare assertion after the
+  weights had loaded, which reads like a crash rather than a setting. It now says which operation
+  and which dimensions cannot be divided, and the app retries once with layers by itself and
+  tells you it did. The split-mode setting is left alone, so the choice is re-tested next time
+  rather than silently overridden forever.
+
 ## [0.87.14-beta.1] - 2026-10-02
 
 Beta for the dual-GPU Mac Pro path. Three engine defects, one app build break and a

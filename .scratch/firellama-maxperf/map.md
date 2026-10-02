@@ -73,6 +73,7 @@ Firellama runs the biggest models this Mac Pro can hold at the fastest tok/s it 
 | 10 | Events + layer split deadlock | bug | resolved — app gate + engine fix in 0115 | found by 08 |
 | 11 | Engine xdev stall, NSRange, split assert | bug | resolved (split assert diagnosed, not fixed) | 10 |
 | 12 | Ship hardening: LAN proof, memset test, CI probe | bug + test | resolved except notarization and Metal toolchain | release |
+| 13 | Tensor split on an undividable model | bug | resolved — exit 86, app retries by layers | user report |
 
 ## Blocked
 
@@ -86,8 +87,8 @@ Firellama runs the biggest models this Mac Pro can hold at the fastest tok/s it 
   Both were left untouched: a build fix that cannot be tested here is not worth shipping, and
   ChatTab needs a real 26 SDK regardless.
 - The 27B `qwen35` SSM state reshape cannot be tensor-split at all: `ne[0]=6144` does not
-  divide `ne[0]=9216`. The abort now names the op and the dimensions instead of failing a
-  bare assert, but the limit stands and the layer split is that model's only option.
-  Fixing it properly needs a build with tensor split and a numerical A/B against a
-  single-GPU run, which this hardware cannot host.
+  divide `ne[0]=9216`. That limit stands and layers are the model's only option. What changed
+  is how it is reported: the engine exits 86 naming the op and dimensions, and the app retries
+  once with layers by itself (ticket 13). Marking the tensor unsplittable would hand the
+  scheduler a split state that does not describe the data, so the failure stays loud.
 - Ticket 09's LAN curl needs a second host and a working build.

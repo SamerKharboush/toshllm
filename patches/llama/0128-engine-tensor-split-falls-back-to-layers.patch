@@ -1,0 +1,47 @@
+diff --git a/ggml/src/ggml-backend-meta.cpp b/ggml/src/ggml-backend-meta.cpp
+--- a/ggml/src/ggml-backend-meta.cpp
++++ b/ggml/src/ggml-backend-meta.cpp
+@@ -11,6 +11,7 @@
+ #include <cassert>
+ #include <cmath>
+ #include <cstddef>
++#include <cstdlib>
+ #include <cstdint>
+ #include <cstring>
+ #include <map>
+@@ -1222,11 +1223,33 @@
+                         if (split_state.ne[j] != 0 || tensor->src[i]->ne[src_ss[i].axis] != 0) {
+                             const int64_t div = tensor->src[i]->ne[src_ss[i].axis] * split_state.nr[0];
+                             if (split_state.ne[j] % div != 0) {
+-                                GGML_ABORT("%s: %s cannot be tensor-split: src %d ne[%d]=%lld x ratio %lld does not divide ne[%d]=%lld (axis %d)",
+-                                    __func__, ggml_op_name(tensor->op), (int) i,
++                                // Some models carry an SSM/recurrent state tensor whose width does
++                                // not divide evenly, so no two-way tensor split of it exists. Aborting
++                                // here used to kill the server with a bare assert after the weights
++                                // had already loaded, which reads like a crash rather than a setting.
++                                // Report it and exit with a code the app recognises, so it can fall back
++                                // to a layer split by itself. TOSH_TENSOR_SPLIT_STRICT=1 keeps the
++                                // abort for anyone debugging the scheduler.
++                                const char * strict = getenv("TOSH_TENSOR_SPLIT_STRICT");
++                                if (strict != NULL && atoi(strict) != 0) {
++                                    GGML_ABORT("%s: %s cannot be tensor-split: src %d ne[%d]=%lld x ratio %lld does not divide ne[%d]=%lld (axis %d)",
++                                        __func__, ggml_op_name(tensor->op), (int) i,
++                                        (int) src_ss[i].axis, (long long) tensor->src[i]->ne[src_ss[i].axis],
++                                        (long long) split_state.nr[0], (int) j, (long long) split_state.ne[j],
++                                        (int) split_state.axis);
++                                }
++                                fprintf(stderr,
++                                    "ggml_backend_meta: %s cannot be tensor-split: src %d ne[%d]=%lld x ratio %lld "
++                                    "does not divide ne[%d]=%lld (axis %d)\n"
++                                    "This model has no two-way tensor split. Restart with --split-mode layer.\n",
++                                    ggml_op_name(tensor->op), (int) i,
+                                     (int) src_ss[i].axis, (long long) tensor->src[i]->ne[src_ss[i].axis],
+                                     (long long) split_state.nr[0], (int) j, (long long) split_state.ne[j],
+                                     (int) split_state.axis);
++                                fflush(stderr);
++                                // Distinct from SIGABRT (134) and SIGSEGV (139) so the app can tell
++                                // "this split mode cannot work" apart from a real crash.
++                                exit(86);
+                             }
+                             split_state.ne[j] /= div;
+                         }

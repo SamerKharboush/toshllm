@@ -22,6 +22,11 @@ Native macOS app · Metal acceleration · No cloud, no accounts, no per-token co
 > ([release notes](https://github.com/SamerKharboush/toshllm/releases/tag/v0.87.14-beta.1) ·
 > [checksums](https://github.com/SamerKharboush/toshllm/releases/download/v0.87.14-beta.1/checksums.txt))
 >
+> **This build is x86_64 only. It will not run on Apple Silicon.** There is no arm64 slice,
+> and Rosetta cannot help: an Apple GPU never enters the code these fixes touch — the Metal
+> backend probes a 32-wide SIMD group there, which switches every AMD workaround in this fork
+> off by construction. On Apple Silicon, install upstream's build instead.
+>
 > **This particular `.dmg` is built for AVX-but-not-AVX2 Intel CPUs** (Ivy Bridge and
 > similar, e.g. a Xeon E5-2697 v2). Upstream's normal build needs AVX2 and dies with
 > "illegal hardware instruction" on those machines. macOS quarantines an unsigned build,
@@ -230,6 +235,9 @@ machine was sized as if it were single-card. That is fixed too.
   does not include it. Functionally identical afterwards, and only the first start is slow.
 - **The build is not notarized**, so macOS quarantines it. Right-click the app once and
   choose **Open**, or `xattr -dr com.apple.quarantine /Applications/ToshLLM.app`.
+- A model whose recurrent-state tensor cannot be divided gets a layer split automatically. The
+  engine reports which operation and dimensions refused, and the app says it fell back. There is
+  no tensor split to fall back *from* on those models — layers are their only option.
 - Cross-GPU events still only apply to a tensor split.
 - A 27B Qwen3.5 model cannot be split by tensor: an internal SSM state tensor's width does
   not divide evenly. The engine now names the operation and the dimensions instead of failing

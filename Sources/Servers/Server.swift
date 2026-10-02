@@ -1675,6 +1675,9 @@ final class ServerController: ObservableObject {
     /// After a projector load failure, makes the next launch drop `--mmproj`
     /// (text-only). Reset on every fresh `start()`.
     private var retryWithoutMmproj = false
+    /// After the engine reports that this model has no two-way tensor split (exit 86),
+    /// makes the next launch use `--split-mode layer`. Reset on every fresh `start()`.
+    private var retryLayerSplit = false
     /// When the engine last came back on its own after dying mid-session.
     private var lastCrashRelaunch: Date?
     private var currentPort = 8080
@@ -1804,6 +1807,7 @@ final class ServerController: ObservableObject {
 
         log = ""
         retryWithoutMmproj = false
+        retryLayerSplit = false
         promptSpeed = nil
         genSpeed = nil
         genHistory = []
@@ -1992,6 +1996,13 @@ final class ServerController: ObservableObject {
         var args = settings.arguments
         if retryWithoutMmproj, let i = args.firstIndex(of: "--mmproj") {
             args.removeSubrange(i ..< min(i + 2, args.count))   // drop "--mmproj <path>"
+        // The engine reported that this model has no two-way tensor split (exit 86).
+        // Retrying with layers is the only setting that works for it, so do it rather than
+        // leave the user staring at a failed server. The setting itself is untouched, so the
+        // choice is re-tested next time rather than silently overridden forever.
+        if retryLayerSplit, let i = args.firstIndex(of: "--split-mode"), i + 1 < args.count {
+            args[i + 1] = "layer"
+        }
         }
         p.arguments = args
         p.environment = settings.environment
@@ -2043,6 +2054,16 @@ final class ServerController: ObservableObject {
                         self.launch(settings)
                         return
                     }
+                    // Exit 86 is ours: this model has no two-way tensor split. Fall back to
+                    // layers once and say so, instead of failing the server.
+                    if proc.terminationStatus == 86, !self.retryLayerSplit {
+                        self.retryLayerSplit = true
+                        self.consume("\n[ToshLLM] este modelo no admite reparto por tensores — reintentando por capas / this model has no tensor split — retrying by layers\n")
+                        AppLog.server.error("no tensor split for this model; retrying with --split-mode layer")
+                        self.state = .starting
+                        self.launch(settings)
+                        return
+                    }
                     AppLog.server.error("engine exited with status \(proc.terminationStatus)")
                     let why = Self.diagnose(self.log, exitCode: proc.terminationStatus)
                     // One relaunch keeps chats and external clients working after a crash mid-session;
@@ -2082,6 +2103,9 @@ final class ServerController: ObservableObject {
         let tail = log.suffix(6000).lowercased()
         if tail.contains("unknown model architecture") || tail.contains("unknown architecture") {
             return "Arquitectura no soportada por este motor / model architecture not supported by this engine"
+        }
+        if exitCode == 86 || tail.contains("has no two-way tensor split") {
+            return "Este modelo no admite el reparto por tensores: cámbialo a por capas en Ajustes / this model has no tensor split: switch to by layers in Settings"
         }
         if tail.contains("split_mode_tensor not implemented for architecture") {
             return "Esta arquitectura no admite el reparto por tensores: cámbialo a por capas en Ajustes / this architecture has no tensor split: switch to by layers in Settings"
