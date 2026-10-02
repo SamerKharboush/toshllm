@@ -1,13 +1,8 @@
 diff --git a/ggml/src/ggml-metal/kernels/misc.metal b/ggml/src/ggml-metal/kernels/misc.metal
 --- a/ggml/src/ggml-metal/kernels/misc.metal
 +++ b/ggml/src/ggml-metal/kernels/misc.metal
-@@ -218,17 +218,22 @@ kernel void kernel_timestep_embedding_f32(
-         float timestep = ((device float *)src0)[i];
-         // precise:: avoids the fast-math intrinsics, which lose precision on GCN
-         float freq = (float)precise::exp(-precise::log((float)args.max_period) * j / half_);
-         float arg = timestep * freq;
-         embed_data[j        ] = precise::cos(arg);
-         embed_data[j + half_] = precise::sin(arg);
+@@ -222,7 +222,12 @@ kernel void kernel_timestep_embedding_f32(
+         embed_data[j + half_] = sin(arg);
      }
  
 -    if (args.dim % 2 != 0 && tpitg.x == 0) {
@@ -20,8 +15,3 @@ diff --git a/ggml/src/ggml-metal/kernels/misc.metal b/ggml/src/ggml-metal/kernel
          embed_data[2 * half_] = 0.f;
      }
  }
- 
- kernel void kernel_opt_step_adamw_f32(
-         constant    ggml_metal_kargs_opt_step_adamw & args,
-         device       float * x,
-         device const float * g,
