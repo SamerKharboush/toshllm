@@ -113,12 +113,14 @@ struct ServerSettings {
     /// prompt speed without paying the per-layer wait across every card.
     var splitGroupSize: Int = 0
     /// Hand off activations between GPUs with shared Metal events instead of
-    /// draining both queues on every copy (TOSH_MGPU_EVENTS). Inert on a layer
-    /// split; on a tensor split it is most of the generation speed.
+    /// draining both queues on every copy (TOSH_MGPU_EVENTS). Only a tensor split
+    /// hands off often enough for it to pay; on a layer split it deadlocks the
+    /// split above a few hundred prompt tokens, so it is gated off there.
     var mgpuEvents: Bool = true
     /// When two split GPUs share a Metal peer group (Infinity Fabric Link, e.g. a
     /// W6800X/Vega II Duo), copy activations die-to-die instead of via host
-    /// (TOSH_MGPU_PEER). Worth 16% of the prefill, and only safe alongside mgpuEvents.
+    /// (TOSH_MGPU_PEER). Only set when the cards actually share a peer group; measured
+    /// effect on a non-bridged pair was 0.00, so an unbridged split skips it.
     var mgpuPeer: Bool = true
     /// Force VRAM-resident (private) Metal buffers. The backend forces shared ones
     /// for external GPUs, which streams weights over Thunderbolt every op; this
@@ -670,8 +672,18 @@ struct ServerSettings {
         if effectiveFaAmd { env["TOSH_FA_AMD"] = "1" }
         // Only a tensor split reduces across cards, which is the copy the bridge speeds up.
         // A layer split has nothing for it to carry.
-        if mgpuPeer && isSplitting && effectiveSplitMode == "tensor" { env["TOSH_MGPU_PEER"] = "1" }
-        if mgpuEvents && isSplitting { env["TOSH_MGPU_EVENTS"] = "1" }
+        if mgpuPeer && isSplitting && effectiveSplitMode == "tensor" && Self.peerBridgeAvailable {
+            env["TOSH_MGPU_PEER"] = "1"
+        }
+        // Only a tensor split hands off activations often enough to matter, and on a
+        // layer split it is not inert -- measured on a non-bridged pair (2x FirePro D700):
+        // at 14B the shared-event hand-off deadlocked the layer split at p >= 257 (Metal
+        // command buffer status 5, GPU Timeout Error) while the generic host staging path
+        // ran the same prompt at 23.1 t/s. At 27B the threshold was p >= 129. With events
+        // off, both models run every prompt length tested.
+        if mgpuEvents && isSplitting && effectiveSplitMode == "tensor" {
+            env["TOSH_MGPU_EVENTS"] = "1"
+        }
         // Groups only mean anything inside a tensor split, and only when they are
         // smaller than the split itself and divide it evenly.
         if effectiveSplitMode == "tensor", let g = effectiveSplitGroupSize {
@@ -764,6 +776,21 @@ struct ServerSettings {
     /// gpuList is persisted as a comma-separated string so @AppStorage can bind it.
     static func gpuList(fromCSV csv: String?) -> [Int] {
         (csv ?? "").split(separator: ",").compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
+    }
+
+    /// Whether any two of the GPUs that would carry a split are on a real bridge.
+    ///
+    /// `TOSH_MGPU_PEER` trades a host hop for a die-to-die copy, which is only a win when
+    /// the cards can actually address each other. Measured on a non-bridged pair
+    /// (2x FirePro D700, peer group 0) at 14B on a tensor split: pp 41.4 with peer off vs
+    /// 43.1 with it on, but holding events on, peer alone moved pp by 0.00 and tg by 0.00
+    /// (docs/mgpu-peer-2026-10-02.md). The flag used to default on regardless of topology,
+    /// so an unbridged pair paid for a copy that bought nothing.
+    ///
+    /// A group of two or more is the only evidence of a link: a card with no bridge reports
+    /// group 0, and `peerGroups` drops those.
+    static var peerBridgeAvailable: Bool {
+        HardwareInfo.detect().peerGroups.contains { $0.count >= 2 }
     }
 
     static func resolvedThreads(_ d: UserDefaults) -> Int {

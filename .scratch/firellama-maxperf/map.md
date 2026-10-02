@@ -60,13 +60,14 @@ Firellama runs the biggest models this Mac Pro can hold at the fastest tok/s it 
 | --- | --- | --- | --- | --- |
 | 01 | Timestep red loop | task | resolved | — |
 | 02 | Timestep correct fix as 0114 | task | resolved | 01 |
-| 03 | mgpuPeer default | task | open | — |
-| 04 | Device-env contract | task | open | — |
+| 03 | mgpuPeer default | task | resolved — gated on peerGroups | — |
+| 04 | Device-env contract | task | resolved — premise refuted | — |
 | 05 | Fit-abort warning | task | resolved | — |
-| 06 | MoE split-budget sizing | task | open | feeds from 08 |
+| 06 | MoE split-budget sizing | task | resolved — planner dormant, latent one-card read | 08 |
 | 07 | External server host | research | resolved | — |
-| 08 | 27B acceptance run | task | open — needs a free machine | machine free |
+| 08 | 27B acceptance run | task | resolved — 11.54 pp512 / 6.22 tg64 | — |
 | 09 | External server LAN fix | task | code landed, runtime proof owed | 07 |
+| 10 | Events + layer split deadlock | bug | app-level resolved, engine defect open | found by 08 |
 
 ## Blocked
 
@@ -79,5 +80,12 @@ Firellama runs the biggest models this Mac Pro can hold at the fastest tok/s it 
     no Xcode, so the symbol does not exist to compile against.
   Both were left untouched: a build fix that cannot be tested here is not worth shipping, and
   ChatTab needs a real 26 SDK regardless.
-- Tickets 03, 04, 06, 08 need an idle machine for measured runs.
+- Ticket 10's engine half: `ggml_metal_cpy_xdev_events` has no bounded cross-device wait, so a
+  stalled pair runs to the Metal watchdog instead of reporting. The app no longer reaches it
+  (events are gated to tensor splits), but the engine defect is unfixed.
+- `ggml-backend-meta.cpp:1224` — a tensor split asserts
+  `split_state.ne[j] % div == 0` on the 27B `qwen35` model, with or without events. The layer
+  split is the only option for that model.
+- `ggml-metal-device.m:3477` — `NSMakeRange(bid_dst.offs, bid_dst.offs + size)` passes a
+  length where a length belongs; the offset is used as the count.
 - Ticket 09's LAN curl needs a second host and a working build.
