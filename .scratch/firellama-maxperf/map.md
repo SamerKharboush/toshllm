@@ -44,6 +44,9 @@ Firellama runs the biggest models this Mac Pro can hold at the fastest tok/s it 
 - 35B-class MoE on split budget + 64GB RAM (ticketable after 27B passes).
 - Whisper / stable-diffusion engines under split budget (phase 2; llama engine + app first).
 - Precompiled `default.metallib` (143s first-load shader compile is annoying, not blocking).
+  **Blocked on this machine**: `xcodebuild -downloadComponent MetalToolchain` requires an Xcode
+  app and there is none; `softwareupdate` does not offer the toolchain. Needs a machine with
+  Xcode to build a DMG that has them.
 - Per-buffer 3.5GB ceiling workarounds if a real model hits the `:1154` abort.
 
 ## Out of scope
@@ -69,6 +72,7 @@ Firellama runs the biggest models this Mac Pro can hold at the fastest tok/s it 
 | 09 | External server LAN fix | task | code landed, runtime proof owed | 07 |
 | 10 | Events + layer split deadlock | bug | resolved — app gate + engine fix in 0115 | found by 08 |
 | 11 | Engine xdev stall, NSRange, split assert | bug | resolved (split assert diagnosed, not fixed) | 10 |
+| 12 | Ship hardening: LAN proof, memset test, CI probe | bug + test | resolved except notarization and Metal toolchain | release |
 
 ## Blocked
 

@@ -1,0 +1,139 @@
+diff --git a/tests/CMakeLists.txt b/tests/CMakeLists.txt
+--- a/tests/CMakeLists.txt
++++ b/tests/CMakeLists.txt
+@@ -382,6 +382,11 @@
+     target_compile_definitions(test-export-graph-ops PRIVATE LLAMA_HF_FETCH)
+ endif()
+ 
++if (GGML_METAL)
++    # Run on Metal specifically: the range bug this guards was in the Metal buffer path.
++    llama_build_and_test(test-metal-memset.cpp)
++endif()
++
+ if (TOSH_ENABLE_DYNAMIC_MOE)
+     add_executable(test-tosh-moe-cache test-tosh-moe-cache.cpp ../tosh-moe/tosh-moe-cache.cpp)
+     target_include_directories(test-tosh-moe-cache PRIVATE ../tosh-moe)
+diff --git a/tests/test-metal-memset.cpp b/tests/test-metal-memset.cpp
+new file mode 100644
+--- /dev/null
++++ b/tests/test-metal-memset.cpp
+@@ -0,0 +1,119 @@
++// Fills a sub-range of a backend buffer and checks the bytes outside it.
++//
++// The Metal path built the fill range with NSMakeRange(offs, offs + size). NSRange is
++// (location, length), so the length was the END offset and the fill ran `offs` bytes past
++// the region the caller asked for. A call with a non-zero offset therefore overwrote the
++// tail of the tensor, and on the last tensor in a buffer it ran past the buffer itself.
++//
++// Nothing in a text forward pass calls memset_tensor at a non-zero offset, so the backend
++// suite never caught it. This test does, on whichever backend is passed on the command
++// line (MTL0 to run the Metal path).
++
++#include "ggml.h"
++#include "ggml-alloc.h"
++#include "ggml-backend.h"
++
++#include <cstdio>
++#include <cstring>
++#include <vector>
++
++static int g_fail = 0;
++
++static void check(bool ok, const char * what) {
++    if (!ok) {
++        printf("  FAIL %s\n", what);
++        g_fail++;
++    }
++    printf("  %s %s\n", ok ? "ok  " : "FAIL", what);
++}
++
++// One region filled, with guard bytes on both sides that must not move.
++static void test_one(ggml_backend_t backend, int64_t nbytes, size_t offset, size_t size, uint8_t value) {
++    printf("nbytes=%lld offset=%zu size=%zu value=%u\n",
++           (long long) nbytes, offset, size, (unsigned) value);
++
++    struct ggml_init_params params = {
++        /*.mem_size   =*/ ggml_tensor_overhead(),
++        /*.mem_buffer =*/ NULL,
++        /*.no_alloc   =*/ true,
++    };
++
++    struct ggml_context * ctx = ggml_init(params);
++
++    struct ggml_tensor * t = ggml_new_tensor_1d(ctx, GGML_TYPE_I8, nbytes);
++    ggml_set_name(t, "memset_target");
++
++    ggml_backend_buffer_t buf = ggml_backend_alloc_ctx_tensors(ctx, backend);
++    check(buf != NULL, "buffer allocated");
++    if (buf == NULL) {
++        ggml_free(ctx);
++        return;
++    }
++
++    // A known pattern everywhere, so a byte that moves is detectable regardless of value.
++    const uint8_t seed = 0xA5;
++    std::vector<uint8_t> host(nbytes, seed);
++    ggml_backend_tensor_set(t, host.data(), 0, nbytes);
++
++    ggml_backend_tensor_memset(t, value, offset, size);
++    ggml_backend_synchronize(backend);
++
++    std::vector<uint8_t> out(nbytes, 0);
++    ggml_backend_tensor_get(t, out.data(), 0, nbytes);
++
++    size_t bad_before = 0;
++    for (size_t i = 0; i < offset; i++) {
++        if (out[i] != seed) bad_before++;
++    }
++
++    size_t bad_inside = 0;
++    for (size_t i = offset; i < offset + size; i++) {
++        if (out[i] != value) bad_inside++;
++    }
++
++    size_t bad_after = 0;
++    for (size_t i = offset + size; i < (size_t) nbytes; i++) {
++        if (out[i] != seed) bad_after++;
++    }
++
++    char msg[256];
++    snprintf(msg, sizeof(msg), "bytes before the range untouched (offset %zu, %zu clobbered)", offset, bad_before);
++    check(bad_before == 0, msg);
++    snprintf(msg, sizeof(msg), "bytes inside the range filled (%zu unfilled of %zu)", bad_inside, size);
++    check(bad_inside == 0, msg);
++    snprintf(msg, sizeof(msg), "bytes after the range untouched (%zu clobbered)", bad_after);
++    check(bad_after == 0, msg);
++
++    ggml_backend_buffer_free(buf);
++    ggml_free(ctx);
++}
++
++int main(int argc, char ** argv) {
++    const char * backend_name = argc > 1 ? argv[1] : "MTL0";
++
++    ggml_backend_t backend = ggml_backend_init_by_name(backend_name, nullptr);
++    if (backend == NULL) {
++        printf("no backend named '%s'\n", backend_name);
++        return 77; // skipped
++    }
++    printf("backend: %s (%s)\n", backend_name, ggml_backend_name(backend));
++
++    // offset 0: the length bug is invisible, the fill is already right-sized.
++    test_one(backend, 4096,    0,  256, 0x00);
++    // A non-zero offset is the whole point: pre-fix this overfilled by `offset` bytes.
++    test_one(backend, 4096, 1024,  256, 0xFF);
++    test_one(backend, 4096, 3584,  256, 0x5A);
++    // Offset past the halfway point, so an overfill runs to the end of the tensor.
++    test_one(backend, 4096, 4000,   16, 0x11);
++    // Fills the tail exactly: nothing after it, so only a short size is caught.
++    test_one(backend, 4096, 2048, 2048, 0x7E);
++
++    ggml_backend_free(backend);
++
++    if (g_fail) {
++        printf("FAILED: %d check(s)\n", g_fail);
++        return 1;
++    }
++    printf("all checks passed\n");
++    return 0;
++}
