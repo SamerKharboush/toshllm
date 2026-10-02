@@ -4,6 +4,7 @@ import Metal
 import Combine
 import AVFoundation
 import ImageIO
+import UniformTypeIdentifiers
 
 /// A model-supported video size.
 struct VideoGenSize: Identifiable, Hashable {
@@ -437,6 +438,25 @@ final class VideoGenerator: ObservableObject {
 
     func cancel() { process?.terminate() }
 
+    /// Playback data for a frame. The thumbnail is decoded off the main actor, which is
+    /// the expensive part, but it hands back `Data` rather than an `NSImage`: AppKit types
+    /// are main-actor bound, so returning one from a detached task is not sound. The caller
+    /// builds the `NSImage` on the main actor.
+    nonisolated static func displayFrameData(_ url: URL) -> Data? {
+        let opts: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceThumbnailMaxPixelSize: 960,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+        ]
+        guard let src = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let cg = CGImageSourceCreateThumbnailAtIndex(src, 0, opts as CFDictionary)
+        else { return try? Data(contentsOf: url) }
+        let out = NSMutableData()
+        guard let dest = CGImageDestinationCreateWithData(out, UTType.png.identifier as CFString, 1, nil) else { return nil }
+        CGImageDestinationAddImage(dest, cg, nil)
+        return CGImageDestinationFinalize(dest) ? out as Data : nil
+    }
+
     /// Playback copy: full frames are only needed for the mp4, which reads the PNGs.
     nonisolated static func displayFrame(_ url: URL) -> NSImage? {
         let opts: [CFString: Any] = [
@@ -486,9 +506,10 @@ final class VideoGenerator: ObservableObject {
         progress = 1
         lastDuration = elapsed
         Task.detached(priority: .userInitiated) {
-            let decoded = urls.compactMap { Self.displayFrame($0) }
+            // Data crosses the boundary; the NSImages are built on the main actor.
+            let data = urls.compactMap { Self.displayFrameData($0) }
             await MainActor.run {
-                self.frames = decoded
+                self.frames = data.compactMap(NSImage.init(data:))
                 self.state = .done
                 self.onFinish?()
             }

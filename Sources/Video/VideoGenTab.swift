@@ -799,11 +799,13 @@ private struct VideoPlaybackView: View {
         }
         .task(id: result.id) {
             let urls = result.frameURLs
-            let decoded = await Task.detached(priority: .userInitiated) {
-                urls.compactMap(VideoGenerator.displayFrame)
+            // Decoded off the main actor as Data (Sendable); NSImage is built here,
+            // because AppKit types are main-actor bound.
+            let frames = await Task.detached(priority: .userInitiated) { () -> [Data] in
+                urls.compactMap(VideoGenerator.displayFrameData)
             }.value
             guard !Task.isCancelled else { return }
-            playbackFrames = decoded
+            playbackFrames = frames.compactMap(NSImage.init(data:))
             frameIndex = 0
         }
     }

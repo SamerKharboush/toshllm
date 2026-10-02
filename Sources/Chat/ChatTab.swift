@@ -115,6 +115,11 @@ struct ChatMainView: View {
         }
         .navigationTitle("")
         .toolbar {
+            // `sharedBackgroundVisibility` only exists in the macOS 26 SDK. A runtime
+            // `#available` is not enough: the compiler still has to resolve the symbol,
+            // so an older toolchain fails to build. This matches the guard GlassStyle.swift
+            // already uses for the same reason.
+            #if compiler(>=6.2)
             if #available(macOS 26.0, *) {
                 ToolbarItem(placement: .navigation) { toolbarIdentity }
                     .sharedBackgroundVisibility(.hidden)
@@ -127,6 +132,11 @@ struct ChatMainView: View {
                 ToolbarItem(placement: .principal) { modePicker }
                 toolbarActions
             }
+            #else
+            ToolbarItem(placement: .navigation) { toolbarIdentity }
+            ToolbarItem(placement: .principal) { modePicker }
+            toolbarActions
+            #endif
         }
         .hiddenChatToolbarBackground()
         .onAppear {

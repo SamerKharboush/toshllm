@@ -1,0 +1,115 @@
+diff --git a/ggml/src/ggml-metal/ggml-metal-context.m b/ggml/src/ggml-metal/ggml-metal-context.m
+--- a/ggml/src/ggml-metal/ggml-metal-context.m
++++ b/ggml/src/ggml-metal/ggml-metal-context.m
+@@ -2134,7 +2134,11 @@
+             atomic_fetch_add(&g_tr_bytes_peer, size);
+         }
+ 
+-        const uint64_t seq = ++link->seq;
++        // The sequence number is claimed only once the hand-off has been committed on both
++    // sides. The host wait below can fail, and the generic path reads the same source
++    // buffer through ggml_metal_synchronize, so it must not leave a claimed sequence
++    // behind that nothing will ever signal.
++    const uint64_t seq = link->seq + 1;
+         @autoreleasepool {
+             if (tosh_mgpu_trace()) atomic_fetch_add(&g_tr_cmd_all, 1);
+             id<MTLCommandBuffer> cmd_src = [ctx_src->queue commandBuffer];
+@@ -2212,6 +2216,20 @@
+             (unsigned long long) atomic_load(&g_xdev_ev),
+             (unsigned long long) atomic_load(&g_xdev_peer),
+             (unsigned long long) atomic_load(&g_xdev_gen));
++}
++
++// How long a cross-device hand-off may wait for its partner before the copy gives up and
++// the generic host-staging path takes over. Long enough that a legitimately busy card
++// never trips it, short enough that a stalled pair reports itself well inside the Metal
++// watchdog (which is what turns a stall into a bare "status 5" today).
++static int64_t xdev_wait_timeout_ms(void) {
++    static int64_t v = -1;
++    if (v < 0) {
++        const char * e = TOSH_ENV("TOSH_MGPU_XDEV_TIMEOUT_MS");
++        long n = e ? strtol(e, NULL, 10) : 0;
++        v = n > 0 ? n : 2000;
++    }
++    return v;
+ }
+ 
+ static bool ggml_metal_cpy_xdev_events(ggml_metal_t ctx_src, ggml_metal_t ctx_dst,
+@@ -2255,10 +2273,42 @@
+         if (tosh_mgpu_trace()) atomic_fetch_add(&g_tr_signals, 1);
+         [cmd_src encodeSignalEvent:link->ev_ready value:seq];
+         ggml_metal_cmd_buf_end(ctx_src, cmd_src, false);
++        link->seq = seq;
+ 
+-        id<MTLCommandBuffer> cmd_dst = ggml_metal_cmd_buf_new(ctx_dst);
++        // The destination waits on the host, not on its queue. Encoding a GPU-side
++        // wait for ev_ready would append this copy behind whatever the destination
++        // already has queued, so a destination parked on a long graph could not drain
++        // the hand-off that graph itself is waiting for -- the pair then stalls until the
++        // Metal watchdog kills the command buffer. Measured on 2x FirePro D700 with a
++        // layer split: the stall was reached on the third cross-device copy, and the
++        // xdev tally froze at 2. Waiting here bounds it, and the copy still lands in the
++        // destination's held command buffer, which is its current position in the queue.
++        const int64_t timeout_ms = xdev_wait_timeout_ms();
+         if (tosh_mgpu_trace()) atomic_fetch_add(&g_tr_waits, 1);
+-        [cmd_dst encodeWaitForEvent:link->ev_ready value:seq];
++        if (![link->ev_ready waitUntilSignaledValue:seq timeoutMS:timeout_ms]) {
++            // Nothing is waiting on ev_done for this sequence, so the pair is not deadlocked
++            // by this call: the destination simply has not reached its own submission point.
++            // Report it and hand the copy to the generic path rather than hang until the
++            // driver gives up.
++            GGML_LOG_ERROR("%s: cross-device hand-off stalled after %lld ms waiting for the source "
++                           "(sequence %llu); falling back to host staging\n",
++                           __func__, (long long) timeout_ms, (unsigned long long) seq);
++            // The source's blit was committed and it signalled ev_ready, so the shared host
++            // block is live and ev_done for this sequence will never come. Drain both queues
++            // and complete the sequence by hand, or the next hand-off's
++            // `waitForEvent:ev_done value:seq` waits on a signal nobody will send.
++            ggml_metal_synchronize(ctx_src);
++            ggml_metal_synchronize(ctx_dst);
++            [link->ev_ready setSignaledValue:seq];
++            [link->ev_done  setSignaledValue:seq];
++            return false;
++        }
++
++        // hold_dst means this copy belongs to the destination's graph, so it goes into the
++        // buffer that graph is still encoding into; otherwise it is a standalone copy and
++        // gets its own.
++        id<MTLCommandBuffer> cmd_dst = hold_dst ? ggml_metal_cmd_buf_continue(ctx_dst)
++                                                : ggml_metal_cmd_buf_new(ctx_dst);
+         id<MTLBlitCommandEncoder> enc_dst = [cmd_dst blitCommandEncoder];
+         [enc_dst copyFromBuffer:link->wrap_dst sourceOffset:0
+                        toBuffer:bid_dst.metal destinationOffset:bid_dst.offs size:size];
+diff --git a/ggml/src/ggml-metal/ggml-metal-device.m b/ggml/src/ggml-metal/ggml-metal-device.m
+--- a/ggml/src/ggml-metal/ggml-metal-device.m
++++ b/ggml/src/ggml-metal/ggml-metal-device.m
+@@ -3474,8 +3474,10 @@
+         {
+             id<MTLBlitCommandEncoder> encoder = [cmd_buf blitCommandEncoder];
+ 
++            // NSRange is (location, length): the length is `size`, not the end offset.
++            // Passing `offs + size` overfils by `offs` bytes and can run past the buffer.
+             [encoder fillBuffer:bid_dst.metal
+-                          range:NSMakeRange(bid_dst.offs, bid_dst.offs + size)
++                          range:NSMakeRange(bid_dst.offs, size)
+                           value:value];
+ 
+             [encoder endEncoding];
+diff --git a/ggml/src/ggml-backend-meta.cpp b/ggml/src/ggml-backend-meta.cpp
+--- a/ggml/src/ggml-backend-meta.cpp
++++ b/ggml/src/ggml-backend-meta.cpp
+@@ -1221,7 +1221,13 @@
+                         split_state.ne[j] *= tensor->ne[split_state.axis];
+                         if (split_state.ne[j] != 0 || tensor->src[i]->ne[src_ss[i].axis] != 0) {
+                             const int64_t div = tensor->src[i]->ne[src_ss[i].axis] * split_state.nr[0];
+-                            GGML_ASSERT(split_state.ne[j] % div == 0);
++                            if (split_state.ne[j] % div != 0) {
++                                GGML_ABORT("%s: %s cannot be tensor-split: src %d ne[%d]=%lld x ratio %lld does not divide ne[%d]=%lld (axis %d)",
++                                    __func__, ggml_op_name(tensor->op), (int) i,
++                                    (int) src_ss[i].axis, (long long) tensor->src[i]->ne[src_ss[i].axis],
++                                    (long long) split_state.nr[0], (int) j, (long long) split_state.ne[j],
++                                    (int) split_state.axis);
++                            }
+                             split_state.ne[j] /= div;
+                         }
+                     }

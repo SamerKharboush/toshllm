@@ -1,6 +1,6 @@
 # 10 — TOSH_MGPU_EVENTS deadlocks a layer split above a token threshold
 
-Status: resolved (app-level gate); engine defect open
+Status: resolved (app gate + engine fix)
 Type: bug
 
 ## Question
@@ -90,12 +90,21 @@ all — see ticket 08) gets the generic path that runs.
 
 ## Still open (engine)
 
-The deadlock is worked around, not fixed. `ggml_metal_cpy_xdev_events`
-(`ggml-metal-context.m:2217`) has no fallback once it has committed a wait on `ev_ready` /
-signalled `ev_done`; there is no watchdog on the pair, so the stall runs to the Metal timeout.
-A proper fix needs a bounded cross-device wait that reports the stall rather than hanging.
-Not attempted: it needs an engine rebuild and a re-measurement sweep, and the app-level gate
-removes the failure from every reachable user path.
+The destination's GPU-side `waitForEvent:ev_ready` was encoded into a **new** command buffer,
+which appends the copy behind whatever the destination already has queued — so a destination
+parked on a long graph could not drain the hand-off that graph was waiting for.
+
+Fixed in patch 0115 (ticket 11): the wait moves to the host with a bounded timeout, and a
+timeout drains both queues, completes the sequence by hand, and falls back to the generic
+path.
+
+Measured on the rebuilt engine: 14B layer p=512 21.23/5.09 (was `res = -3` at `events=2`),
+27B layer p=512 11.51/6.20 (was `res = -3` at p>=129), 14B p=1024 26.65. Backend suite
+10701/10701.
+
+The app gate still stands: events are a wash on a layer split (21.24 vs 21.29 at p=512), so
+they are still only set on a tensor split. What changed is that forcing them on no longer
+kills the run.
 
 ## Comments
 

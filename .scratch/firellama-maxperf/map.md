@@ -67,7 +67,8 @@ Firellama runs the biggest models this Mac Pro can hold at the fastest tok/s it 
 | 07 | External server host | research | resolved | — |
 | 08 | 27B acceptance run | task | resolved — 11.54 pp512 / 6.22 tg64 | — |
 | 09 | External server LAN fix | task | code landed, runtime proof owed | 07 |
-| 10 | Events + layer split deadlock | bug | app-level resolved, engine defect open | found by 08 |
+| 10 | Events + layer split deadlock | bug | resolved — app gate + engine fix in 0115 | found by 08 |
+| 11 | Engine xdev stall, NSRange, split assert | bug | resolved (split assert diagnosed, not fixed) | 10 |
 
 ## Blocked
 
@@ -80,12 +81,9 @@ Firellama runs the biggest models this Mac Pro can hold at the fastest tok/s it 
     no Xcode, so the symbol does not exist to compile against.
   Both were left untouched: a build fix that cannot be tested here is not worth shipping, and
   ChatTab needs a real 26 SDK regardless.
-- Ticket 10's engine half: `ggml_metal_cpy_xdev_events` has no bounded cross-device wait, so a
-  stalled pair runs to the Metal watchdog instead of reporting. The app no longer reaches it
-  (events are gated to tensor splits), but the engine defect is unfixed.
-- `ggml-backend-meta.cpp:1224` — a tensor split asserts
-  `split_state.ne[j] % div == 0` on the 27B `qwen35` model, with or without events. The layer
-  split is the only option for that model.
-- `ggml-metal-device.m:3477` — `NSMakeRange(bid_dst.offs, bid_dst.offs + size)` passes a
-  length where a length belongs; the offset is used as the count.
+- The 27B `qwen35` SSM state reshape cannot be tensor-split at all: `ne[0]=6144` does not
+  divide `ne[0]=9216`. The abort now names the op and the dimensions instead of failing a
+  bare assert, but the limit stands and the layer split is that model's only option.
+  Fixing it properly needs a build with tensor split and a numerical A/B against a
+  single-GPU run, which this hardware cannot host.
 - Ticket 09's LAN curl needs a second host and a working build.

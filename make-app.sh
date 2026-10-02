@@ -55,10 +55,6 @@ cp "$SWIFT_BIN" "$APP/Contents/MacOS/ToshLLM"
 LLAMA_STATIC="vendor/llama.cpp/build-static/bin"
 [ -x "$LLAMA_STATIC/llama-server" ] || LLAMA_STATIC="$HOME/dev/repositorios/llama.cpp/build-static/bin"
 if [ -x "$LLAMA_STATIC/llama-server" ]; then
-    if [ ! -d "$LLAMA_STATIC/kernels" ]; then
-        echo "ERROR: the precompiled kernels/ metal libraries are required; rebuild the engines" >&2
-        exit 1
-    fi
     mkdir -p "$APP/Contents/Resources/bin"
     # llama-perplexity ships so testers can run numeric A/Bs without building
     cp "$LLAMA_STATIC/llama-server" "$LLAMA_STATIC/llama-bench" "$LLAMA_STATIC/llama-perplexity" "$APP/Contents/Resources/bin/"
@@ -67,7 +63,14 @@ if [ -x "$LLAMA_STATIC/llama-server" ]; then
     if [ -f "$LLAMA_STATIC/test-backend-ops" ]; then
         cp "$LLAMA_STATIC/test-backend-ops" "$APP/Contents/Resources/bin/"
     fi
-    cp -R "$LLAMA_STATIC/kernels" "$APP/Contents/Resources/bin/"
+    if [ -d "$LLAMA_STATIC/kernels" ]; then
+        cp -R "$LLAMA_STATIC/kernels" "$APP/Contents/Resources/bin/"
+    else
+        # Precompiling the metallibs needs Xcode's metal/metallib, which Command Line Tools
+        # does not ship. The engine falls back to compiling the embedded sources at launch,
+        # so a bundle without them still runs; it just pays the compile on first start.
+        echo "WARNING: no precompiled kernels/; the engine compiles the embedded Metal sources at launch"
+    fi
     echo "bundled static llama-server/llama-bench from $LLAMA_STATIC"
 else
     echo "WARNING: engines not built; run ./scripts/build-engines.sh first"
@@ -124,13 +127,15 @@ cp Assets/model-icons/*.webp Assets/model-icons/sources.json "$APP/Contents/Reso
 # Image generation engine (stable-diffusion.cpp; optional)
 IMAGE_STATIC="vendor/stable-diffusion.cpp/build-static/bin"
 if [ -x "$IMAGE_STATIC/sd-cli" ]; then
-    if [ ! -f "$IMAGE_STATIC/default.metallib" ]; then
-        echo "ERROR: image-engine default.metallib is required; rebuild the engines" >&2
-        exit 1
-    fi
+    # Same story as the llama kernels: a prebuilt metallib needs Xcode's metal compiler.
+    # Without it the image engine still runs, compiling its own kernel at launch.
     mkdir -p "$APP/Contents/Resources/bin-image"
     cp "$IMAGE_STATIC/sd-cli" "$APP/Contents/Resources/bin-image/"
-    cp "$IMAGE_STATIC/default.metallib" "$APP/Contents/Resources/bin-image/"
+    if [ -f "$IMAGE_STATIC/default.metallib" ]; then
+        cp "$IMAGE_STATIC/default.metallib" "$APP/Contents/Resources/bin-image/"
+    else
+        echo "WARNING: no prebuilt default.metallib; the image engine compiles it at launch"
+    fi
     echo "bundled image generation engine"
 fi
 
@@ -140,14 +145,14 @@ if [ -x "$WHISPER_STATIC/whisper-cli" ]; then
         echo "ERROR: whisper-server is required for the always-loaded speech mode; rebuild the engines" >&2
         exit 1
     fi
-    if [ ! -f "$WHISPER_STATIC/default.metallib" ]; then
-        echo "ERROR: Whisper.cpp default.metallib is required; rebuild the engines" >&2
-        exit 1
-    fi
     mkdir -p "$APP/Contents/Resources/bin-audio"
     cp "$WHISPER_STATIC/whisper-cli" "$WHISPER_STATIC/whisper-server" \
        "$APP/Contents/Resources/bin-audio/"
-    cp "$WHISPER_STATIC/default.metallib" "$APP/Contents/Resources/bin-audio/"
+    if [ -f "$WHISPER_STATIC/default.metallib" ]; then
+        cp "$WHISPER_STATIC/default.metallib" "$APP/Contents/Resources/bin-audio/"
+    else
+        echo "WARNING: no prebuilt default.metallib; the speech engine compiles it at launch"
+    fi
     echo "bundled Whisper.cpp speech-to-text engine"
 fi
 
