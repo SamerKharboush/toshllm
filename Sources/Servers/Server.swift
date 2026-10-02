@@ -1921,7 +1921,10 @@ final class ServerController: ObservableObject {
         return SHA256.hash(data: data).prefix(6).map { String(format: "%02x", $0) }.joined()
     }
 
-    nonisolated static func startupBanner(settings: ServerSettings) -> String {
+    /// `args` is the command line actually handed to the engine, which differs from
+    /// `settings.arguments` after a retry (no mmproj, layer split). The log has to show
+    /// what ran, not what is saved, or a later failure reads as a contradiction.
+    nonisolated static func startupBanner(settings: ServerSettings, args: [String]) -> String {
         func redact(_ items: [String]) -> [String] {
             var out = items
             if let i = out.firstIndex(of: "--api-key"), i + 1 < out.count { out[i + 1] = "***" }
@@ -1969,7 +1972,7 @@ final class ServerController: ObservableObject {
          settings: ngl=\(settings.ngl) \(moeLine) ctx=\(settings.ctx) fa=\(settings.flashAttn) ctk=\(settings.cacheTypeK) ctv=\(settings.cacheTypeV) cacheRAM=\(settings.cacheRAM)
          dflash : \(settings.routerMode ? "per-model router plan" : settings.dflashPlanSummary)
          env: \(envLine)
-         args: \(redact(settings.arguments).joined(separator: " "))
+         args: \(redact(args).joined(separator: " "))
         ========================================================
 
         """
@@ -1996,13 +1999,13 @@ final class ServerController: ObservableObject {
         var args = settings.arguments
         if retryWithoutMmproj, let i = args.firstIndex(of: "--mmproj") {
             args.removeSubrange(i ..< min(i + 2, args.count))   // drop "--mmproj <path>"
+        }
         // The engine reported that this model has no two-way tensor split (exit 86).
         // Retrying with layers is the only setting that works for it, so do it rather than
         // leave the user staring at a failed server. The setting itself is untouched, so the
         // choice is re-tested next time rather than silently overridden forever.
         if retryLayerSplit, let i = args.firstIndex(of: "--split-mode"), i + 1 < args.count {
             args[i + 1] = "layer"
-        }
         }
         p.arguments = args
         p.environment = settings.environment
@@ -2081,7 +2084,7 @@ final class ServerController: ObservableObject {
         }
 
         fileLog.startSession()   // new timestamped per-session file, prunes old ones
-        consume(Self.startupBanner(settings: settings))
+        consume(Self.startupBanner(settings: settings, args: args))
         if let plan = autoPlan {
             consume("[ToshLLM] memory plan: \(AutoMemoryText.summary(plan, runtime: nil)) | \(AutoMemoryText.reason(plan))\n")
         }

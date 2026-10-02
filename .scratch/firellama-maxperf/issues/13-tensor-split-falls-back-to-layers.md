@@ -58,8 +58,33 @@ Same model, same two D700s, same command:
 Layer split, 27B PQ2_0, both D700s: listening, and a chat request answers
 coherently with `finish_reason: stop` at 6.18 tok/s.
 
+One follow-up defect was found and fixed while measuring this. The `--split-mode
+layer` override was written **inside** the `if retryWithoutMmproj` braces, so when
+that flag was false the rewrite never ran and the retry launched with tensor again.
+It looked correct in the source and fired correctly in the app log. Only the
+engine's own log showed the truth: one `args:` line, still `tensor`, and a second
+exit 86. The override is now a sibling `if`.
+
+The startup banner also reports the command line **actually handed to the engine**
+rather than the saved settings, so after a retry the log shows `layer`. Reading
+`layer` in the banner next to `tensor` in the settings is the record of a retry,
+not a contradiction.
+
+Re-measured end to end after both fixes, tensor split selected:
+
+  launch 1  --split-mode tensor  exit 86, RESHAPE ne[0]=6144 / 9216
+  launch 2  --split-mode layer   listening on http://127.0.0.1:18095
+
+Chat through the fallback server answers coherently with `finish_reason: stop`.
+
+The engine binary also self-identified as `0.87.14-beta.1 (app 0.87.14-beta.2)`
+because a direct cmake build had baked an older `TOSH_VERSION` into the cache.
+Rebuilt through `scripts/build-engines.sh`, which reads `VERSION`; the log now
+reads `ToshLLM engine 0.87.14-beta.2 (app 0.87.14-beta.2)`.
+
 The full 123-patch series applies in order to a pristine checkout of the pinned
-llama.cpp commit; 0128 reverse-applies against the vendor tree.
+llama.cpp commit; 0128 reverse-applies against the vendor tree. Backend ops and
+`test-metal-memset` both pass on the rebuilt engine.
 
 ## Why not mark the tensor unsplittable
 
