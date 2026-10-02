@@ -192,7 +192,7 @@ def test_curve_fit(h):
     fitted = reply["parameters"]
     assert near(fitted["a"], 2, 1e-6) and near(fitted["b"], 0.7, 1e-6) and near(fitted["c"], 0.5, 1e-6), reply
     assert near(reply["r_squared"], 1.0), reply
-    assert code(h.call("optimize", "curve_fit", expression="a*x + b", x=xs, y=ys)) == "missing_initial_guess"
+    assert code(h.call("optimize", "curve_fit", expression="a*exp(b*x)", x=xs, y=ys)) == "missing_initial_guess"
     reply = h.call("optimize", "fit_residuals", residuals=["a + b - 3", "a - b - 1"], initial_guess={"a": 0, "b": 0})
     assert near(reply["solution"]["a"], 2, 1e-6) and near(reply["solution"]["b"], 1, 1e-6), reply
 
@@ -206,6 +206,16 @@ def test_interpolation(h):
     assert code(h.call("compute", "interpolate", x=[0, 1, 1], y=[0, 1, 2], at=[0.5])) == "invalid_arguments"
     assert code(h.call("compute", "interpolate", x=[0, 1], y=[0, 1], at=[0.5], kind="cubic")) == "invalid_arguments"
     assert code(h.call("compute", "interpolate", x=[0, 1, 2], y=[0, 1], at=[0.5])) == "invalid_dimensions"
+    assert h.call("compute", "interpolate", x=[[0, 0], [2, 4]], at=1)["values"] == [2.0]
+    reply = h.call("compute", "interpolate", x=[0, 2], at=[1])
+    assert code(reply) == "invalid_arguments" and "value at each x" in reply["error"]["message"], reply
+    reply = h.call("compute", "interpolate", expression="[(0, 1), (2, 5)]", x=["1"])
+    assert reply["values"] == [3.0], reply
+    assert code(h.call("compute", "interpolate", expression="x**2", x=[1])) == "invalid_arguments"
+    assert h.call("compute", "interpolate", expression="cubic spline", x=[0, 1, 2, 3], y=[0, 1, 8, 27], at=[1.5])["kind"] == "cubic"
+    # empty placeholders for arguments the operation does not take are ignored
+    reply = h.call("compute", "evaluate", expression="pi**2/6", x=[], y=[], at=[], bracket=[], data={})
+    assert near(reply["value"], 1.6449340668482), reply
 
 
 def test_ode_with_known_solution(h):
@@ -220,6 +230,12 @@ def test_ode_with_known_solution(h):
     reply = h.call("ode", "solve_ivp", equations=["y' = -1000*(y - cos(t))"], initial_conditions={"y": 0},
                    interval=[0, 1], method="Radau")
     assert near(reply["final"]["y"], math.cos(1), 2e-3) and reply["method"] == "Radau", reply
+    # the second order equation already split by the caller
+    reply = h.call("ode", "solve_ivp", equations=["dy/dt = y'", "dy'/dt = -y"],
+                   initial_conditions={"y": 0, "y'": 1}, interval=[0, 1])
+    assert near(reply["final"]["y"], math.sin(1), 1e-6), reply
+    assert code(h.call("ode", "solve_ivp", equations=["dy/dt = y'"], initial_conditions={"y": 0, "y'": 1},
+                       interval=[0, 1])) == "invalid_arguments"
 
 
 def test_ode_accepts_the_notations_models_use(h):
@@ -394,7 +410,7 @@ def test_definitions(h):
         schema = tool["inputSchema"]
         assert schema["additionalProperties"] is False and "operation" in schema["required"]
         assert "code" not in schema["properties"] and tool["annotations"]["readOnlyHint"] is True
-    assert len(json.dumps(tools)) < 5400, len(json.dumps(tools))
+    assert len(json.dumps(tools)) < 5600, len(json.dumps(tools))
 
 
 def test_worker_starts_only_when_used(_):
@@ -524,6 +540,27 @@ def measure():
     warm.sort()
     print(f"supervisor start {ready * 1000:.0f} ms, first call {first * 1000:.0f} ms, "
           f"warm call median {warm[len(warm) // 2] * 1000:.1f} ms")
+
+
+def test_a_call_that_cannot_mean_what_it_says_is_refused(h):
+    # a huge bound stands for infinity instead of hiding the function from the quadrature
+    reply = h.call("compute", "integrate", expression="exp(-x**2)", lower=0, upper=1e300)
+    assert near(reply["value"], math.sqrt(math.pi) / 2) and reply["warnings"], reply
+    # values for a variable the expression does not have are reported, not silently dropped
+    reply = h.call("compute", "evaluate", expression="exp(1)", variable="x", at=[2.718])
+    assert near(reply["value"], math.e) and "not used" in reply["warnings"][0], reply
+    assert near(h.call("compute", "evaluate", expression="pi**2/6", variable="pi", at=[3.14])["value"], math.pi ** 2 / 6)
+    assert near(h.call("compute", "evaluate", expression="x**2", at=[3])["value"], 9.0)
+    assert near(h.call("compute", "evaluate", expression="exp(1)", variable="x")["value"], math.e)
+    assert code(h.call("signal", "fft", values=[1, 0, -1, 0, 1, 0, -1, 0], cutoff=8)) == "invalid_arguments"
+    reply = h.call("signal", "convolve", values=[[1, 2, 3], [0, 1, 0.5]])
+    assert reply["values"] == [0.0, 1.0, 2.5, 4.0, 1.5], reply
+    reply = h.call("optimize", "minimize", expression="x**2 + 3*x + 5", initial_guess={"x": 0}, bounds={"x": [0, 10]})
+    assert reply["solution"]["x"] == 0.0 and "bound" in reply["warnings"][0], reply
+    # only a model linear in its parameters is fitted without a start
+    reply = h.call("optimize", "curve_fit", expression="a*x + b", x=[0, 1, 2, 3], y=[1, 3, 5, 7])
+    assert near(reply["parameters"]["a"], 2.0, 1e-6) and near(reply["parameters"]["b"], 1.0, 1e-6) and reply["warnings"], reply
+    assert code(h.call("optimize", "curve_fit", expression="a*exp(b*x)", x=[0, 1, 2, 3], y=[1, 2, 4, 8])) == "missing_initial_guess"
 
 
 def main():

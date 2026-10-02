@@ -223,6 +223,23 @@ final class SymPyEngineIntegrationTests: XCTestCase {
         XCTAssertTrue(shell.content.contains("gamma") && shell.content.contains("[exit code: 0]"), shell.content)
     }
 
+    func testExactRequestStaysSymbolicWithBothToolSets() async throws {
+        let tools = try await ChatToolsService.listEnabled(port: Self.port)
+            .filter { SymPyToolsService.isTool($0.name) || ScientificToolsService.isTool($0.name) }
+            .compactMap(\.openAIDefinition)
+        XCTAssertEqual(tools.count, 10)
+        let system = ScientificToolsService.system("", sympy: true, scientific: true)
+        for (prompt, family) in [("Integrate x^2 from 0 to 3.", "sympy_"),
+                                 ("Numerically integrate exp(sin(x)) from 0 to 2.", "scientific_")] {
+            let reply = try await complete([["role": "system", "content": system],
+                                            ["role": "user", "content": prompt + " Use the tools. /no_think"]],
+                                           tools: tools)
+            let call = try XCTUnwrap((reply["tool_calls"] as? [[String: Any]])?.first, prompt)
+            let name = try XCTUnwrap((call["function"] as? [String: Any])?["name"] as? String)
+            XCTAssertTrue(name.hasPrefix(family), "\(prompt) -> \(name)")
+        }
+    }
+
     private func complete(_ messages: [[String: Any]], tools: [[String: Any]]) async throws -> [String: Any] {
         var request = URLRequest(url: URL(string: "http://127.0.0.1:\(Self.port)/v1/chat/completions")!)
         request.httpMethod = "POST"

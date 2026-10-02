@@ -17,10 +17,11 @@ _COMMON = ("max_values", "parameters")
 TOOLS = {
     "compute": {
         "description": "Numerical (floating point) calculus: definite integral, root of an equation, "
-                       "interpolation of data, evaluation. Text like sin(x**2) or cos(x) = x.",
+                       "interpolation or spline through data points, evaluation.",
         "operations": ["integrate", "root", "interpolate", "evaluate"],
         "properties": {
-            "expression": _TEXT,
+            "expression": {**_TEXT, "description": "Function, sin(x**2), or for root the whole equation, "
+                                                   "cos(x) = x."},
             "variable": _TEXT,
             "lower": _NUMBER,
             "upper": _NUMBER,
@@ -28,7 +29,7 @@ TOOLS = {
             "initial_guess": {**_ARRAY, "description": "root: start value."},
             "x": _ARRAY,
             "y": _ARRAY,
-            "at": _ARRAY,
+            "at": {**_ARRAY, "description": "interpolate: x values to estimate."},
             "kind": {"type": "string", "enum": ["linear", "cubic", "pchip", "akima"]},
         },
         "accepted": ("equations", "variables", "bounds", "tolerance", "data", "dx", "method", "extrapolate"),
@@ -62,8 +63,9 @@ TOOLS = {
         "required": ["operation"],
     },
     "signal": {
-        "description": "Signal processing: FFT and dominant frequencies, power spectral density, Butterworth "
-                       "filters, peak detection, convolution, correlation. The signal is a formula in t or samples.",
+        "description": "Processing of a signal sampled in time: FFT and dominant frequencies, power spectral "
+                       "density, Butterworth filters, peak detection, convolution, correlation. The signal is a "
+                       "formula in t or samples.",
         "operations": ["fft", "psd", "lowpass", "highpass", "bandpass", "bandstop", "peaks", "convolve",
                        "correlate", "ifft"],
         "properties": {
@@ -84,7 +86,8 @@ TOOLS = {
                        "over an interval, from given initial values.",
         "operations": ["solve_ivp"],
         "properties": {
-            "equations": {**_ARRAY, "description": "Text, one per unknown, like dy/dt = <formula>."},
+            "equations": {**_ARRAY, "description": "Each equation copied from the request with its own left "
+                                                    "side. One per unknown."},
             "initial_conditions": {**_OBJECT, "description": "Start value of every unknown: {\"y\": 1}; "
                                                              "add \"y'\" when the equation has y''."},
             "interval": {**_ARRAY, "description": "[start, end]"},

@@ -17,6 +17,16 @@ enum ScientificToolsService {
         name.hasPrefix(serverName + "_")
     }
 
+    /// Sent as system text when both math tool sets are offered: the model otherwise takes
+    /// the numerical tool for a request that wanted an exact answer.
+    static let routingRule = "Math tools: sympy_* is the default and gives exact results. Use scientific_* only if the user says numerical, approximate, decimal or floating point, or the task is data: statistics, fitting, interpolation, optimization, signals, matrices with decimals. A plain integral, sum, derivative, equation, limit or matrix of integers or symbols goes to sympy_*. Never answer an exact or unspecified request with an approximation."
+
+    static func system(_ system: String, sympy: Bool = SymPyToolsService.isEnabled,
+                       scientific: Bool = isEnabled) -> String {
+        guard sympy, scientific else { return system }
+        return (system.isEmpty ? "" : system + "\n\n") + routingRule
+    }
+
     /// What the call was asked to work on, for the tool card.
     static func input(_ arguments: [String: Any]) -> String? {
         if let expression = arguments["expression"] as? String { return expression }

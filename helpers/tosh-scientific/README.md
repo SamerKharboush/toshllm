@@ -21,6 +21,13 @@ SymPy answers exactly; these tools answer in floating point. Use SymPy for algeb
 forms and verification, and these for integrals without a closed form, optimization, data,
 signals and matrices of decimal numbers.
 
+When both switches are on, the chat adds one rule to the system text
+(`ScientificToolsService.routingRule`, 85 tokens): SymPy is the default, the numerical tools
+are for requests that ask for a numerical or approximate answer or bring data, and an exact
+or unspecified request is never answered with an approximation. Without it a model takes
+`scientific_compute` for a plain "integrate x^2 from 0 to 3". The rule is not repeated in
+the tool definitions.
+
 ## Tools
 
 | Tool | Operations |
@@ -32,7 +39,7 @@ signals and matrices of decimal numbers.
 | `scientific_ode` | solve_ivp (systems, and higher orders reduced to first order) |
 | `scientific_stats` | describe, percentile, correlation, regression, ttest, confidence_interval, distribution |
 
-The JSON schemas live in `tosh_scientific/schema.py`, about 1500 tokens in all. Some
+The JSON schemas live in `tosh_scientific/schema.py`, about 1530 tokens in all. Some
 arguments are accepted without being advertised (`max_values`, `parameters`, `method`,
 `tolerance`, `bounds`, filter `order`, peak `height`, `distance` and `prominence`, and others
 listed under `accepted` there).
@@ -50,6 +57,13 @@ Error codes: `invalid_arguments`, `invalid_dimensions`, `invalid_expression`,
 `missing_initial_guess`, `invalid_bracket`, `invalid_bounds`, `out_of_range`,
 `singular_matrix`, `invalid_initial_conditions`, `integration_failed`, `not_supported`,
 `numerical_error`, `timeout`, `memory_limit`, `worker_crashed`.
+
+A call is read generously where its meaning is not in doubt: empty placeholder arguments are
+dropped, interpolation points may come as pairs, a second-order equation may arrive already
+split into first-order form, a bound of 1e15 or more is infinity. Where the meaning is in
+doubt the call is refused or the reply carries a warning: values given for a variable the
+expression does not have, a spectrum asked for with a cutoff and no sampling rate, an
+optimum that ended on a bound.
 
 A failure is never reported as a value. A divergent integral, a solver that did not converge,
 a singular matrix, a root search without a sign change or a result holding NaN or infinity

@@ -712,6 +712,19 @@ def _equivalent(args, reply):
         if args.get("equations") is not None:
             args = {k: v for k, v in args.items() if k not in ("left", "right")}
         return _check_solution(args, reply)
+    if args.get("equations") is not None:
+        # left = right is the equation and each "name = value" beside it the candidate
+        equations = args["equations"] if isinstance(args["equations"], list) else [args["equations"]]
+        named = [re.fullmatch(r"\s*([A-Za-z]\w*)\s*=(?!=)\s*(.+)", e) if isinstance(e, str) else None for e in equations]
+        if not all(named) or args.get("left") is None or args.get("right") is None:
+            raise MathError("invalid_arguments", "'equations' belongs to operation solution, with the values to "
+                            "test in 'solution'; equivalent compares 'left' and 'right' only")
+        reply.fields["operation"] = "solution"
+        reply.warnings.append("treated as a solution check of left = right with the values given in 'equations'")
+        args = {k: v for k, v in args.items() if k not in ("left", "right", "equations")} | {
+            "equations": [f"{_take(args, 'left', 'math')} = {_take(args, 'right', 'math')}"],
+            "solution": {m.group(1): m.group(2).strip() for m in named}}
+        return _check_solution(args, reply)
     context = _context(args)
     left = _expression(args, context, "left")
     right = _expression(args, context, "right")

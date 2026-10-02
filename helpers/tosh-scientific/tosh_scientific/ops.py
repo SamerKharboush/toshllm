@@ -141,6 +141,13 @@ def _integrate(args):
             raise SciError("invalid_arguments", "'lower' and 'upper' are required: this integrates numerically "
                            "over an interval and cannot return an antiderivative")
         ranges = [[numeric.constant(args["lower"], "lower"), numeric.constant(args["upper"], "upper")]]
+    notes = []
+    for limits in ranges:
+        for index, bound in enumerate(limits):
+            if math.isfinite(bound) and abs(bound) >= 1e15:
+                # quadrature over a range that wide never samples where the function lives
+                limits[index] = math.copysign(math.inf, bound)
+                notes = ["a bound of 1e15 or more was taken as infinity"]
     function = numeric.compile_expression(expr, variables)
     tolerance = real(args, "tolerance", 1e-10, low=1e-14, high=1e-2)
 
@@ -175,7 +182,7 @@ def _integrate(args):
         raise SciError("not_converged", "the error estimate is too large to trust the value",
                        estimate=number(value), error_estimate=number(estimate))
     return {"value": number(value), "error_estimate": number(estimate), "method": method,
-            "tolerance": tolerance, "evaluations": int(evaluations)}
+            "tolerance": tolerance, "evaluations": int(evaluations), "warnings": notes}
 
 
 def _root(args):
@@ -240,15 +247,39 @@ def _root(args):
 
 def _interpolate(args):
     from scipy import interpolate
+    points = args.get("x")
+    if args.get("y") is None and isinstance(points, list) and points and all(isinstance(p, list) and len(p) == 2 for p in points):
+        # the points came as [x, y] pairs
+        args = {**args, "x": [p[0] for p in points], "y": [p[1] for p in points]}
+    text = args.get("expression")
+    if args.get("y") is None and isinstance(text, str):
+        # the points written out as text, "(0, 1), (1, 3)"; x is then where to estimate
+        pair = r"[\(\[]\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*[\)\]]"
+        if re.fullmatch(rf"\s*[\[\(]?\s*(?:{pair}\s*,?\s*){{2,}}[\]\)]?\s*", text):
+            found = re.findall(pair, text)
+            args = {**args, "x": [float(a) for a, _ in found], "y": [float(b) for _, b in found],
+                    "at": args.get("at") if args.get("at") is not None else args.get("x")}
+    for name, what in (("x", "the positions of the data points"), ("y", "the value at each x"),
+                       ("at", "the positions to estimate")):
+        if args.get(name) is None:
+            raise SciError("invalid_arguments", f"'{name}' is required: {what}, as a list of numbers")
     x, y = array(args.get("x"), "x", (1,)), array(args.get("y"), "y", (1,))
-    at = array(args.get("at"), "at", (1,))
+    at = args["at"]
+    at = array(at if isinstance(at, (list, dict)) else [at], "at", (1,))
     if x.shape != y.shape:
         raise SciError("invalid_dimensions", "'x' and 'y' must have the same length")
     order = np.argsort(x)
     x, y = x[order], y[order]
     if np.any(np.diff(x) == 0):
         raise SciError("invalid_arguments", "'x' has repeated values")
-    kind = choice(args, "kind", ("linear", "cubic", "pchip", "akima"), "linear")
+    kinds = ("linear", "cubic", "pchip", "akima")
+    named = args["expression"].lower() if isinstance(args.get("expression"), str) else ""
+    for word in kinds + ("spline",):
+        # the kind written where the formula goes
+        if word in named:
+            args = {**args, "kind": "cubic" if word == "spline" else word}
+            break
+    kind = choice(args, "kind", kinds, "linear")
     needed = {"linear": 2, "cubic": 4, "pchip": 2, "akima": 5}[kind]
     if x.size < needed:
         raise SciError("invalid_arguments", f"{kind} interpolation needs at least {needed} points")
@@ -271,13 +302,20 @@ def _interpolate(args):
 
 
 def _evaluate(args):
+    expr = _parsed(args, args.get("expression"))
     data = args.get("data") or {}
-    if not data and args.get("at") is not None and isinstance(args.get("variable"), str):
-        # the points written as variable and at
-        data = {args["variable"]: args["at"]}
     if not isinstance(data, dict) or len(data) > MAX_VARIABLES:
         raise SciError("invalid_arguments", "'data' maps variable names to numbers or lists")
-    expr = _parsed(args, args.get("expression"))
+    names = {symbol.name for symbol in expr.free_symbols}
+    if not data and args.get("at") is not None:
+        # the points written as variable and at
+        variable = args.get("variable")
+        if isinstance(variable, str) and variable in names:
+            data = {variable: args["at"]}
+        elif len(names) == 1:
+            data = {next(iter(names)): args["at"]}
+    ignored = sorted(set(data) - names) + (["at"] if args.get("at") is not None and not data else [])
+    data = {name: value for name, value in data.items() if name in names}
     variables = numeric.symbols(data, "data")
     arrays = [array(v if isinstance(v, (list, dict)) else [v], "data") for v in data.values()]
     try:
@@ -285,9 +323,10 @@ def _evaluate(args):
         result = np.broadcast_to(result, np.broadcast_shapes(*[a.shape for a in arrays])) if arrays else result
     except ValueError:
         raise SciError("invalid_dimensions", "the arrays in 'data' do not have compatible shapes")
+    notes = [f"the expression has no '{ignored[0]}', so the values given for it were not used"] if ignored else []
     if not arrays or all(a.size == 1 for a in arrays):
-        return {"value": number(result.reshape(-1)[0])}
-    return {"values": values(result, listed_limit(args)), "count": int(result.size)}
+        return {"value": number(result.reshape(-1)[0]), "warnings": notes}
+    return {"values": values(result, listed_limit(args)), "count": int(result.size), "warnings": notes}
 
 
 # linear algebra
@@ -497,6 +536,12 @@ def _minimize(sign):
                                              for x, (lo, hi) in zip(point, bounds))
             if interior and norm > 1e-4 * max(1.0, abs(best)):
                 reply["warnings"] = ["the gradient is not zero here; this may not be a true optimum"]
+        if bounds is not None:
+            held = [v.name for v, x, (lo, hi) in zip(variables, point, bounds)
+                    if (lo is not None and x <= lo + 1e-9) or (hi is not None and x >= hi - 1e-9)]
+            if held:
+                reply.setdefault("warnings", []).append(
+                    f"'{held[0]}' ended on one of its bounds; without that bound the optimum may be elsewhere")
         reply["note"] = "a local optimum near the start; other optima may exist"
         return reply
     return run
@@ -508,9 +553,20 @@ def _curve_fit(args):
     if x.shape != y.shape:
         raise SciError("invalid_dimensions", "'x' and 'y' must have the same length")
     guess = args.get("initial_guess")
+    notes = []
     if not isinstance(guess, dict) or not guess:
-        raise SciError("missing_initial_guess", "'initial_guess' is required: an object naming each parameter of "
-                       "the model with a starting value, e.g. {\"a\": 1, \"b\": 0.1}")
+        sp = numeric.sympy()
+        model = _parsed(args, args.get("expression"))
+        data = numeric.symbols([args.get("variable") or "x"])[0]
+        free = sorted(model.free_symbols - {data}, key=lambda symbol: symbol.name)
+        linear = free and data in model.free_symbols and all(
+            sp.diff(model, a, b) == 0 for a in free for b in free)
+        if not linear:
+            raise SciError("missing_initial_guess", "'initial_guess' is required: an object naming each parameter "
+                           "of the model with a starting value, e.g. {\"a\": 1, \"b\": 0.1}")
+        # one least-squares solution, whatever the start
+        guess = {symbol.name: 1 for symbol in free}
+        notes = ["the model is linear in its parameters, so no initial guess was needed"]
     parameters = numeric.symbols(guess, "initial_guess")
     start = np.array([numeric.constant(v, "initial_guess") for v in guess.values()])
     if x.size <= len(parameters):
@@ -539,7 +595,8 @@ def _curve_fit(args):
     if np.all(np.isfinite(errors)):
         reply["standard_errors"] = _named(parameters, errors)
     else:
-        reply["warnings"] = ["the parameter uncertainties could not be estimated"]
+        notes.append("the parameter uncertainties could not be estimated")
+    reply["warnings"] = notes
     return reply
 
 
@@ -597,9 +654,15 @@ def _signal(args, name="values"):
     return _finite(samples + np.zeros(count), "the sampled signal"), rate
 
 
+def _spectrum_input(args):
+    if args.get("cutoff") is not None and args.get("sample_rate") is None:
+        raise SciError("invalid_arguments", "a spectrum takes 'sample_rate' in Hz, not 'cutoff'")
+    return _signal(args)
+
+
 def _fft(args):
     from scipy import fft, signal
-    samples, rate = _signal(args)
+    samples, rate = _spectrum_input(args)
     if samples.size > MAX_FFT:
         raise SciError("limit_exceeded", f"{samples.size} samples; the FFT limit is {MAX_FFT}", limit=MAX_FFT)
     if samples.size < 2:
@@ -727,6 +790,9 @@ def _peaks(args):
 def _combine(operation):
     def run(args):
         from scipy import signal
+        both = args.get("values")
+        if args.get("other") is None and isinstance(both, list) and len(both) == 2 and all(isinstance(v, list) for v in both):
+            args = {**args, "values": both[0], "other": both[1]}
         first, second = array(args.get("values"), "values", (1,)), array(args.get("other"), "other", (1,))
         if first.size * second.size > 1 << 34:
             raise SciError("limit_exceeded", "those two signals are too long to combine")
@@ -781,6 +847,9 @@ def _ode(args):
                 pass
         kept.append(text)
     texts = kept or texts
+    # a model reducing the order itself writes dy'/dt for y''
+    texts = [re.sub(r"\bd([A-Za-z]\w*)('+)/d[A-Za-z]\w*", r"\1\2'", text) if isinstance(text, str) else text
+             for text in texts]
     if not conditions:
         raise SciError("invalid_initial_conditions", "'initial_conditions' is required, e.g. {\"y\": 1}; a "
                        "numerical solution needs a starting value for every unknown")
@@ -812,6 +881,11 @@ def _ode(args):
     equations = [numeric.parse_equation(text, _declared(args), functions).subs(constants) for text in texts]
     applied = {name: sp.Function(name)(variable) for name in names}
 
+    restated = [equation for equation in equations if sp.simplify(equation) == 0]
+    if len(restated) == len(equations):
+        raise SciError("invalid_arguments", "the equations only restate a derivative; write the differential "
+                       "equation itself, such as y'' + y = 0")
+    equations = [equation for equation in equations if equation not in restated]
     orders = {name: 0 for name in names}
     for equation in equations:
         for derivative in equation.atoms(sp.Derivative):
@@ -1094,6 +1168,8 @@ def run(operation, arguments):
         return failure(str(operation)[:40], "unknown_operation", "'operation' must be one of: " + ", ".join(OPERATIONS))
     if not isinstance(arguments, dict):
         return failure(operation, "invalid_arguments", "arguments must be an object")
+    # models fill the arguments they do not need with empty placeholders
+    arguments = {key: value for key, value in arguments.items() if value not in ([], {}, "")}
     try:
         result = handler(arguments)
         warned = result.pop("warnings", [])

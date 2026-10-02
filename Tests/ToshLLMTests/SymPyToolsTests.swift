@@ -74,6 +74,16 @@ final class SymPyToolsTests: XCTestCase {
         XCTAssertEqual((both["sympy"] as? [String: Any])?["command"] as? String, scientific["command"] as? String)
     }
 
+    func testRoutingRuleIsSentOnlyWithBothToolSets() {
+        let rule = ScientificToolsService.routingRule
+        XCTAssertEqual(ScientificToolsService.system("", sympy: true, scientific: true), rule)
+        XCTAssertEqual(ScientificToolsService.system("Be brief.", sympy: true, scientific: true),
+                       "Be brief.\n\n" + rule)
+        XCTAssertEqual(ScientificToolsService.system("Be brief.", sympy: true, scientific: false), "Be brief.")
+        XCTAssertEqual(ScientificToolsService.system("", sympy: false, scientific: true), "")
+        XCTAssertEqual(ScientificToolsService.system("", sympy: false, scientific: false), "")
+    }
+
     func testScientificCallIsPresentedAsMath() {
         XCTAssertTrue(ScientificToolsService.isTool("scientific_linalg"))
         XCTAssertFalse(ScientificToolsService.isTool("sympy_matrix"))

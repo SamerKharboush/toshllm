@@ -714,10 +714,10 @@ final class ChatStore: ObservableObject {
         let toolCwd = effectiveWorkingDirectory(for: convID)
         activeStream = (port, ChatStreamIdentity.value(conversationID: convID,
                                                        model: ServerSettings.activeRouterModel()))
-        let systemWithCwd = toolCwd.map {
+        let systemWithCwd = ScientificToolsService.system(toolCwd.map {
             (system.isEmpty ? "" : system + "\n\n")
             + "File tools work inside \($0). Use paths relative to it, and never call them for text that only exists in this conversation."
-        } ?? system
+        } ?? system)
         let toolsEnabled = UserDefaults.standard.bool(forKey: SettingsKeys.agentToolsEnabled)
             || SymPyToolsService.isEnabled || ScientificToolsService.isEnabled
         let javaScriptEnabled = UserDefaults.standard.bool(forKey: SettingsKeys.jsSandboxEnabled)

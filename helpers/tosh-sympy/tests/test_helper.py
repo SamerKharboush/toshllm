@@ -439,6 +439,14 @@ def test_calls_in_the_shapes_models_use(h):
     assert reply["satisfied"] is True, reply
     reply = h.call("verify", operation="solution", left="y", right="exp(3*x)", equations=["y' - 3*y = 0"], function="y")
     assert reply["satisfied"] is True, reply
+    # equivalent never ignores 'equations': they are the candidate, or the call is refused
+    reply = h.call("verify", operation="equivalent", left="Derivative(y, x) + 2*y", right="0",
+                   equations=["y = exp(-2*x)"])
+    assert reply["operation"] == "solution" and reply["satisfied"] is True and reply["warnings"], reply
+    reply = h.call("verify", operation="equivalent", left="x**2 - 9", right="0", equations=["x = 4"])
+    assert reply["satisfied"] is False, reply
+    reply = h.call("verify", operation="equivalent", left="x**3 - 27", right="0", equations=["x**3 - 27 = 0"])
+    assert reply["success"] is False and reply["error"]["code"] == "invalid_arguments", reply
     reply = expression(h, "expand", "log(1 + x)", order=5)
     assert reply["operation"] == "series" and reply["exact"] == "x - x**2/2 + x**3/3 - x**4/4 + O(x**5)", reply
     assert expression(h, "expand", "(x + 1)**2")["operation"] == "expand"
