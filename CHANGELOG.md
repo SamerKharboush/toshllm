@@ -3,6 +3,31 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.87.12-beta.1] - 2026-10-02
+
+Beta for the dual-GPU Mac Pro path. Three engine defects, one app build break and a
+new multi-GPU default. Known gaps are listed at the bottom of this section.
+
+### Added
+
+- **LLMs: splitting across every GPU is now the default on a machine with two or more cards.** Previously a fresh install used a single GPU until someone turned the split on in Settings, so a model too large for one card failed to load at all. The split is the default only until the setting is written: turning it off in Settings keeps that choice from then on.
+
+### Fixed
+
+- **LLMs: a model with a timestep embedding produced the wrong tokens on GCN cards.** The Metal kernel's odd-dimension branch was compiled to the wrong arm for the even dimensions these models use, so one row past the owned row was written instead. A 14B model read a prompt at about 21 tokens a second instead of 43, and generated the wrong output. The engine's own backend tests went from a failure of 0.0029 relative error to exact, and the full suite passes at 10701 of 10701.
+
+- **LLMs: forcing cross-GPU events on a layer split no longer hangs the server.** The destination's wait was queued behind work the source was itself waiting on, so the pair stalled until the GPU watchdog killed the command buffer — seen as an unexplained `res = -3`. The wait is now bounded, and a stall is reported and recovered instead of hanging. Measured on a 14B layer split at 512 prompt tokens: 21.2 prompt / 5.1 generation tokens a second, where it previously failed. On a 27B: 11.5 / 6.2.
+
+- **Images and video: the app built again.** Two errors predating everything above: a toolbar modifier that only exists in the macOS 26 SDK, and a frame decode that returned an image type across an actor boundary. Both are fixed; the toolbar guard matches the one the rest of the app already uses for the same reason.
+
+- **LLMs: a split VRAM estimate no longer under-reports on a fresh install.** It read the multi-GPU setting with a default of off, so a model that fits only when split looked like it did not fit.
+
+### Known issues
+
+- The cross-GPU events setting is still only turned on for a tensor split. It makes no measurable difference on a layer split, so forcing it on there buys nothing.
+- A 27B Qwen3.5 model cannot be split by tensor: an internal state tensor's width does not divide evenly. The engine now says which operation and which dimensions instead of failing a bare assert. The layer split, which that model uses, is unaffected.
+- The engine falls back to compiling its Metal kernels from embedded sources when the bundle has no precompiled copy. Functionally identical, slower on first start.
+
 ## [0.87.11] - 2026-09-28
 
 ### Added

@@ -36,7 +36,7 @@ struct SettingsView: View {
     @AppStorage(SettingsKeys.jinja) private var jinja = true
     @AppStorage(SettingsKeys.vramReserve) private var vramReserve = 1024
     @AppStorage(SettingsKeys.gpuIndex) private var gpuIndex = -1
-    @AppStorage(SettingsKeys.multiGPU) private var multiGPU = false
+    @AppStorage(SettingsKeys.multiGPU) private var multiGPU = ServerSettings.defaultMultiGPU
     @AppStorage(SettingsKeys.multiGPUCount) private var multiGPUCount = 0
     @AppStorage(SettingsKeys.splitMode) private var splitMode = "layer"
     @AppStorage(SettingsKeys.splitGroupSize) private var splitGroupSize = 0

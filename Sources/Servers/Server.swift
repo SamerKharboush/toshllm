@@ -266,6 +266,15 @@ struct ServerSettings {
     }
 
     static let defaultFaAmd = true
+
+    /// Splitting across every detected GPU is the default *only* until the key is
+    /// written: with two or more cards a model that fits on one is left on one for
+    /// no reason, and a model that does not fit fails to load at all. Turning it
+    /// off in Settings writes `false` and that choice is kept from then on.
+    static var defaultMultiGPU: Bool {
+        HardwareInfo.detect().gpus.count >= 2
+    }
+
     static let kvCacheTypes = ["f16", "q8_0", "q5_1", "q5_0", "q4_1", "q4_0", "iq4_nl", "turbo4", "turbo3"]
 
     var usesTurboKV: Bool {
@@ -840,7 +849,7 @@ struct ServerSettings {
             routerMode: bool(SettingsKeys.routerMode, false),
             routerModelsMax: int(SettingsKeys.routerModelsMax, 1),
             persistCache: bool(SettingsKeys.persistCache, false),
-            multiGPU: bool(SettingsKeys.multiGPU, false),
+            multiGPU: bool(SettingsKeys.multiGPU, defaultMultiGPU),
             multiGPUCount: int(SettingsKeys.multiGPUCount, 0),
             splitMode: d.string(forKey: SettingsKeys.splitMode) ?? "layer",
             splitGroupSize: d.integer(forKey: SettingsKeys.splitGroupSize),

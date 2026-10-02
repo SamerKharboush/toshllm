@@ -597,7 +597,7 @@ struct GPUsCard: View {
     // -1 until the user decides, so a machine with many cards starts folded.
     @AppStorage(SettingsKeys.gpusCardCollapsed) private var collapsedRaw = -1
     @AppStorage(SettingsKeys.mgpuPeer) private var mgpuPeer = true
-    @AppStorage(SettingsKeys.multiGPU) private var multiGPU = false
+    @AppStorage(SettingsKeys.multiGPU) private var multiGPU = ServerSettings.defaultMultiGPU
     @AppStorage(SettingsKeys.gpuList) private var gpuListCSV = ""
     @AppStorage(SettingsKeys.splitMode) private var splitMode = "layer"
     @EnvironmentObject var vram: VRAMMonitor

@@ -260,7 +260,7 @@ enum Estimator {
         let scale = (kvTypeScale(d.string(forKey: SettingsKeys.cacheTypeK) ?? "f16")
                    + kvTypeScale(d.string(forKey: SettingsKeys.cacheTypeV) ?? "f16")) / 2
         return estimate(spec: spec, hw: hw, ctx: ctx, kvScale: scale,
-                        multiGPU: d.bool(forKey: SettingsKeys.multiGPU),
+                        multiGPU: d.object(forKey: SettingsKeys.multiGPU) as? Bool ?? ServerSettings.defaultMultiGPU,
                         tensorSplit: (d.string(forKey: SettingsKeys.splitMode) ?? "layer") == "tensor",
                         ncmoeOverride: ncmoeOverride)
     }
