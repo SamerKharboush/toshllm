@@ -93,6 +93,15 @@ struct ToolCallPresentation: Equatable {
                                             language: "python", detail: nil, edits: [],
                                             result: result.map(SymPyToolsService.readable))
             }
+            if ScientificToolsService.isTool(call.name) {
+                let operation = (args["operation"] as? String ?? "compute")
+                    .replacingOccurrences(of: "_", with: " ")
+                return ToolCallPresentation(kind: .math,
+                                            title: operation.prefix(1).uppercased() + operation.dropFirst(),
+                                            path: nil, code: ScientificToolsService.input(args),
+                                            language: "python", detail: nil, edits: [],
+                                            result: result.map(ScientificToolsService.readable))
+            }
             if call.name.localizedCaseInsensitiveContains("search") {
                 let query = string(args, keys: ["query", "q", "search_query"])
                 return ToolCallPresentation(kind: .search,

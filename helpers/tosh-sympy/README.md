@@ -15,6 +15,10 @@ SymPy and mpmath, and `make-app.sh` copies it to `Contents/Resources/tosh-sympy`
 from the system is used, to build or to run. In the app it is off until **Symbolic math
 (SymPy)** is switched on in the chat settings, under Agents.
 
+The same runtime carries NumPy and SciPy for the [numerical tools](../tosh-scientific/README.md).
+Those run as a second server, `server.py scientific`, with a worker of their own: this one
+never loads either library.
+
 ## Tools
 
 | Tool | Operations |

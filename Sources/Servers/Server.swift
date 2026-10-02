@@ -51,6 +51,7 @@ struct ServerSettings {
     var embeddings: Bool = false
     var agentToolsEnabled: Bool = false
     var sympyEnabled: Bool = false
+    var scientificEnabled: Bool = false
     var uiMcpProxy: Bool = false
     /// `--tools-runtime` target (`docker:image`, `podman:image`, `ssh:host`...). Empty
     /// runs the tools in the app's own environment, which is the engine default.
@@ -339,7 +340,7 @@ struct ServerSettings {
             args += ["--tools", "all"]
             if !toolsRuntime.isEmpty { args += ["--tools-runtime", toolsRuntime] }
         }
-        let sympyArguments = SymPyToolsService.serverArguments(enabled: sympyEnabled)
+        let sympyArguments = SymPyToolsService.serverArguments(enabled: sympyEnabled, scientific: scientificEnabled)
         if !sympyArguments.isEmpty {
             if !args.contains("--jinja") { args.append("--jinja") }
             args += sympyArguments
@@ -410,7 +411,7 @@ struct ServerSettings {
             args += ["--jinja", "--tools", "all"]
             if !toolsRuntime.isEmpty { args += ["--tools-runtime", toolsRuntime] }
         }
-        let sympyArguments = SymPyToolsService.serverArguments(enabled: sympyEnabled)
+        let sympyArguments = SymPyToolsService.serverArguments(enabled: sympyEnabled, scientific: scientificEnabled)
         if !sympyArguments.isEmpty {
             if !args.contains("--jinja") { args.append("--jinja") }
             args += sympyArguments
@@ -830,6 +831,7 @@ struct ServerSettings {
             embeddings: bool(SettingsKeys.embeddings, false),
             agentToolsEnabled: bool(SettingsKeys.agentToolsEnabled, false),
             sympyEnabled: bool(SettingsKeys.sympyEnabled, false),
+            scientificEnabled: bool(SettingsKeys.scientificEnabled, false),
             uiMcpProxy: bool(SettingsKeys.uiMcpProxy, false),
             toolsRuntime: (d.string(forKey: SettingsKeys.toolsRuntime) ?? "")
                 .trimmingCharacters(in: .whitespaces),

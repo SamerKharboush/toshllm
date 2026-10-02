@@ -1,13 +1,15 @@
 # ToshLLM - run LLMs locally on Intel Macs with AMD GPUs
 # Copyright (C) 2026 Engelbert Delgado <engeldlgado@gmail.com>
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""The process that holds SymPy. One JSON request per line on stdin, one reply per line on stdout.
+"""The process that holds the math libraries of one tool set. One JSON request per line on
+stdin, one reply per line on stdout.
 
 The supervisor in server.py owns its lifetime: it kills this process on a timeout or when it
 grows past the memory limit.
 """
 
 import ctypes
+import importlib
 import json
 import os
 import signal
@@ -51,7 +53,9 @@ def _sandbox():
 
 def main():
     sys.path.insert(0, HOME)
-    from tosh_sympy import ops, schema
+    toolset = sys.argv[1] if len(sys.argv) > 1 else "sympy"
+    ops = importlib.import_module(f"tosh_{toolset}.ops")
+    schema = importlib.import_module(f"tosh_{toolset}.schema")
 
     sandboxed = _sandbox()
     sys.addaudithook(_audit)

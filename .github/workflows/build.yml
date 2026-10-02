@@ -39,10 +39,11 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - run: swift test
-      - name: Symbolic math helper tests
+      - name: Math helper tests
         run: |
           ./scripts/build-sympy.sh
           vendor/tosh-sympy/python/bin/python3 -I helpers/tosh-sympy/tests/test_helper.py
+          vendor/tosh-sympy/python/bin/python3 -I helpers/tosh-scientific/tests/test_scientific.py
 
   build:
     # PRs validate a single variant; tags and manual runs build BOTH CPU variants
@@ -87,15 +88,16 @@ jobs:
           # Per variant: the two ISA baselines produce different engine binaries.
           key: engines-${{ matrix.variant }}-${{ hashFiles('patches/**/*.patch', 'scripts/build-engines.sh') }}
 
-      # Pinned CPython and SymPy, checked against their SHA-256. Rebuilt every time: it is
-      # a download and an unpack, and the helper sources live outside the engine cache key.
-      - name: Build symbolic math runtime (x86_64)
+      # Pinned CPython, SymPy, NumPy and SciPy, checked against their SHA-256. Rebuilt every
+      # time: it is a download and an unpack, and the helper sources live outside the engine cache key.
+      - name: Build math runtime (x86_64)
         if: github.event_name != 'pull_request' || steps.scope.outputs.build == 'true'
         run: |
           ARCH=x86_64 ./scripts/build-sympy.sh
           PY=vendor/tosh-sympy/python/bin/python3
           if "$PY" -I -c pass 2>/dev/null; then
             "$PY" -I helpers/tosh-sympy/tests/test_helper.py
+            "$PY" -I helpers/tosh-scientific/tests/test_scientific.py
           else
             echo "x86_64 runtime cannot run on this runner; its tests ran in the unit test job"
           fi
@@ -153,6 +155,10 @@ jobs:
           # Sign inside out: --deep is deprecated and does not apply the hardened
           # runtime to the engine binaries, which notarization rejects.
           APP=dist/ToshLLM.app
+          # the math runtime is CPython plus the extension modules and libraries of NumPy and SciPy:
+          # every one of them is a Mach-O the notary service checks
+          find "$APP/Contents/Resources/tosh-sympy" -type f \( -name '*.so' -o -name '*.dylib' \) -print0 2>/dev/null |
+            xargs -0 -n 20 codesign --force --timestamp --options runtime -s "$IDENTITY"
           for exe in "$APP/Contents/Resources/bin/"* "$APP/Contents/Resources/bin-image/"* "$APP/Contents/Resources/bin-audio/"* \
                      "$APP/Contents/Resources/tosh-sympy/python/bin/python3"; do
             [ -f "$exe" ] || continue

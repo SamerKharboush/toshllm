@@ -5,7 +5,7 @@
 import XCTest
 @testable import ToshLLM
 
-/// Runs the real engine with the SymPy runtime from vendor/. Needs a tool-calling model:
+/// Runs the real engine with the math runtime from vendor/, both tool sets on. Needs a tool-calling model:
 ///   TOSH_SYMPY_E2E_MODEL=~/models/Qwen3-4B-Q4_K_M.gguf ./scripts/test.sh --filter SymPyEngine
 final class SymPyEngineIntegrationTests: XCTestCase {
     private static let port = 18_433
@@ -27,9 +27,9 @@ final class SymPyEngineIntegrationTests: XCTestCase {
         let binary = environment["TOSH_BIN"]
             ?? repository.appendingPathComponent("vendor/llama.cpp/build-static/bin/llama-server").path
         let sympy = SymPyToolsService.serverArguments(
-            enabled: true, resources: repository.appendingPathComponent("vendor"))
+            enabled: true, scientific: true, resources: repository.appendingPathComponent("vendor"))
         guard FileManager.default.isExecutableFile(atPath: binary), !sympy.isEmpty else {
-            skipReason = "Build the engine and the SymPy runtime first"
+            skipReason = "Build the engine and the math runtime first"
             return
         }
         let process = Process()
@@ -65,11 +65,13 @@ final class SymPyEngineIntegrationTests: XCTestCase {
         if let reason = Self.skipReason { throw XCTSkip(reason) }
         UserDefaults.standard.set(true, forKey: SettingsKeys.agentToolsEnabled)
         UserDefaults.standard.set(true, forKey: SettingsKeys.sympyEnabled)
+        UserDefaults.standard.set(true, forKey: SettingsKeys.scientificEnabled)
     }
 
     override func tearDown() {
         UserDefaults.standard.removeObject(forKey: SettingsKeys.agentToolsEnabled)
         UserDefaults.standard.removeObject(forKey: SettingsKeys.sympyEnabled)
+        UserDefaults.standard.removeObject(forKey: SettingsKeys.scientificEnabled)
         super.tearDown()
     }
 
@@ -82,11 +84,13 @@ final class SymPyEngineIntegrationTests: XCTestCase {
         let tools = try await ChatToolsService.listEnabled(port: Self.port)
         let names = Set(tools.map(\.name))
         for name in ["sympy_expression", "sympy_solve", "sympy_matrix", "sympy_verify",
+                     "scientific_compute", "scientific_linalg", "scientific_optimize",
+                     "scientific_signal", "scientific_ode", "scientific_stats",
                      "read_file", "write_file", "edit_file", "grep_search", "file_glob_search",
                      "exec_shell_command"] {
             XCTAssertTrue(names.contains(name), name)
         }
-        for tool in tools where SymPyToolsService.isTool(tool.name) {
+        for tool in tools where SymPyToolsService.isTool(tool.name) || ScientificToolsService.isTool(tool.name) {
             XCTAssertFalse(tool.writesData)
             XCTAssertFalse(tool.usesCwd)
             XCTAssertNotNil(tool.openAIDefinition)
@@ -100,9 +104,63 @@ final class SymPyEngineIntegrationTests: XCTestCase {
         XCTAssertTrue(names.contains("read_file"))
 
         UserDefaults.standard.set(true, forKey: SettingsKeys.sympyEnabled)
+        UserDefaults.standard.set(false, forKey: SettingsKeys.scientificEnabled)
         UserDefaults.standard.set(false, forKey: SettingsKeys.agentToolsEnabled)
         names = try await ChatToolsService.listEnabled(port: Self.port).map(\.name)
         XCTAssertEqual(Set(names), ["sympy_expression", "sympy_solve", "sympy_matrix", "sympy_verify"])
+
+        UserDefaults.standard.set(false, forKey: SettingsKeys.sympyEnabled)
+        UserDefaults.standard.set(true, forKey: SettingsKeys.scientificEnabled)
+        names = try await ChatToolsService.listEnabled(port: Self.port).map(\.name)
+        XCTAssertEqual(Set(names), ["scientific_compute", "scientific_linalg", "scientific_optimize",
+                                    "scientific_signal", "scientific_ode", "scientific_stats"])
+    }
+
+    func testScientificToolsRunThroughTheEngine() async throws {
+        let integral = try await run("scientific_compute", ["operation": "integrate", "expression": "sin(x**2)",
+                                                            "lower": 0, "upper": 10])
+        XCTAssertFalse(integral.isError, integral.content)
+        XCTAssertTrue(integral.content.contains(#""value": 0.5836708999"#), integral.content)
+
+        let determinant = try await run("scientific_linalg", ["operation": "determinant",
+                                                              "matrix": [[1, 2], [3, 4]]])
+        XCTAssertTrue(determinant.content.contains(#""determinant": -2.0"#), determinant.content)
+
+        let minimum = try await run("scientific_optimize", ["operation": "minimize",
+                                                            "expression": "(x - 3)**2 + (y + 1)**2",
+                                                            "initial_guess": ["x": 0, "y": 0]])
+        XCTAssertFalse(minimum.isError, minimum.content)
+        XCTAssertTrue(minimum.content.contains(#""success": true"#), minimum.content)
+
+        let spectrum = try await run("scientific_signal", ["operation": "fft", "expression": "sin(2*pi*50*t)",
+                                                           "sample_rate": 1000, "duration": 1])
+        XCTAssertTrue(spectrum.content.contains("50.0"), spectrum.content)
+
+        let decay = try await run("scientific_ode", ["operation": "solve_ivp", "equations": ["dy/dt = -y"],
+                                                     "initial_conditions": ["y": 1], "interval": [0, 1],
+                                                     "at": [1]])
+        XCTAssertTrue(decay.content.contains("0.36787"), decay.content)
+
+        let summary = try await run("scientific_stats", ["operation": "describe", "values": [1, 2, 3, 4]])
+        XCTAssertTrue(summary.content.contains(#""mean": 2.5"#), summary.content)
+
+        // a failed computation is an error with its code, never a number
+        let singular = try await run("scientific_linalg", ["operation": "solve", "matrix": [[1, 2], [2, 4]],
+                                                           "other": [1, 2]])
+        XCTAssertTrue(singular.isError)
+        XCTAssertTrue(singular.content.contains("singular_matrix"), singular.content)
+        let divergent = try await run("scientific_compute", ["operation": "integrate", "expression": "1/x",
+                                                             "lower": 0, "upper": 1])
+        XCTAssertTrue(divergent.isError)
+        XCTAssertFalse(divergent.content.contains(#""value""#), divergent.content)
+
+        let injected = try await run("scientific_compute", ["operation": "evaluate",
+                                                            "expression": "__import__('os').system('id')"])
+        XCTAssertTrue(injected.isError)
+        XCTAssertTrue(injected.content.contains("invalid_expression"), injected.content)
+        let named = try await run("scientific_compute", ["operation": "evaluate",
+                                                         "expression": "np.sin(1)"])
+        XCTAssertTrue(named.isError, named.content)
     }
 
     func testToolsRunThroughTheEngine() async throws {

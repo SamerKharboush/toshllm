@@ -1,13 +1,14 @@
 # ToshLLM - run LLMs locally on Intel Macs with AMD GPUs
 # Copyright (C) 2026 Engelbert Delgado <engeldlgado@gmail.com>
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""MCP server over stdio for the SymPy tools.
+"""MCP server over stdio for one set of math tools: "sympy" (the default) or "scientific".
 
-This process never imports SymPy. It starts the worker on the first call, kills it when a
-call runs past its time or memory budget, and lets it go after a while without use.
+This process never imports the math libraries. It starts the worker on the first call, kills
+it when a call runs past its time or memory budget, and lets it go after a while without use.
 """
 
 import ctypes
+import importlib
 import json
 import os
 import select
@@ -19,11 +20,15 @@ import time
 HOME = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, HOME)
 
-from tosh_sympy import schema  # noqa: E402
+TOOLSET = sys.argv[1] if len(sys.argv) > 1 else "sympy"
+if TOOLSET not in ("sympy", "scientific"):
+    sys.exit(f"unknown tool set '{TOOLSET}'")
+schema = importlib.import_module(f"tosh_{TOOLSET}.schema")
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 PROTOCOL = "2024-11-05"
-MAX_REQUEST_BYTES = 64 * 1024
+# numeric data is typed out in the request, so the scientific tools take a larger one
+MAX_REQUEST_BYTES = (1024 if TOOLSET == "scientific" else 64) * 1024
 MAX_REPLY_BYTES = 96 * 1024
 STARTUP_SECONDS = 30
 
@@ -42,7 +47,10 @@ RECOVERY_SECONDS = 5
 # takes under a second in one process and never finishes in the next. A fixed seed makes
 # every worker behave the same.
 HASH_SEED = "1"
-MEMORY_LIMIT = int(_setting("TOSH_SYMPY_MEMORY_MB", 1024, 128, 16384)) * 1024 * 1024
+# BLAS threads of the scientific worker. One is the only setting Accelerate keeps to: at two its
+# LAPACK routines already spread over five cores, and the model is using the machine too.
+THREADS = str(int(_setting("TOSH_SCIENTIFIC_THREADS", 1, 1, 16)))
+MEMORY_LIMIT = int(_setting("TOSH_SYMPY_MEMORY_MB", 1024, 64, 16384)) * 1024 * 1024
 IDLE_SECONDS = _setting("TOSH_SYMPY_IDLE_SECONDS", 300, 1, 86400)
 
 
@@ -96,12 +104,16 @@ class Worker:
         self.stop()
         # -P -s instead of -I: the environment is the two variables below and nothing else,
         # and the hash seed has to get through
+        environment = {"PYTHONHASHSEED": HASH_SEED,
+                       "TOSH_SYMPY_BACKSTOP_SECONDS": str(int(TIMEOUT_SECONDS) + 5)}
+        if TOOLSET == "scientific":
+            # OPENBLAS_MAIN_FREE is one NumPy would otherwise set itself, which the worker forbids
+            environment.update(VECLIB_MAXIMUM_THREADS=THREADS, OMP_NUM_THREADS=THREADS,
+                               OPENBLAS_NUM_THREADS=THREADS, OPENBLAS_MAIN_FREE="1")
         self.process = subprocess.Popen(
-            [sys.executable, "-P", "-s", "-B", os.path.join(HOME, "tosh_sympy", "worker.py")],
+            [sys.executable, "-P", "-s", "-B", os.path.join(HOME, "tosh_sympy", "worker.py"), TOOLSET],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-            cwd="/", close_fds=True,
-            env={"PYTHONHASHSEED": HASH_SEED,
-                 "TOSH_SYMPY_BACKSTOP_SECONDS": str(int(TIMEOUT_SECONDS) + 5)})
+            cwd="/", close_fds=True, env=environment)
         ready = self._read(time.monotonic() + STARTUP_SECONDS)
         if not isinstance(ready, dict) or not ready.get("ready"):
             self.stop()
@@ -154,7 +166,7 @@ class Worker:
         messages = {
             "memory_limit": f"the calculation needed more than {MEMORY_LIMIT // (1024 * 1024)} MB and was stopped",
             "output_too_large": "the result is too large to return",
-            "worker_crashed": "the SymPy runtime stopped unexpectedly",
+            "worker_crashed": "the math runtime stopped unexpectedly",
         }
         return _failure(operation, reply, messages[reply])
 
@@ -202,7 +214,7 @@ def _handle(message, worker):
         _respond(message_id, {
             "protocolVersion": PROTOCOL,
             "capabilities": {"tools": {}},
-            "serverInfo": {"name": "tosh-sympy", "version": VERSION},
+            "serverInfo": {"name": f"tosh-{TOOLSET}", "version": VERSION},
         })
     elif method == "ping":
         _respond(message_id, {})

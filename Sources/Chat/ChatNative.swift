@@ -719,7 +719,7 @@ final class ChatStore: ObservableObject {
             + "File tools work inside \($0). Use paths relative to it, and never call them for text that only exists in this conversation."
         } ?? system
         let toolsEnabled = UserDefaults.standard.bool(forKey: SettingsKeys.agentToolsEnabled)
-            || SymPyToolsService.isEnabled
+            || SymPyToolsService.isEnabled || ScientificToolsService.isEnabled
         let javaScriptEnabled = UserDefaults.standard.bool(forKey: SettingsKeys.jsSandboxEnabled)
         let memoryToolsEnabled = ChatMemoryService.isEnabled
         let agentTurnLimit = Self.configuredAgentTurnLimit

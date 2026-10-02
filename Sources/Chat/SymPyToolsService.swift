@@ -26,16 +26,25 @@ enum SymPyToolsService {
         return directory
     }
 
-    static func serverArguments(enabled: Bool, resources: URL? = Bundle.main.resourceURL) -> [String] {
-        guard enabled, let runtime = runtimeDirectory(resources: resources) else { return [] }
-        let config: [String: Any] = ["mcpServers": [serverName: [
-            "command": runtime.appendingPathComponent("python/bin/python3").path,
-            "args": ["-I", "-B", runtime.appendingPathComponent("tosh_sympy/server.py").path],
-            "timeout_ms": 30_000,
-        ]]]
-        guard let data = try? JSONSerialization.data(withJSONObject: config, options: [.sortedKeys]) else {
-            return []
+    /// One MCP server per tool set that is switched on. Both run the same helper from the
+    /// same runtime, the scientific one with its name as an argument.
+    static func serverArguments(enabled: Bool, scientific: Bool = false,
+                                resources: URL? = Bundle.main.resourceURL) -> [String] {
+        guard enabled || scientific, let runtime = runtimeDirectory(resources: resources) else { return [] }
+        let python = runtime.appendingPathComponent("python/bin/python3").path
+        let helper = runtime.appendingPathComponent("tosh_sympy/server.py").path
+        var servers: [String: Any] = [:]
+        if enabled {
+            servers[serverName] = ["command": python, "args": ["-I", "-B", helper], "timeout_ms": 30_000]
         }
+        if scientific {
+            servers[ScientificToolsService.serverName] = [
+                "command": python, "args": ["-I", "-B", helper, ScientificToolsService.serverName],
+                "timeout_ms": 30_000,
+            ]
+        }
+        guard let data = try? JSONSerialization.data(withJSONObject: ["mcpServers": servers],
+                                                     options: [.sortedKeys]) else { return [] }
         return ["--mcp-servers-json", String(decoding: data, as: UTF8.self)]
     }
 

@@ -9,6 +9,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 - **LLMs: symbolic math tools with SymPy.** The model can simplify and factor, solve equations, systems and differential equations, differentiate, integrate, take limits and series, work with matrices and Laplace and Fourier transforms, and check that two expressions are equivalent or that a solution holds, all exactly. Off by default, in chat settings under Agents; the runtime ships inside the app and adds 28 MB to the download. Details in [tosh-sympy](helpers/tosh-sympy/README.md).
 
+- **LLMs: numerical tools with NumPy and SciPy.** The model can integrate numerically, find roots, minimize and fit curves, solve differential equations over an interval, work with decimal matrices, run FFTs and filters, and compute statistics. It sends an operation and its numbers, never code. Off by default, in chat settings under Agents, next to the SymPy switch; it adds 26 MB to the download. Details in [tosh-scientific](helpers/tosh-scientific/README.md).
+
 ## [0.87.13] - 2026-10-01
 
 ### Added

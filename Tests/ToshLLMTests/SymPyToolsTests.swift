@@ -53,6 +53,45 @@ final class SymPyToolsTests: XCTestCase {
         XCTAssertEqual(server["args"] as? [String], ["-I", "-B", runtime + "/tosh_sympy/server.py"])
     }
 
+    func testScientificServerRunsBesideSymPy() throws {
+        let resources = try makeRuntime()
+        XCTAssertFalse(makeSettings().scientificEnabled)
+        XCTAssertTrue(SettingsKeys.resettableOptionKeys.contains(SettingsKeys.scientificEnabled))
+        func servers(_ sympy: Bool, _ scientific: Bool) throws -> [String: Any] {
+            let arguments = SymPyToolsService.serverArguments(enabled: sympy, scientific: scientific,
+                                                              resources: resources)
+            guard let json = arguments.last else { return [:] }
+            let config = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
+            return try XCTUnwrap(config["mcpServers"] as? [String: Any])
+        }
+        XCTAssertEqual(try servers(false, false).count, 0)
+        XCTAssertEqual(Array(try servers(true, false).keys), ["sympy"])
+        XCTAssertEqual(Array(try servers(false, true).keys), ["scientific"])
+        let both = try servers(true, true)
+        XCTAssertEqual(Set(both.keys), ["sympy", "scientific"])
+        let scientific = try XCTUnwrap(both["scientific"] as? [String: Any])
+        XCTAssertEqual((scientific["args"] as? [String])?.last, "scientific")
+        XCTAssertEqual((both["sympy"] as? [String: Any])?["command"] as? String, scientific["command"] as? String)
+    }
+
+    func testScientificCallIsPresentedAsMath() {
+        XCTAssertTrue(ScientificToolsService.isTool("scientific_linalg"))
+        XCTAssertFalse(ScientificToolsService.isTool("sympy_matrix"))
+        let call = ChatToolCall(
+            name: "scientific_compute",
+            arguments: #"{"operation":"integrate","expression":"sin(x**2)","lower":0,"upper":10}"#,
+            result: #"{"success": true, "operation": "integrate", "value": 0.58367089993, "error_estimate": 2.7e-11, "method": "adaptive quadrature (QUADPACK)", "warnings": []}"#)
+        let presentation = ToolCallPresentation.make(call)
+        XCTAssertEqual(presentation.kind, .math)
+        XCTAssertEqual(presentation.title, "Integrate")
+        XCTAssertEqual(presentation.code, "sin(x**2)")
+        XCTAssertEqual(presentation.result?.components(separatedBy: "\n").first, "value: 0.58367089993")
+        XCTAssertEqual(
+            ScientificToolsService.readable(#"{"success":false,"operation":"solve","error":{"code":"singular_matrix","message":"singular"}}"#),
+            "singular")
+        XCTAssertEqual(ScientificToolsService.input(["values": [1, 2, 3]]), "values: 3 values")
+    }
+
     func testToolNames() {
         XCTAssertTrue(SymPyToolsService.isTool("sympy_expression"))
         XCTAssertTrue(SymPyToolsService.isTool("sympy_verify"))
