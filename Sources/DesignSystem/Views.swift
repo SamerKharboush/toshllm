@@ -89,6 +89,23 @@ struct ControlPanelView: View {
                 .scrollContentBackground(.hidden)
             }
             .background(WorkspaceStyle.canvas)
+            .toolbar {
+                // `ToolbarSpacer` and `sharedBackgroundVisibility` only exist in the
+                // macOS 26 SDK. A runtime `#available` is not enough: the compiler still
+                // resolves the symbol, so an older toolchain fails on a branch that is
+                // dead at runtime. Same guard GlassStyle.swift uses for `glassEffect`.
+                #if compiler(>=6.2)
+                if #available(macOS 26, *) {
+                    ToolbarSpacer(.flexible)
+                    ToolbarItem(placement: .automatic) { DonateToolbarButton() }
+                        .sharedBackgroundVisibility(.hidden)
+                } else {
+                    ToolbarItem(placement: .automatic) { DonateToolbarButton() }
+                }
+                #else
+                ToolbarItem(placement: .automatic) { DonateToolbarButton() }
+                #endif
+            }
         }
         .tint(AppTheme.accent(accentRaw))
         .id(accentRaw)

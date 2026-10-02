@@ -63,6 +63,9 @@ struct ServerSettings {
     /// Emit reasoning inline in `content` (<think>…) instead of the separate
     /// `reasoning_content` field, for external clients that ignore the latter.
     var reasoningInline: Bool = false
+    /// Defaults for requests that bring none (external clients); a request's own value wins.
+    var defaultReasoning: String = "model"
+    var defaultMaxTokens: Int = 0
     /// Server slots (0 = engine auto). With 1, requests queue instead of competing
     /// for the GPU, and a prefill aborted by a client timeout stays in the slot so
     /// the retry resumes where it left off.
@@ -146,6 +149,7 @@ struct ServerSettings {
     var dynamicMoeEnabled: Bool = false
     var executionMode: String = "auto"
     var autoKVMode: String = "auto"
+    var dynamicMoeLeanRAM: Bool = false
     /// Set by the controller from the preview before launch; nil until then.
     var plannedMode: String? = nil
     /// The retry after Dynamic MoE could not lock its expert bank plans without it.
@@ -350,10 +354,12 @@ struct ServerSettings {
             args += ["--slot-save-path", Self.slotCacheDir(port: port).path]
         }
         if reasoningInline { args += ["--reasoning-format", "none"] }
+        if let kwargs = defaultTemplateKwargs { args += ["--chat-template-kwargs", kwargs] }
+        if defaultMaxTokens > 0 { args += ["-n", String(defaultMaxTokens)] }
         if apiKeyEnabled { args += ["--api-key", Keychain.apiKey()] }
         // A compatible downloaded DFlash draft takes precedence over embedded MTP.
         // Dynamic MoE plans memory without a separate draft model, so DFlash only joins a
-        // full-GPU plan; the embedded MTP head is part of the model and the plan counts it.
+        // full-GPU plan; the plan counts an MTP head, built in or in its own file.
         let draftAllowed = !usesAutoPlan || plannedMode == "full_gpu"
         if draftAllowed, let selection = dflashSelection(modelPath: modelPath, ncmoe: ncmoe) {
             // Quantize the draft's KV cache: it doubles KV pressure at high ctx, and
@@ -361,7 +367,7 @@ struct ServerSettings {
             args += ["-md", selection.draft, "--spec-type", "draft-dflash",
                      "-ngld", String(selection.ngld),
                      "-ctkd", "q8_0", "-ctvd", "q8_0"]
-        } else if draftAllowed, Self.mtpEnabled(forModel: modelPath), let draft = Self.mtpDraftPath(forModel: modelPath) {
+        } else if Self.mtpEnabled(forModel: modelPath), let draft = Self.mtpDraftPath(forModel: modelPath) {
             args += ["-md", draft, "--spec-type", "draft-mtp"]
             args += Self.mtpDraftWidthArgs(forModel: modelPath, gpuArchitecture: selectedGPUArchitecture)
         } else if Self.mtpEnabled(forModel: modelPath), Self.modelHasMTP(at: modelPath) {
@@ -481,6 +487,8 @@ struct ServerSettings {
                 lines.append("slot-save-path = \(slotDir.path)")
             }
             if reasoningInline { lines.append("reasoning-format = none") }
+            if let kwargs = defaultTemplateKwargs { lines.append("chat-template-kwargs = \(kwargs)") }
+            if defaultMaxTokens > 0 { lines.append("n-predict = \(defaultMaxTokens)") }
             if let selection = dflashSelection(modelPath: path, ncmoe: ncmoeByPath[path] ?? 0) {
                 lines.append("model-draft = \(selection.draft)")
                 lines.append("spec-type = draft-dflash")
@@ -562,6 +570,21 @@ struct ServerSettings {
             .filter { $0 >= lowest && $0 <= (trained ?? 1048576) }
         if let trained, trained > (choices.last ?? 0) { choices.append(trained) }
         return choices.isEmpty ? [lowest] : choices
+    }
+
+    /// KV types to offer: only f16/q8_0/q4_0 have an FA-AMD kernel, turbo only where the
+    /// model supports it. A type already selected stays listed so the field is not blank.
+    static func kvTypeChoices(modelPath: String, selected: [String]) -> [String] {
+        kvTypeChoices(supportsTurbo: !isAppleSilicon && !modelPath.isEmpty && modelSupportsTurboKV(at: modelPath),
+                      selected: selected)
+    }
+
+    static func kvTypeChoices(supportsTurbo: Bool, selected: [String]) -> [String] {
+        var types = ["f16", "q8_0", "q4_0"]
+        if isAppleSilicon { return types }
+        if supportsTurbo { types += ["turbo4", "turbo3"] }
+        for t in selected where !types.contains(t) { types.append(t) }
+        return types
     }
 
     static func contextLabel(_ tokens: Int) -> String {
@@ -714,6 +737,12 @@ struct ServerSettings {
             // --dynamic-moe runs the plan; a forced mode or the retry without it rides on TOSH_AUTO
             if planWithoutDMoE { env["TOSH_AUTO"] = "nodmoe" } else if executionMode == "dmoe" { env["TOSH_AUTO"] = "dmoe" }
             env["TOSH_AUTO_KV"] = autoKVMode
+            if dynamicMoeLeanRAM { env["TOSH_AUTO_HOST_BANK"] = "lean" }
+            // the engine keeps this family's separate head behind a switch
+            if Self.mtpEnabled(forModel: modelPath), Self.mtpDraftPath(forModel: modelPath) != nil,
+               Self.ggufString("general.architecture", at: modelPath) == "qwen4exp" {
+                env["TOSH_QWEN4EXP_MTP_EXPERIMENTAL"] = "1"
+            }
             env["TOSH_AUTO_PLAN_FILE"] = AutoMemoryPlan.planURL(port: port).path
         } else if prefetchExperts && ((ncmoe > 0 && !manualFullGPU) || routerMode) {
             // At/above the measured cliff the prefetch overlap collapses and stalls the
@@ -839,6 +868,8 @@ struct ServerSettings {
             mlock: bool(SettingsKeys.mlock, false),
             cacheRAM: int(SettingsKeys.cacheRAM, 2048),
             reasoningInline: bool(SettingsKeys.reasoningInline, false),
+            defaultReasoning: d.string(forKey: SettingsKeys.serverDefaultReasoning) ?? "model",
+            defaultMaxTokens: int(SettingsKeys.serverDefaultMaxTokens, 0),
             parallelSlots: int(SettingsKeys.parallelSlots, 1),
             apiKeyEnabled: bool(SettingsKeys.apiKeyEnabled, false),
             localNetworkDiscovery: bool(SettingsKeys.localNetworkDiscovery, false),
@@ -864,7 +895,8 @@ struct ServerSettings {
             benchDepth: int(SettingsKeys.benchDepth, 0),
             dynamicMoeEnabled: bool(SettingsKeys.dynamicMoeEnabled, false),
             executionMode: d.string(forKey: SettingsKeys.executionMode) ?? "auto",
-            autoKVMode: d.string(forKey: SettingsKeys.autoKVMode) ?? "auto")
+            autoKVMode: d.string(forKey: SettingsKeys.autoKVMode) ?? "auto",
+            dynamicMoeLeanRAM: bool(SettingsKeys.dynamicMoeLeanRAM, false))
     }
 
     /// True when the model's attention head dim exceeds 256 (Gemma 4's global layers
@@ -916,6 +948,14 @@ struct ServerSettings {
         guard ubatch > 0 else { return nil }
         guard routerMode || Self.modelIsMoE(at: modelPath) else { return nil }
         return ubatch
+    }
+    /// Template defaults for requests that set none; the request's own kwargs override them key by key.
+    var defaultTemplateKwargs: String? {
+        switch defaultReasoning {
+        case "off": return #"{"enable_thinking":false}"#
+        case "low", "medium", "high": return #"{"enable_thinking":true,"reasoning_effort":"\#(defaultReasoning)"}"#
+        default: return nil
+        }
     }
     /// The engine plans memory: MoE models under Auto or forced Dynamic MoE, on one GPU.
     var usesAutoPlan: Bool {
@@ -1080,6 +1120,12 @@ struct ServerSettings {
         }
         if let headVocab = ggufUInt32("vocab_size", at: head),
            let baseVocab = ggufUInt32("vocab_size", at: model), headVocab != baseVocab {
+            return false
+        }
+        // a model that carries its own head is as large as its sibling, a head is a fraction of it
+        if ggufUInt32("nextn_predict_layers", at: head) != nil || ggufString("general.architecture", at: head) != nil,
+           let headSize = GGUFFile.totalSize(at: head), let baseSize = GGUFFile.totalSize(at: model),
+           headSize > baseSize / 2 {
             return false
         }
         if let layers = ggufUInt32("nextn_predict_layers", at: head) {
@@ -1578,7 +1624,20 @@ final class ServerController: ObservableObject {
 
     enum State: Equatable { case stopped, starting, running, failed(String) }
 
-    @Published var state: State = .stopped
+    @Published var state: State = .stopped {
+        didSet { if state != .starting { enterStartupPhase(nil) } }
+    }
+
+    /// What a starting engine is doing, read from its log, so a long load is not a silent spinner.
+    enum StartupPhase: Hashable { case planning, loadingWeights, lockingMemory, fillingCache }
+    @Published private(set) var startupPhase: StartupPhase?
+    @Published private(set) var startupPhaseSince: Date?
+
+    private func enterStartupPhase(_ phase: StartupPhase?) {
+        guard startupPhase != phase else { return }
+        startupPhase = phase
+        startupPhaseSince = phase == nil ? nil : Date()
+    }
     let logBuffer = ServerLogBuffer()
     var log: String {
         get { logBuffer.text }
@@ -1616,7 +1675,11 @@ final class ServerController: ObservableObject {
     /// After a projector load failure, makes the next launch drop `--mmproj`
     /// (text-only). Reset on every fresh `start()`.
     private var retryWithoutMmproj = false
+    /// When the engine last came back on its own after dying mid-session.
+    private var lastCrashRelaunch: Date?
     private var currentPort = 8080
+    /// The port a running engine answers on, nil while it is not up.
+    var runningPort: Int? { state == .running ? currentPort : nil }
     private var discoveryService: NetService?
     private var discoveryEnabled = false
     private let fileLog = RotatingFileLog(name: "server.log")
@@ -1750,6 +1813,7 @@ final class ServerController: ObservableObject {
         stopDiscovery()
         state = .starting
         startedAt = nil
+        enterStartupPhase(settings.usesAutoPlan ? .planning : .loadingWeights)
 
         // A stopped engine can take seconds to die (SIGTERM mid-generation) and still
         // holds the port meanwhile, so wait for the previous PID before binding.
@@ -1869,7 +1933,7 @@ final class ServerController: ObservableObject {
                 : " · peer group \($0.peerGroupID) (\($0.peerCount) GPUs)"
             return "    [\($0.index)] \($0.name) · \($0.vramGB) GB\(peer)\($0.isExternal ? " · EXTERNAL/eGPU" : "")\($0.isIntegrated ? " · iGPU (not auto-selected)" : "")"
         }.joined(separator: "\n")
-        let envKeys = ["TOSH_AUTO", "TOSH_AUTO_KV", "GGML_METAL_VRAM_RESERVE_MB",
+        let envKeys = ["TOSH_AUTO", "TOSH_AUTO_KV", "TOSH_AUTO_HOST_BANK", "GGML_METAL_VRAM_RESERVE_MB",
                        "GGML_METAL_DEVICE_INDEX", "GGML_METAL_DEVICES", "GGML_METAL_DEVICE_LIST",
                        "GGML_METAL_SHARED_BUFFERS_DISABLE", "TOSH_FA_AMD",
                        "GGML_SCHED_PREFETCH_EXPERTS", "GGML_CPU_NO_REPACK",
@@ -1957,6 +2021,7 @@ final class ServerController: ObservableObject {
                     EngineLock.reapStrayEngines()
                 }
                 if case .failed = self.state { return }
+                let wasServing = self.state == .running
                 if proc.terminationStatus == 0 || proc.terminationStatus == 15 {
                     self.state = .stopped
                 } else {
@@ -1979,7 +2044,17 @@ final class ServerController: ObservableObject {
                         return
                     }
                     AppLog.server.error("engine exited with status \(proc.terminationStatus)")
-                    self.state = .failed(Self.diagnose(self.log, exitCode: proc.terminationStatus))
+                    let why = Self.diagnose(self.log, exitCode: proc.terminationStatus)
+                    // One relaunch keeps chats and external clients working after a crash mid-session;
+                    // a second one within ten minutes stays failed so a repeating cause is not hidden.
+                    if wasServing, self.lastCrashRelaunch.map({ Date().timeIntervalSince($0) > 600 }) ?? true {
+                        self.lastCrashRelaunch = Date()
+                        self.consume("\n[ToshLLM] el motor se detuvo (\(why)) — reiniciando / the engine stopped (\(why)) — restarting\n")
+                        self.state = .starting
+                        self.launch(settings)
+                        return
+                    }
+                    self.state = .failed(why)
                 }
             }
         }
@@ -2217,7 +2292,7 @@ final class ServerController: ObservableObject {
         healthTask?.cancel()
         healthTask = Task { [weak self] in
             let url = URL(string: "http://127.0.0.1:\(port)/health")!
-            for _ in 0..<150 {   // up to ~5 min for large models
+            for _ in 0..<300 {   // up to ~10 min: a large model split across cards can take over 5
                 if Task.isCancelled { return }
                 if let (data, _) = try? await URLSession.shared.data(from: url),
                    String(data: data, encoding: .utf8)?.contains("ok") == true {
@@ -2236,7 +2311,10 @@ final class ServerController: ObservableObject {
                 try? await Task.sleep(for: .seconds(2))
             }
             await MainActor.run {
-                self?.state = .failed("El servidor no respondió al health check")
+                let lang = UserDefaults.standard.string(forKey: SettingsKeys.language) ?? "en"
+                self?.state = .failed(lang == "es"
+                    ? "El servidor no estuvo listo en 10 minutos"
+                    : "The server was not ready after 10 minutes")
                 self?.stopDiscovery()
                 if let p = self?.process {
                     let pid = p.processIdentifier
@@ -2359,6 +2437,15 @@ final class ServerController: ObservableObject {
                 fitNote = reason.isEmpty
                     ? fitNoteText
                     : "\(fitNoteText): \(reason)"
+            }
+            if state == .starting {
+                if line.contains("Tosh Dynamic MoE: mode=") || (line.contains("load_model: loading model") && startupPhase == .planning) {
+                    enterStartupPhase(.loadingWeights)
+                } else if line.contains("MiB locked for experts") || line.contains("expert bank locked") {
+                    enterStartupPhase(.lockingMemory)
+                } else if line.contains("tosh_hostcache: ready") {
+                    enterStartupPhase(.fillingCache)
+                }
             }
             if line.contains("mixed expert execution failed"), !recoveredFromExecutorFailure,
                state == .running, let settings = launchedSettings {
