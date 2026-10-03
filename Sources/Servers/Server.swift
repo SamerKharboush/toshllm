@@ -828,8 +828,14 @@ struct ServerSettings {
     /// A group of two or more is the only evidence of a link: a card with no bridge reports
     /// group 0, and `peerGroups` drops those.
     static var peerBridgeAvailable: Bool {
-        HardwareInfo.detect().peerGroups.contains { $0.count >= 2 }
+        if let forced = peerBridgeOverride { return forced }
+        return HardwareInfo.detect().peerGroups.contains { $0.count >= 2 }
     }
+
+    /// Lets a test state the topology instead of inheriting the machine's. Reading real
+    /// hardware here made the launch-environment tests fail on any box without a bridged
+    /// pair, which is every box except the two-card ones they are written for.
+    nonisolated(unsafe) static var peerBridgeOverride: Bool?
 
     static func resolvedThreads(_ d: UserDefaults) -> Int {
         // 0 or unset = physical cores; SMT threads collapse decode (docs/thread-sweep-2026-09-30.md).

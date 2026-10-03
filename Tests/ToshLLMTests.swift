@@ -1433,10 +1433,27 @@ final class ServerSettingsTests: XCTestCase {
         XCTAssertNil(s.environment["TOSH_MGPU_EVENTS"], "sin reparto no hay traspaso entre GPUs")
 
         s.multiGPU = true
+        s.splitMode = "tensor"
         XCTAssertEqual(s.environment["TOSH_MGPU_EVENTS"], "1")
 
         s.mgpuEvents = false
         XCTAssertNil(s.environment["TOSH_MGPU_EVENTS"])
+
+        // And the gate that came out of measurement: a layer split does not hand off
+        // often enough to pay, and forcing it deadlocked the split outright.
+        s.mgpuEvents = true
+        s.splitMode = "layer"
+        XCTAssertNil(s.environment["TOSH_MGPU_EVENTS"])
+    }
+
+    override func setUp() {
+        super.setUp()
+        ServerSettings.peerBridgeOverride = true
+    }
+
+    override func tearDown() {
+        ServerSettings.peerBridgeOverride = nil
+        super.tearDown()
     }
 
     func testMultiGPUDefaultsReachTheEngine() {
@@ -1451,13 +1468,18 @@ final class ServerSettingsTests: XCTestCase {
         s.mgpuPeer = true
         s.splitMode = "tensor"
         XCTAssertEqual(s.environment["TOSH_MGPU_EVENTS"], "1")
-        XCTAssertEqual(s.environment["TOSH_MGPU_PEER"], "1")
+        XCTAssertEqual(s.environment["TOSH_MGPU_PEER"], "1",
+                       "con puente declarado, el tensor split lo lleva al motor")
 
         // A layer split never reduces across cards, so the bridge must stay out of the way.
         s.splitMode = "layer"
-        XCTAssertEqual(s.environment["TOSH_MGPU_EVENTS"], "1")
         XCTAssertNil(s.environment["TOSH_MGPU_PEER"],
                      "el puente no aporta nada por capas y ahí solo añade presión de memoria")
+        // Events are off for a layer split too, and not for symmetry: the shared-event
+        // hand-off deadlocked it at p >= 257 on a pair of D700s, and the generic host
+        // staging path ran the same prompt at 23.1 t/s.
+        XCTAssertNil(s.environment["TOSH_MGPU_EVENTS"],
+                     "el traspaso compartido colgaba el reparto por capas")
     }
 
     func testLocalNetworkDiscoveryBindsServerToAllInterfaces() {

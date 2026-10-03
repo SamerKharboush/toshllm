@@ -55,6 +55,25 @@ final class SplitEnvironmentTests: XCTestCase {
         return s
     }
 
+    /// The bridge gate reads real hardware, so state the topology rather than inherit it.
+    /// Left to the machine, this test passes only on a box with two bridged cards.
+    override func setUp() {
+        super.setUp()
+        ServerSettings.peerBridgeOverride = true
+    }
+
+    override func tearDown() {
+        ServerSettings.peerBridgeOverride = nil
+        super.tearDown()
+    }
+
+    func testPeerIsSkippedWithoutABridge() {
+        ServerSettings.peerBridgeOverride = false
+        let s = settings(devices: 2, mode: "tensor", group: 0)
+        XCTAssertNil(s.environment["TOSH_MGPU_PEER"],
+                     "an unbridged pair measured 0.00 tok/s difference, so the copy is skipped")
+    }
+
     func testTensorSplitCarriesTheBridgeAndTheFastHandover() {
         let s = settings(devices: 2, mode: "tensor", group: 0)
         XCTAssertEqual(s.environment["TOSH_MGPU_PEER"], "1")
