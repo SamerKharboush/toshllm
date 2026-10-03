@@ -134,6 +134,21 @@ enum ChatToolsService {
         return rows.compactMap(BuiltinToolInfo.init(json:))
     }
 
+    /// The engine tools the settings allow. File tools and the math tools share the /tools endpoint.
+    static func listEnabled(port: Int) async throws -> [BuiltinToolInfo] {
+        let agent = UserDefaults.standard.bool(forKey: SettingsKeys.agentToolsEnabled)
+        let sympy = SymPyToolsService.isEnabled
+        let scientific = ScientificToolsService.isEnabled
+        guard agent || sympy || scientific else { return [] }
+        // a server started before a math switch was turned on has no /tools: not worth failing the chat
+        let tools = agent ? try await list(port: port) : ((try? await list(port: port)) ?? [])
+        return tools.filter {
+            if SymPyToolsService.isTool($0.name) { return sympy }
+            if ScientificToolsService.isTool($0.name) { return scientific }
+            return agent
+        }
+    }
+
     static func execute(name: String, arguments: [String: Any], port: Int,
                         workingDirectory: String? = nil) async throws -> ToolExecutionResult {
         var request = URLRequest(url: URL(string: "http://127.0.0.1:\(port)/tools")!)

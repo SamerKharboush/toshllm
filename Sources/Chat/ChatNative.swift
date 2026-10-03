@@ -338,6 +338,7 @@ private struct AgentRunContext {
     var remainingTurns: Int
     var tools: [BuiltinToolInfo]
     var workingDirectory: String?
+    var mathGuard = MathTurnGuard()
 }
 
 @MainActor
@@ -714,11 +715,12 @@ final class ChatStore: ObservableObject {
         let toolCwd = effectiveWorkingDirectory(for: convID)
         activeStream = (port, ChatStreamIdentity.value(conversationID: convID,
                                                        model: ServerSettings.activeRouterModel()))
-        let systemWithCwd = toolCwd.map {
+        let systemWithCwd = ScientificToolsService.system(toolCwd.map {
             (system.isEmpty ? "" : system + "\n\n")
             + "File tools work inside \($0). Use paths relative to it, and never call them for text that only exists in this conversation."
-        } ?? system
+        } ?? system)
         let toolsEnabled = UserDefaults.standard.bool(forKey: SettingsKeys.agentToolsEnabled)
+            || SymPyToolsService.isEnabled || ScientificToolsService.isEnabled
         let javaScriptEnabled = UserDefaults.standard.bool(forKey: SettingsKeys.jsSandboxEnabled)
         let memoryToolsEnabled = ChatMemoryService.isEnabled
         let agentTurnLimit = Self.configuredAgentTurnLimit
@@ -843,7 +845,7 @@ final class ChatStore: ObservableObject {
 
                 if availableTools.isEmpty {
                     if toolsEnabled {
-                        availableTools = try await ChatToolsService.list(port: port)
+                        availableTools = try await ChatToolsService.listEnabled(port: port)
                         // without a folder these write wherever the engine happens to run,
                         // and the model invents paths for text that is not a file at all
                         if toolCwd == nil {
@@ -908,7 +910,12 @@ final class ChatStore: ObservableObject {
                     .filter { !$0.isEmpty }
                 if !samplerOrder.isEmpty { body["samplers"] = samplerOrder }
                 if let activeModel { body["model"] = activeModel }
-                if !availableTools.isEmpty {
+                if agentRun?.mathGuard.next == .mathOnly {
+                    // after a refused math call: correct it or ask, never answer from memory
+                    body["tools"] = availableTools.filter { MathTranscriptionService.isMathTool($0.name) }
+                        .compactMap(\.openAIDefinition) + [MathTranscriptionService.clarifyTool]
+                    body["tool_choice"] = "required"
+                } else if !availableTools.isEmpty {
                     body["tools"] = availableTools.compactMap(\.openAIDefinition)
                     body["tool_choice"] = "auto"
                 }
@@ -1030,18 +1037,22 @@ final class ChatStore: ObservableObject {
             let wasCancelled = cancelled
             let didReportError = reportedError
             let hadReasoning = !accumulator.reasoning.isEmpty
-            let finalToolCalls = accumulator.toolCalls.filter { !$0.name.isEmpty }
-            let finalText = streamedText
+            let streamedCalls = accumulator.toolCalls.filter { !$0.name.isEmpty }
+            let closing = wasCancelled || didReportError ? nil : agentRun?.mathGuard.closing(
+                toolNames: streamedCalls.map(\.name), arguments: streamedCalls.map(\.arguments))
+            let finalToolCalls = closing == nil ? streamedCalls : []
+            let finalText = closing ?? streamedText
             let nextAgentRun = AgentRunContext(
                 port: port, temperature: temperature, maxTokens: maxTokens,
                 system: system, thinking: thinking, sampling: sampling,
                 modalities: modalities,
                 remainingTurns: agentRun?.remainingTurns ?? agentTurnLimit,
-                tools: availableTools, workingDirectory: toolCwd)
+                tools: availableTools, workingDirectory: toolCwd,
+                mathGuard: agentRun?.mathGuard ?? MathTurnGuard())
             let store = self
             let shouldDeliverQueued: Bool = await MainActor.run {
                 if !wasCancelled && !didReportError && hadReasoning && !hasVisibleAnswer
-                    && finalToolCalls.isEmpty {
+                    && finalToolCalls.isEmpty && closing == nil {
                     store?.lastError = Self.emptyResponseMessage(finishReason: finalFinishReason)
                 }
                 if let finalUsage { store?.setContextUsed(finalUsage.prompt + finalUsage.completion, for: convID) }
@@ -1147,6 +1158,15 @@ final class ChatStore: ObservableObject {
         }
 
         guard var context = agentContext else { return }
+        if context.mathGuard.next == .stop {
+            // a second refused math call: end the turn without asking the model again
+            conversations[conversationIndex].messages.append(ChatMessage(
+                role: "assistant", content: MathTranscriptionService.unresolvedMessage()))
+            conversations[conversationIndex].updated = Date()
+            agentContext = nil
+            save()
+            return
+        }
         context.remainingTurns -= 1
         agentContext = context
         guard context.remainingTurns > 0 else {
@@ -1271,12 +1291,22 @@ final class ChatStore: ObservableObject {
                     ) { [weak self] partial in
                         await MainActor.run { self?.updateToolCallResult(request, result: partial) }
                     }
+                } else if MathTranscriptionService.isMathTool(request.name) {
+                    let source = await MainActor.run { () -> [String: Any]? in
+                        guard let messages = self?.conversations.first(where: { $0.id == request.conversationID })?.messages
+                        else { return nil }
+                        return MathTranscriptionService.source(messages: messages)
+                    }
+                    result = try await MathTranscriptionService.execute(
+                        name: request.name, arguments: arguments, source: source, port: context.port,
+                        workingDirectory: context.workingDirectory)
                 } else {
                     result = try await ChatToolsService.execute(
                         name: request.name, arguments: arguments, port: context.port,
                         workingDirectory: context.workingDirectory)
                 }
                 guard !Task.isCancelled else { return }
+                self?.agentContext?.mathGuard.record(tool: request.name, result: result.content)
                 self?.completeToolCall(request, result: result.content,
                                        state: result.isError ? .failed : .completed,
                                        imageURIs: result.imageURIs)
@@ -3694,8 +3724,7 @@ struct NativeChatView: View {
     private func refreshAvailableTools() async {
         loadingTools = true
         var tools: [BuiltinToolInfo] = []
-        if UserDefaults.standard.bool(forKey: SettingsKeys.agentToolsEnabled),
-           let builtins = try? await ChatToolsService.list(port: port) {
+        if let builtins = try? await ChatToolsService.listEnabled(port: port) {
             tools += builtins
         }
         if UserDefaults.standard.bool(forKey: SettingsKeys.jsSandboxEnabled) {

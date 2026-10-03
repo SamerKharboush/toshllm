@@ -3,7 +3,7 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
-## [Unreleased]
+## [0.87.14-beta.4] - 2026-10-03
 
 ### Changed
 
@@ -79,6 +79,23 @@ new multi-GPU default. Known gaps are listed at the bottom of this section.
 - The cross-GPU events setting is still only turned on for a tensor split. It makes no measurable difference on a layer split, so forcing it on there buys nothing.
 - A 27B Qwen3.5 model cannot be split by tensor: an internal state tensor's width does not divide evenly. The engine now says which operation and which dimensions instead of failing a bare assert. The layer split, which that model uses, is unaffected.
 - The engine falls back to compiling its Metal kernels from embedded sources when the bundle has no precompiled copy. Functionally identical, slower on first start.
+
+## [0.87.14] - 2026-10-02
+
+### Added
+
+- **LLMs: symbolic math tools with SymPy.** The model can factor, solve equations and differential equations, differentiate, integrate, take limits and work with matrices, all exactly. Off by default, in chat settings under Agents ([details](helpers/tosh-sympy/README.md)).
+
+- **LLMs: numerical tools with NumPy and SciPy.** The model can integrate numerically, find roots, fit curves, run FFTs and filters and compute statistics, sending numbers and never code. Off by default, next to the SymPy switch; the two add 47 MB to the download ([details](helpers/tosh-scientific/README.md)).
+
+- **LLMs: math tool calls are checked against your message before they run.** A call that drops or changes part of the problem is refused instead of computed, and the card shows what was computed. After a refusal the model can only correct the call or ask you.
+
+### Improved
+
+- **LLMs: Qwen3.8-Flash-Next generates about 11% faster on Radeon Pro Vega II.** On a Radeon Pro Vega II Duo it writes at 29.9 tokens a second instead of 26.8 with Tensor Mesh, and at 23.8 instead of 21.6 on one card with Dynamic MoE.
+
+- **LLMs: Qwen3.8-Flash-Next reads text it has not seen before sooner.** On a Radeon Pro Vega II, a new 4000-token document is read at about 197 tokens a second instead of 162.
+
 
 ## [0.87.13] - 2026-10-01
 
@@ -159,7 +176,6 @@ new multi-GPU default. Known gaps are listed at the bottom of this section.
 - **LLMs: the GPU memory readout shows what is in use on Macs with unified memory instead of 0.**
 
 - **UI improvements and fixes.**
->>>>>>> origin/main
 
 ## [0.87.11] - 2026-09-28
 

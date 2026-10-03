@@ -64,6 +64,8 @@ It opens, detects your hardware, and recommends models that will actually run we
 
 - **Native chat** — multiple persistent conversations, full Markdown with code-copy, regenerate, system prompt, live tokens/sec, file attachments, conversation forking and per-message metrics
 - **Agent tools and MCP** — the model can read, edit and run files and commands with per-step permission, run JavaScript in a sandbox, and use tools from external Model Context Protocol servers you connect
+- **Symbolic math (SymPy)** — optional exact math tools for the model: simplify, solve equations and systems, derivatives, integrals, limits, series, differential equations, matrices, Laplace and Fourier transforms, and checking that two expressions are equivalent or that a solution holds. The runtime ships inside the app, nothing else to install; off by default, in chat settings under Agents ([details](helpers/tosh-sympy/README.md))
+- **Scientific computing (NumPy and SciPy)** — optional numerical tools for the model: definite integrals without a closed form, roots, optimization and curve fitting, differential equations over an interval, linear algebra on decimal matrices, FFT and filters, and statistics. The model sends an operation and its numbers, never code. Same bundled runtime, its own switch, off by default ([details](helpers/tosh-scientific/README.md))
 - **GPU speech and subtitle studio** — Whisper.cpp transcribes microphone dictation into one clean paragraph, while the Audio workspace can disable Silero VAD, use Whisper.cpp's native defaults or tune it with calibrated profiles, previews audio or video with a synchronized editable transcript, preserves recoverable original and translated tracks, keeps Chat translation consistent with context and a glossary, and exports SRT, VTT, TXT, JSON or a captioned MOV; nothing leaves the Mac
 - **Vision** — attach images (or paste a screenshot with Cmd+V) and vision-capable models describe them; the matching projector (`mmproj`) is paired automatically
 - **Image generation (beta)** — a local text-to-image studio (stable-diffusion.cpp on the same AMD Metal stack): text-to-image and image-to-image, with a model catalog sized to your VRAM, a live preview of the image forming, and an **upscaler** that takes your own photos too (x2/x4, batches, and a drag-to-compare view)
@@ -495,6 +497,8 @@ Issues and pull requests are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 Free to use, study, modify and redistribute. Any distributed derivative must remain GPL-3.0 and preserve the copyright notice — the project can never be turned into closed-source commercial software.
 
+Components bundled under their own licenses are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
 ## Credits
 
 - [llama.cpp](https://github.com/ggml-org/llama.cpp) (ggml-org) — inference engine
@@ -535,6 +539,8 @@ Casi todas las herramientas de LLM locales en macOS apuntan a Apple Silicon; los
 
 - **Chat nativo** — conversaciones persistentes, Markdown completo con copiar código, regenerar, prompt de sistema, tokens/seg en vivo, adjuntar archivos, bifurcar conversaciones y métricas por mensaje
 - **Herramientas de agente y MCP** — el modelo puede leer, editar y ejecutar archivos y comandos con permiso paso a paso, correr JavaScript en un sandbox y usar herramientas de servidores MCP externos que conectes
+- **Matemática simbólica (SymPy)** — herramientas opcionales de matemática exacta para el modelo: simplificar, resolver ecuaciones y sistemas, derivadas, integrales, límites, series, ecuaciones diferenciales, matrices, transformadas de Laplace y Fourier, y verificar que dos expresiones son equivalentes o que una solución cumple. El runtime va dentro de la app, sin instalar nada más; apagado por defecto, en los ajustes del chat, en Agentes
+- **Cálculo científico (NumPy y SciPy)** — herramientas numéricas opcionales para el modelo: integrales definidas sin forma cerrada, raíces, optimización y ajuste de curvas, ecuaciones diferenciales en un intervalo, álgebra lineal con matrices decimales, FFT y filtros, y estadística. El modelo envía una operación y sus números, nunca código. Mismo runtime incluido, con su propio interruptor, apagado por defecto
 - **Dictado por voz** — el botón de micrófono transcribe directo al cuadro de mensaje en el propio Mac (framework Speech de Apple); nada sale del equipo
 - **Estudio de audio y subtítulos en GPU** — Whisper.cpp transcribe audio o vídeo, muestra y sigue el segmento activo durante la reproducción, conserva proyectos recuperables con original y traducción, mantiene términos consistentes mediante contexto y glosario, permite editar y comparar ambas pistas, prueba VAD en una muestra y exporta SRT, VTT, TXT, JSON o una copia MOV subtitulada
 - **Visión** — adjunta imágenes (o pega una captura con Cmd+V) y los modelos con visión las describen; el proyector (`mmproj`) se empareja solo

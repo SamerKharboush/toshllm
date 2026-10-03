@@ -97,6 +97,13 @@ private struct ToolCallDetailView: View {
                         .font(.system(.callout, design: .monospaced))
                         .textSelection(.enabled)
                 } else { emptyState("Waiting…") }
+            case .math:
+                codePanel(presentation.code ?? "", language: presentation.language)
+                if let result = presentation.result, !result.isEmpty {
+                    Label(result, systemImage: "function")
+                        .font(.system(.callout, design: .monospaced))
+                        .textSelection(.enabled)
+                } else { emptyState(call.state == .running ? "Calculating…" : "No result") }
             case .search:
                 SearchResultPanel(result: presentation.result)
             case .generic:
