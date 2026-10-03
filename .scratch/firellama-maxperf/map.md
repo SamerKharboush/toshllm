@@ -82,9 +82,6 @@ Firellama runs the biggest models this Mac Pro can hold at the fastest tok/s it 
   actor; `ChatTab` and `DesignSystem/Views.swift` put `sharedBackgroundVisibility` and
   `ToolbarSpacer` behind `#if compiler(>=6.2)`, which resolves the symbol problem without needing a
   real 26 SDK. `swift build` is green and the beta.2 bundle is installed and measured.
-- **`swift test` cannot run on this machine**: no XCTest module, because the box has Command Line
-  Tools and no Xcode app. `swift build` works. That is a property of the machine, not the code —
-  it runs anywhere Xcode is installed, and CI runs it on `macos-26`.
 - The 27B `qwen35` SSM state reshape cannot be tensor-split at all: `ne[0]=6144` does not
   divide `ne[0]=9216`. That limit stands and layers are the model's only option. What changed
   is how it is reported: the engine exits 86 naming the op and dimensions, and the app retries
@@ -94,6 +91,9 @@ Firellama runs the biggest models this Mac Pro can hold at the fastest tok/s it 
   Still owed.
 - Notarization needs an Apple Developer identity and the notary-tool credentials. The pipeline is
   wired in `build.yml` and skips cleanly when they are absent.
+- Precompiled Metal kernels are no longer blocked (2026-10-03): Xcode 26.3 and the Metal
+  toolchain are installed on this machine, first launch is 16 s against 143 s, shipped in
+  beta.3.
 - No arm64 or universal build has been produced. The machinery exists (`build-engines.sh`
   `ARCH=universal`, `make-app.sh` `TOSH_ARCH=universal`) but has never been run for arm64.
 

@@ -142,9 +142,9 @@ about what you can fix here, not about what you should install.
 
 | | Intel Mac Pro (where this was built) | Apple Silicon (where you are) |
 |---|---|---|
-| Xcode | **absent**, Command Line Tools only | assume present |
-| `swift test` | **fails**: `no such module 'XCTest'` | works |
-| `xcrun metal` | absent | works → precompiled `default.metallib` builds |
+| Xcode | 26.3, installed 2026-10-03 | assume present |
+| `swift test` | works (319 tests, 1 skipped) | works |
+| `xcrun metal` | works, toolchain downloaded | works |
 | CPU ISA | Xeon E5-2697 v2, AVX1 no AVX2 | arm64 |
 | Metal simd width | 64 | 32 |
 | GPUs | 2× FirePro D700 | 1 |
@@ -283,27 +283,25 @@ Do it from an actual second machine: laptop, phone on the same Wi-Fi, anything.
 **Acceptance:** `/health`, `/v1/models` and a chat completion from a different `hw.machine`, with
 the receiving IP and tok/s recorded.
 
-### T4 — Ship precompiled Metal kernels
+### T4 — Precompiled Metal kernels: DONE on the Intel box, 2026-10-03
 
-**Now:** the first launch spends ~143 s compiling shaders, because the build machine had no Xcode
-`metal` compiler. `xcodebuild -downloadComponent MetalToolchain` needs an Xcode *app*, and
-Command Line Tools does not include it.
+Xcode 26.3 and Apple's Metal toolchain are now installed on the Mac Pro
+(`xcodebuild -downloadComponent MetalToolchain`, 704.6 MB). `build-engines.sh` now prints
+`Metal compiler available — will precompile default.metallib` and produces 25 `.metallib`
+files plus a `fingerprint` manifest for the inference engine, and a `default.metallib` for each
+of the speech and image engines.
 
-**You have Xcode.** `build-engines.sh` already handles this at lines 47-60: it exports
-`DEVELOPER_DIR` if `/Applications/Xcode.app` exists, tries the toolchain download, and sets
-`METAL_PRECOMPILE=1` if `xcrun metal` and `xcrun -f metallib` both resolve.
+Measured: first launch to listening went from ~143 s to **16 s** on the 14B across both D700s.
+Shipped in `v0.87.14-beta.3`. Chat verified coherent, `finish_reason: stop`.
 
-Do: run `./scripts/build-engines.sh` and confirm `Metal compiler available — will precompile
-default.metallib`. Then confirm `vendor/llama.cpp/build-static/bin/default.metallib` exists and
-that the bundle carries a `kernels/` directory with a `fingerprint` file.
+Note the fingerprint check in `ggml_metal_library_precompiled_matches`: a library whose recorded
+source hash does not match the sources embedded in the binary is refused and the engine compiles
+instead. If you change a `.metal` file, rebuild the engines — do not hand-edit a fingerprint,
+and do not "optimize" by relaxing that check.
 
-The design is deliberate and documented in the script: one library per kernel source, each
-compiled with the same defines the runtime would use, because the sources share helper names and
-cannot be linked into one metallib. A library is only loaded if its source hash matches the one
-embedded in the binary — that is what `fingerprint` is for. Do not break that invariant to
-"optimize" it.
-
-**Acceptance:** a fresh install whose first launch does not spend 143 s compiling.
+**Still open for you:** if you build an arm64 slice, its kernels must be compiled too. The
+fingerprint is per-source, not per-architecture, but a library built for one GPU family will not
+run on another; confirm the arm64 bundle loads rather than silently falling back.
 
 ### T5 — Numerical A/B for the `NSMakeRange` fix
 

@@ -3,6 +3,22 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.87.14-beta.3] - 2026-10-03
+
+### Changed
+
+- **Metal kernels now ship precompiled.** The bundle carries 25 `.metallib` files for the
+  inference engine plus a `default.metallib` for the speech and image engines, so the engine
+  loads a library rather than compiling from source at launch. Measured first launch, 14B on
+  both D700s: **16 s to listening, against 143 s before**. The build machine now has Xcode 26.3
+  and Apple's Metal toolchain, which is what `scripts/build-engines.sh` needs to produce them.
+
+### Fixed
+
+- Three launch-environment tests were asserting against hardware the test machine does not have,
+  so they had never passed here. They now state the topology they mean and cover the unbridged
+  case that had no coverage. 319 tests, 1 skipped, 0 failures.
+
 ## [0.87.14-beta.2] - 2026-10-02
 
 ### Fixed

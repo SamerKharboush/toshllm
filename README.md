@@ -226,13 +226,10 @@ machine was sized as if it were single-card. That is fixed too.
 | 27B, both D700s, layer split | prompt 11.51 tok/s, generate 6.20 tok/s |
 | chat through the shipped binary | coherent, `finish_reason: stop`, 5.05 tok/s |
 | engine backend suite | 10701 / 10701 |
+| first launch to listening, precompiled kernels | 16 s (was 143 s) |
 
 ### Known gaps
 
-- **The first launch spends about 143 s compiling Metal kernels.** The bundle ships without
-  precompiled kernels because the build machine had no Xcode `metal` compiler:
-  `xcodebuild -downloadComponent MetalToolchain` needs an Xcode app, and Command Line Tools
-  does not include it. Functionally identical afterwards, and only the first start is slow.
 - **The build is not notarized**, so macOS quarantines it. Right-click the app once and
   choose **Open**, or `xattr -dr com.apple.quarantine /Applications/ToshLLM.app`.
 - A model whose recurrent-state tensor cannot be divided gets a layer split automatically. The
@@ -242,8 +239,6 @@ machine was sized as if it were single-card. That is fixed too.
 - A 27B Qwen3.5 model cannot be split by tensor: an internal SSM state tensor's width does
   not divide evenly. The engine now names the operation and the dimensions instead of failing
   a bare assertion. Its layer split, which is what that model uses, is unaffected.
-- The `.dmg` from this release has no precompiled Metal kernels, because no Xcode `metal`
-  compiler was available on the build machine. The engine compiles its own at first launch.
 - The `NSMakeRange` fix has no numerical A/B: the overfill only manifests as a buffer overrun
   on a path the local models do not exercise.
 
