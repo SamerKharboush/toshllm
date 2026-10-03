@@ -3,11 +3,11 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
-## [Unreleased]
+## [0.87.15] - 2026-10-03
 
 ### Added
 
-- **LLMs: math answers come from one agent in the engine, for the chat, the web chat and the API.** An API client asks for it with `X-Tosh-Agent: on`, or gets it without asking when "Answer with the tools over the API" is on, also from another computer and without the app; requests with tools of their own still reach the model as they are. The reply carries a `tosh` object with the intent, the outcome, every call and the validated results.
+- **LLMs: math answers come from one agent in the engine, for the chat, the web chat and the API.** API clients ask for it with `X-Tosh-Agent: on`, also from another computer and without the app; the reply carries a `tosh` object with the intent, every call and the validated results.
 
 ### Improved
 
@@ -28,8 +28,6 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 - **LLMs: a request without streaming stops when its client goes away**, also while other requests keep the engine busy and in router mode.
 
 - **LLMs: the math answers written by the engine follow the language of the conversation.**
-
-- **LLMs: a build can no longer ship an old copy of the math helpers.**
 
 - **LLMs: math written in LaTeX is checked like plain text.** A correct call is no longer refused for `\frac`, `\infty` or the limits of `\int`, and list numbers or digit counts in a request no longer count as data.
 
