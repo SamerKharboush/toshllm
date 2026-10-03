@@ -96,6 +96,9 @@ jobs:
           ARCH=x86_64 ./scripts/build-sympy.sh
           PY=vendor/tosh-sympy/python/bin/python3
           if "$PY" -I -c pass 2>/dev/null; then
+            # On an arm64 runner the first import pays for the Rosetta translation of every
+            # extension, which is longer than the helper's call timeout.
+            "$PY" -I -c "import sympy, numpy, scipy.fft, scipy.signal, scipy.integrate, scipy.optimize, scipy.interpolate, scipy.stats, scipy.linalg"
             "$PY" -I helpers/tosh-sympy/tests/test_helper.py
             "$PY" -I helpers/tosh-scientific/tests/test_scientific.py
           else
