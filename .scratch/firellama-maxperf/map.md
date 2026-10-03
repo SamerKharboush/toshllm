@@ -94,6 +94,11 @@ Firellama runs the biggest models this Mac Pro can hold at the fastest tok/s it 
 - Precompiled Metal kernels are no longer blocked (2026-10-03): Xcode 26.3 and the Metal
   toolchain are installed on this machine, first launch is 16 s against 143 s, shipped in
   beta.3.
+- **Upstream 0.87.14 merged 2026-10-03.** SymPy and NumPy math tools, math-call guards, Flash-Next
+  64-lane speedups. It took patch numbers 0125 and 0126, so ours moved to 0127-0130; the series is
+  125 patches. Gates after the merge: test-backend-ops 10721/10721 on MTL0, test-metal-memset all
+  checks passed, swift test 345 tests 10 skipped 0 failures, and the 9 SymPy engine integration
+  tests pass with TOSH_SYMPY_E2E_MODEL set.
 - **arm64 is out of scope by decision (2026-10-03).** The fork targets Intel x86_64 only. The
   `ARCH=universal` / `TOSH_ARCH=universal` machinery stays in the scripts, unused.
 - **The `NSMakeRange` A/B is closed (2026-10-03).** `test-metal-memset` gained the DSV4 shape:

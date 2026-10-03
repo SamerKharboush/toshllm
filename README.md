@@ -147,7 +147,7 @@ A 2021 card holds its own: it trails the M3 Max on short prompts, leads it from 
 
 ## Fork changes
 
-Everything below is this fork's own work on top of upstream 0.87.13. Measured on a dual-
+Everything below is this fork's own work on top of upstream 0.87.14. Measured on a dual-
 FirePro-D700 Mac Pro (Xeon E5-2697 v2, AVX1 no AVX2, 64 GB RAM).
 
 ### Engine defects fixed
@@ -173,7 +173,7 @@ and falls back to the generic path.
 end offset where a length belongs, so the fill ran `offs` bytes past the region the caller
 asked for.
 
-Both engine fixes are in `patches/llama/0125` and `0126`.
+Both engine fixes are in `patches/llama/0127` and `0128`.
 
 ### App behaviour fixed
 
@@ -227,7 +227,7 @@ machine was sized as if it were single-card. That is fixed too.
 | 14B Q4_K_M, both D700s, layer split | prompt 21.25 tok/s, generate 5.08 tok/s |
 | 27B, both D700s, layer split | prompt 11.51 tok/s, generate 6.20 tok/s |
 | chat through the shipped binary | coherent, `finish_reason: stop`, 5.05 tok/s |
-| engine backend suite | 10701 / 10701 |
+| engine backend suite | 10721 / 10721 |
 | first launch to listening, precompiled kernels | 16 s (was 143 s) |
 
 ### Known gaps

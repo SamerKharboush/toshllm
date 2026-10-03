@@ -5,6 +5,15 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [0.87.14-beta.4] - 2026-10-03
 
+Upstream 0.87.14 merged (SymPy and NumPy math tools, math-call guards, Flash-Next 64-lane
+speedups). All three earlier betas are carried forward unchanged.
+
+### Added
+
+- **The math runtime ships.** Built with `scripts/build-sympy.sh`: CPython 3.13.16, SymPy 1.14.0,
+  mpmath 1.3.0, NumPy 2.5.3, SciPy 1.18.1 — 125 MB, x86_64. Off by default in chat settings.
+  The 9 SymPy engine integration tests pass with `TOSH_SYMPY_E2E_MODEL` set.
+
 ### Changed
 
 - **Intel x86_64 is the supported target, by decision.** No arm64 slice will be built and no Apple

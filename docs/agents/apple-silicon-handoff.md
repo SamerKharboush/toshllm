@@ -5,7 +5,13 @@ discrete AMD GPUs**. Almost none of its engine work applies to your hardware. Th
 tells you what is true, what is already done so you do not redo it, what is still broken, and
 exactly what to work on.
 
-Written 2026-10-02 at commit `c3c06be`, version `0.87.14-beta.2`.
+Written 2026-10-02, updated 2026-10-03 at commit `1642ccf`, version `0.87.14-beta.4`.
+
+**Upstream 0.87.14 is merged.** SymPy and NumPy math tools, math-call guards, and two Flash-Next
+speedups on 64-lane cards. Upstream took patch numbers 0125 and 0126, so our four moved to
+0127-0130; the series is 125 patches. Run `./scripts/build-sympy.sh` before packaging or the DMG
+ships without the math runtime. The math tools are off by default, so an unbuilt runtime costs the
+feature, not the release.
 
 ---
 
@@ -54,23 +60,23 @@ Everything in this section is committed, pushed, measured, and released as `v0.8
 
 ### 3.1 The GCN fixes — inert on Apple Silicon, but read them anyway
 
-**Timestep embedding produced wrong tokens (patch 0125).** The Metal kernel's odd-dimension
+**Timestep embedding produced wrong tokens (patch 0127).** The Metal kernel's odd-dimension
 branch compiled to the wrong arm on GCN, so every row zeroed its successor's first element and
 the last row wrote past the end of the destination. Fix: `half_ * 2 < args.dim` instead of
 `half_ * 2 < args.dim && tpitg.x == 0`-style guards that took the odd path for even dims.
 Backend suite went from one failure at `ERR=0.002926276` to exact.
 
-**Cross-GPU events deadlocked on a layer split (patch 0126).** The destination's wait was
+**Cross-GPU events deadlocked on a layer split (patch 0128).** The destination's wait was
 encoded into a *new* command buffer, which queued the copy behind whatever the destination
 already had. A destination parked on a long graph could never drain the hand-off that graph was
 waiting on. Now bounded by `TOSH_MGPU_XDEV_TIMEOUT_MS` (default 2000 ms); on timeout it drains
 both queues, completes the sequence by hand, and falls back.
 
-**`NSMakeRange` overran its buffer (patch 0126).** `NSMakeRange(bid_dst.offs, bid_dst.offs + size)`
+**`NSMakeRange` overran its buffer (patch 0128).** `NSMakeRange(bid_dst.offs, bid_dst.offs + size)`
 passed an *end offset* where a *length* belongs, so the fill ran `offs` bytes past the region
 the caller asked for. Now `size`.
 
-**Tensor split refusal (patch 0128).** Some models — the 27B `qwen35` SSM state reshape is one —
+**Tensor split refusal (patch 0130).** Some models — the 27B `qwen35` SSM state reshape is one —
 cannot be tensor-split at all: `ne[0]=6144` does not divide `ne[0]=9216`. The engine used to
 abort with a bare `GGML_ASSERT` after the weights had loaded. It now prints the op and the
 dimensions and `exit(86)`; the app catches 86 and relaunches once with `--split-mode layer`. The
@@ -79,9 +85,12 @@ restores the abort.
 
 ### 3.2 Regression tests that exist
 
-- `vendor/llama.cpp/tests/test-metal-memset.cpp` — patch 0127. Five offsets (0, 1024, 3584, 4000,
-  2048), registered in `tests/CMakeLists.txt` under `if (GGML_METAL)`. Fails on the pre-0126 form
-  with `offset=1024 → 1024 clobbered`, `3584 → 256`, `4000 → 80`.
+- `vendor/llama.cpp/tests/test-metal-memset.cpp` — patch 0129. Two parts, registered in
+  `tests/CMakeLists.txt` under `if (GGML_METAL)`. Five single-tensor offsets (0, 1024, 3584, 4000,
+  2048), which fail on the pre-0128 form with `offset=1024 → 1024 clobbered`, `3584 → 256`,
+  `4000 → 80`. And `test_adjacent_streams`, which reproduces the shape DSV4 uses: one tensor
+  holding eight 512-byte streams, cleared one at a time at `n*stream_size`. On the pre-0128 engine
+  clearing stream 1 overfills into stream 2, and the test reports `1 damaged`.
 - App unit tests in `Tests/ToshLLMTests/`.
 
 ### 3.3 App fixes
@@ -115,12 +124,12 @@ Not a missing slice. Every engine fix is gated on hardware that an Apple GPU can
 
 | fix | gate | on Apple Silicon |
 |---|---|---|
-| timestep parity (0125) | GCN/Tahiti miscompile | never compiles to the wrong arm |
+| timestep parity (0127) | GCN/Tahiti miscompile | never compiles to the wrong arm |
 | wave64 prefill/decode | `simd_width == 64` | probe returns 32 → off |
 | aligned mat-vec reads | `needs_aligned_loads`, derived from `is_wave64` | off |
 | AMD flash attention | `TOSH_FA_AMD` **and** `!has_simdgroup_mm` | `has_simdgroup_mm` is true on M1+ → off |
 | peer-group allreduce | `peerGroupID != 0` (bridged) | single GPU, no peer group |
-| xdev bounded wait (0126) | cross-GPU copies only | no second GPU |
+| xdev bounded wait (0128) | cross-GPU copies only | no second GPU |
 
 The probe is in `vendor/llama.cpp/ggml/src/ggml-metal/ggml-metal-device.m:1770-1800`. It
 compiles a trivial kernel and reads `threadExecutionWidth`:
@@ -183,7 +192,7 @@ Then the engine suite, which is the gate that caught the real defects:
 cd vendor/llama.cpp
 ./build-static/bin/test-backend-ops -b MTL0          # full run
 ./build-static/bin/test-backend-ops -b MTL0 -o TIMESTEP_EMBEDDING   # the narrow red loop
-./build-static/bin/test-metal-memset                 # the 0127 regression test
+./build-static/bin/test-metal-memset                 # the 0129 regression test
 ```
 
 The narrow red loop first, always. A full suite run takes minutes; `-o TIMESTEP_EMBEDDING` takes
@@ -286,7 +295,7 @@ bid_dst.offs += offset;
 
 `NSRange` is `(location, length)`. The length argument was `offs + size`, the *end offset*, so the
 fill ran `offs` bytes past the region the caller asked for, into whatever the allocator placed
-next. Patch 0126 changes it to `size`.
+next. Patch 0128 changes it to `size`.
 
 **Who can trigger it.** Exactly two callers of `ggml_backend_tensor_memset` in the tree:
 
@@ -322,7 +331,7 @@ symptom would be wrong output after a conversation turn, never a crash. That is 
 upstream.
 
 **Gates after this change:** `test-metal-memset` all checks passed; `test-backend-ops`
-10701/10701 on MTL0; `swift test` 319 tests, 1 skipped, 0 failures. Patch 0127 regenerated with
+10701/10701 on MTL0; `swift test` 319 tests, 1 skipped, 0 failures. Patch 0129 regenerated with
 the new test; the full 123-patch series applies to a pristine worktree of `9575389609d6` and all
 111 files it touches are byte-identical to the live tree.
 
