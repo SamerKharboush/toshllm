@@ -1272,6 +1272,15 @@ final class ChatStore: ObservableObject {
                     ) { [weak self] partial in
                         await MainActor.run { self?.updateToolCallResult(request, result: partial) }
                     }
+                } else if MathTranscriptionService.isMathTool(request.name) {
+                    let source = await MainActor.run { () -> [String: Any]? in
+                        guard let messages = self?.conversations.first(where: { $0.id == request.conversationID })?.messages
+                        else { return nil }
+                        return MathTranscriptionService.source(messages: messages)
+                    }
+                    result = try await MathTranscriptionService.execute(
+                        name: request.name, arguments: arguments, source: source, port: context.port,
+                        workingDirectory: context.workingDirectory)
                 } else {
                     result = try await ChatToolsService.execute(
                         name: request.name, arguments: arguments, port: context.port,

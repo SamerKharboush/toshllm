@@ -51,6 +51,37 @@ def _sandbox():
         return False
 
 
+def _checked(ops, toolset, operation, plain, source, reviewed):
+    """Runs the call unless it does not say what the request said. The reply always carries what was read."""
+    from tosh_sympy import anchor
+    interpreted = anchor.interpret(operation, plain)
+    if isinstance(source, dict) and isinstance(source.get("request"), str):
+        status, reasons = anchor.check(source["request"], str(source.get("context") or ""), operation, plain)
+        if status == anchor.INCONSISTENT or (status == anchor.UNCERTAIN and reviewed != anchor.CONSISTENT):
+            mismatch = status == anchor.INCONSISTENT
+            reply = ops.failure(
+                operation, "transcription_mismatch" if mismatch else "needs_review",
+                ("Not computed: the call does not say what the request says. " if mismatch else
+                 "Not computed: the call could not be matched to the request. ")
+                + "; ".join(reasons) + ". Call again with only what the request states, written as it states it, "
+                "or ask the user. Do not give a result that was not computed.")
+            reply["interpreted_input"] = interpreted
+            reply["reasons"] = reasons
+            return reply
+    remarks = []
+    if isinstance(source, dict) and isinstance(source.get("request"), str) and status == anchor.CONSISTENT:
+        remarks = reasons
+    reply = ops.run(operation, plain)
+    if isinstance(reply, dict):
+        reply["interpreted_input"] = interpreted
+        if remarks:
+            reply["warnings"] = list(reply.get("warnings") or []) + remarks
+        if reply.get("success"):
+            approximate = toolset != "sympy" or operation == "nsolve" or ("exact" in reply and reply["exact"] is None)
+            reply["result_kind"] = "approximate" if approximate else "exact"
+    return reply
+
+
 def main():
     sys.path.insert(0, HOME)
     toolset = sys.argv[1] if len(sys.argv) > 1 else "sympy"
@@ -70,6 +101,11 @@ def main():
         try:
             request = json.loads(line)
             name, arguments = request.get("tool"), request.get("arguments")
+            source = reviewed = None
+            if isinstance(arguments, dict):
+                # set by the app, never by the model: the user's own words and whether a review passed
+                source, reviewed = arguments.get("_source"), arguments.get("_reviewed")
+                arguments = {k: v for k, v in arguments.items() if not str(k).startswith("_")}
             try:
                 operation = schema.check(name, arguments)
             except ValueError as error:
@@ -83,7 +119,7 @@ def main():
                         operation, plain, request["after_timeout"],
                         lambda partial: print(json.dumps({"progress": partial}), file=reply_stream, flush=True))
                 else:
-                    reply = ops.run(operation, plain)
+                    reply = _checked(ops, toolset, operation, plain, source, reviewed)
         except MemoryError:
             os._exit(86)
         except Exception as error:

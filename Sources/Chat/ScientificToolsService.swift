@@ -47,21 +47,23 @@ enum ScientificToolsService {
     /// The fields a person looks for first; the rest follow in alphabetical order.
     private static let leading = ["value", "root", "solution", "objective", "parameters", "determinant",
                                   "eigenvalues", "dominant_frequencies", "final", "mean", "statistic", "p_value"]
-    private static let hidden: Set<String> = ["success", "operation", "warnings", "error", "timed_out"]
+    private static let hidden: Set<String> = ["success", "operation", "warnings", "error", "timed_out",
+                                              "interpreted_input", "result_kind", "reasons"]
 
     /// The JSON result as the few lines a person reads. The model still gets the JSON.
     static func readable(_ result: String) -> String {
         guard let data = result.data(using: .utf8),
               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { return result }
+        let read = MathTranscriptionService.interpreted(object)
         if let error = object["error"] as? [String: Any], let message = error["message"] as? String {
-            return message
+            return ([message] + read).joined(separator: "\n")
         }
         let keys = leading.filter { object[$0] != nil }
             + object.keys.filter { !leading.contains($0) && !hidden.contains($0) }.sorted()
         var lines = keys.prefix(12).map { "\($0): \(compact(object[$0]!))" }
         for warning in object["warnings"] as? [String] ?? [] { lines.append("⚠︎ \(warning)") }
-        return lines.isEmpty ? result : lines.joined(separator: "\n")
+        return lines.isEmpty ? result : (lines + read).joined(separator: "\n")
     }
 
     private static func compact(_ value: Any) -> String {

@@ -65,6 +65,8 @@ doubt the call is refused or the reply carries a warning: values given for a var
 expression does not have, a spectrum asked for with a cutoff and no sampling rate, an
 optimum that ended on a bound.
 
+Calls are checked against the user's request before they run, as described in [tosh-sympy](../tosh-sympy/README.md#checking-the-call-against-the-request).
+
 A failure is never reported as a value. A divergent integral, a solver that did not converge,
 a singular matrix, a root search without a sign change or a result holding NaN or infinity
 comes back with `success: false` and its code. An ill-conditioned matrix or a fit whose

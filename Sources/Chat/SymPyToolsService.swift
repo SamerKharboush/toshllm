@@ -70,9 +70,10 @@ enum SymPyToolsService {
               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { return result }
         var lines: [String] = []
+        let read = MathTranscriptionService.interpreted(object)
         if let error = object["error"] as? [String: Any], let message = error["message"] as? String {
             // a timeout or an open integral still says what was asked and what is known
-            guard object["timed_out"] != nil else { return message }
+            guard object["timed_out"] != nil else { return ([message] + read).joined(separator: "\n") }
             lines.append(message)
             if let unevaluated = object["unevaluated"] as? String { lines.append(unevaluated) }
             if let partial = object["partial"] as? [String: Any], let exact = partial["exact"] as? String {
@@ -101,7 +102,7 @@ enum SymPyToolsService {
         }
         if let numeric = object["numeric"] as? String { lines.append("≈ \(numeric)") }
         for warning in object["warnings"] as? [String] ?? [] { lines.append("⚠︎ \(warning)") }
-        return lines.isEmpty ? result : lines.joined(separator: "\n")
+        return lines.isEmpty ? result : (lines + read).joined(separator: "\n")
     }
 
     private static func text(_ value: Any) -> String {

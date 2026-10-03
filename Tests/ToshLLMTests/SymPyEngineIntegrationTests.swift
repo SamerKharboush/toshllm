@@ -199,6 +199,30 @@ final class SymPyEngineIntegrationTests: XCTestCase {
         XCTAssertTrue(injected.content.contains("invalid_expression"), injected.content)
     }
 
+    func testACallThatDropsPartOfTheRequestIsNotComputed() async throws {
+        let source: [String: Any] = ["request": "Find the limit of (sin(x) - x)/x^3 as x approaches 0.", "context": ""]
+        // a request text the model slips into the arguments is dropped; the app's own text is what counts
+        let refused = try await MathTranscriptionService.execute(
+            name: "sympy_expression",
+            arguments: ["operation": "limit", "expression": "sin(x) - x", "variable": "x", "point": "0",
+                        "_source": ["request": "Find the limit of sin(x) - x."], "_reviewed": "consistent"],
+            source: source, port: Self.port)
+        XCTAssertTrue(refused.isError)
+        XCTAssertTrue(refused.content.contains("transcription_mismatch"), refused.content)
+        let computed = try await MathTranscriptionService.execute(
+            name: "sympy_expression",
+            arguments: ["operation": "limit", "expression": "(sin(x) - x)/x**3", "variable": "x", "point": "0"],
+            source: source, port: Self.port)
+        XCTAssertTrue(computed.content.contains(#""exact": "-1/6""#), computed.content)
+        XCTAssertTrue(computed.content.contains("interpreted_input"), computed.content)
+        // nothing to compare in the request: the model reviews the call before anything runs
+        let word = try await MathTranscriptionService.execute(
+            name: "sympy_solve", arguments: ["operation": "solve", "equations": ["x + y = 9", "x*y = 20"]],
+            source: ["request": "The sum of two numbers is 9 and their product is 20. What are they?", "context": ""],
+            port: Self.port)
+        XCTAssertTrue(word.content.contains("solutions") || word.content.contains("needs_review"), word.content)
+    }
+
     func testFileAndShellToolsStillWork() async throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("tosh-tools-\(UUID().uuidString)")

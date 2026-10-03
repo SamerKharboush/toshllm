@@ -102,6 +102,27 @@ final class SymPyToolsTests: XCTestCase {
         XCTAssertEqual(ScientificToolsService.input(["values": [1, 2, 3]]), "values: 3 values")
     }
 
+    func testMathCallsCarryTheUsersOwnWords() throws {
+        let messages = [
+            ChatMessage(role: "user", content: "Integrate x^2 from 0 to 3."),
+            ChatMessage(role: "assistant", content: ""),
+            ChatMessage(role: "tool", content: #"{"success": true, "exact": "9"}"#),
+            ChatMessage(role: "user", content: "Now from 0 to infinity of exp(-x)."),
+        ]
+        let source = try XCTUnwrap(MathTranscriptionService.source(messages: messages))
+        XCTAssertEqual(source["request"] as? String, "Now from 0 to infinity of exp(-x).")
+        XCTAssertEqual(source["context"] as? String, "Integrate x^2 from 0 to 3.\n" + #"{"success": true, "exact": "9"}"#)
+        XCTAssertNil(MathTranscriptionService.source(messages: [ChatMessage(role: "assistant", content: "hi")]))
+        XCTAssertTrue(MathTranscriptionService.isMathTool("scientific_ode"))
+        XCTAssertFalse(MathTranscriptionService.isMathTool("read_file"))
+        let refused = #"{"success": false, "operation": "limit", "error": {"code": "transcription_mismatch", "message": "Not computed."}, "interpreted_input": ["expression: -x + sin(x)", "point: 0"]}"#
+        XCTAssertEqual(SymPyToolsService.readable(refused), "Not computed.\n▸ expression: -x + sin(x)\n▸ point: 0")
+        XCTAssertEqual(MathTranscriptionService.errorCode(try XCTUnwrap(MathTranscriptionService.reply("error: " + refused))),
+                       "transcription_mismatch")
+        let computed = #"{"success": true, "value": 1.5, "interpreted_input": ["limits: [0, 3]"], "result_kind": "approximate", "warnings": []}"#
+        XCTAssertEqual(ScientificToolsService.readable(computed), "value: 1.5\n▸ limits: [0, 3]")
+    }
+
     func testToolNames() {
         XCTAssertTrue(SymPyToolsService.isTool("sympy_expression"))
         XCTAssertTrue(SymPyToolsService.isTool("sympy_verify"))

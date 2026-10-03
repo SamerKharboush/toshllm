@@ -427,6 +427,47 @@ def test_same_answer_in_every_worker(_):
         helper.close()
 
 
+def test_the_check_knows_every_name_of_the_grammar(_):
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from tosh_sympy import anchor, mathlang
+    assert anchor._KNOWN == set(mathlang.FUNCTIONS) | set(mathlang.CONSTANTS)
+
+
+def test_a_call_that_does_not_say_what_the_request_says_is_not_run(h):
+    def ask(text, tool, **arguments):
+        return h.call(tool, _source={"request": text}, **arguments)
+
+    def refused(reply):
+        return reply["success"] is False and reply["error"]["code"] == "transcription_mismatch" and reply["interpreted_input"]
+
+    text = "Find the limit of (sin(x) - x)/x^3 as x approaches 0."
+    assert refused(ask(text, "expression", operation="limit", expression="sin(x) - x", variable="x", point="0"))
+    reply = ask(text, "expression", operation="limit", expression="(sin(x) - x)/x**3", variable="x", point="0")
+    assert reply["exact"] == "-1/6" and reply["result_kind"] == "exact", reply
+    assert "expression: (-x + sin(x))/x**3" in reply["interpreted_input"], reply
+    text = "Integrate exp(-2x) from 0 to infinity."
+    assert refused(ask(text, "expression", operation="integrate", expression="exp(-2*x)", lower="0", upper="8"))
+    assert ask(text, "expression", operation="integrate", expression="exp(-2*x)", lower="0", upper="oo")["exact"] == "1/2"
+    text = "Integrate x^3 from 1 to 2."
+    assert refused(ask(text, "expression", operation="integrate", expression="x**3", lower="2", upper="1"))
+    assert refused(ask("Solve y' = 2y.", "solve", operation="dsolve", equations=["y' = 2*y"],
+                       initial_conditions={"y(0)": "1"}))
+    assert refused(ask("Factor x^2 + 5x + 6.", "expression", operation="factor", expression="x**2 - 5*x + 6"))
+    assert refused(ask("Solve the system x + y = 10, x - y = 2.", "solve", operation="solve", equations=["x + y = 10"]))
+    text = "Find the determinant of [[1, 2, 0], [3, 1, 4], [0, 5, 2]]."
+    assert refused(ask(text, "matrix", operation="determinant", matrix=[["1", "2", "0"], ["3", "1", "4"]]))
+    assert refused(ask(text, "matrix", operation="determinant", matrix=[["1", "2"], ["3", "1"], ["0", "5"]]))
+    assert ask(text, "matrix", operation="determinant", matrix=[["1", "2", "0"], ["3", "1", "4"], ["0", "5", "2"]])["exact"] == "-30"
+    # the request names no formula: the call waits for a review instead of running on trust
+    text = "The sum of two numbers is 9 and their product is 20. What are they?"
+    reply = ask(text, "solve", operation="solve", equations=["x + y = 9", "x*y = 20"])
+    assert reply["error"]["code"] == "needs_review" and reply["reasons"], reply
+    reply = h.call("solve", _source={"request": text}, _reviewed="consistent", operation="solve", equations=["x + y = 9", "x*y = 20"])
+    assert reply["success"], reply
+    # without the request, as from another client, the call runs as before
+    assert h.call("expression", operation="factor", expression="x**2 - 5*x + 6")["exact"] == "(x - 3)*(x - 2)"
+
+
 def test_calls_in_the_shapes_models_use(h):
     reply = h.call("verify", operation="solution", left="x**2 - 5*x + 6", right="0", solution={"x": "4"})
     assert reply["satisfied"] is False and reply["checks"][0]["residual"] == "2", reply

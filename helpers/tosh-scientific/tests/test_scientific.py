@@ -563,6 +563,48 @@ def test_a_call_that_cannot_mean_what_it_says_is_refused(h):
     assert code(h.call("optimize", "curve_fit", expression="a*exp(b*x)", x=[0, 1, 2, 3], y=[1, 2, 4, 8])) == "missing_initial_guess"
 
 
+def test_a_call_that_does_not_say_what_the_request_says_is_not_run(h):
+    def ask(text, tool, operation, **arguments):
+        return h.call(tool, operation, _source={"request": text}, **arguments)
+
+    def refused(reply):
+        return reply["success"] is False and reply["error"]["code"] == "transcription_mismatch" and reply["interpreted_input"]
+
+    a, b = [3.1, 2.9, 3.4, 3.0], [3.6, 3.8, 3.5, 3.9]
+    text = f"Run a two-sample t-test on {a} and {b}."
+    assert refused(ask(text, "stats", "ttest", values=a, mean=3.6))
+    assert refused(ask(text, "stats", "ttest", x=a[:3], y=b))
+    assert refused(ask(text, "stats", "ttest", x=[3.1, 29, 3.4, 3.0], y=b))
+    reply = ask(text, "stats", "ttest", x=a, y=b)
+    assert reply["success"] and reply["result_kind"] == "approximate", reply
+    assert "x: n=4 [3.1, 2.9, 3.4, 3]" in reply["interpreted_input"], reply
+    text = "Low-pass filter sin(2*pi*3*t) + sin(2*pi*80*t) at 20 Hz, sampled at 500 Hz for 1 second."
+    signal = dict(expression="sin(2*pi*3*t) + sin(2*pi*80*t)", sample_rate=500, duration=1)
+    assert refused(ask(text, "signal", "lowpass", cutoff=200, **signal))
+    assert refused(ask(text, "signal", "highpass", cutoff=20, **signal))
+    assert ask(text, "signal", "lowpass", cutoff=20, **signal)["success"]
+    text = "Simulate dx/dt = -2*y, dy/dt = x with x(0) = 1 and y(0) = 0 up to t = 2."
+    system = dict(initial_conditions={"x": 1, "y": 0}, interval=[0, 2])
+    assert refused(ask(text, "ode", "solve_ivp", equations=["dy/dt = -2*y", "dx/dt = x"], **system))
+    assert refused(ask(text, "ode", "solve_ivp", equations=["dx/dt = -2*y"], **system))
+    assert refused(ask(text, "ode", "solve_ivp", equations=["dx/dt = -2*y", "dy/dt = x"],
+                       initial_conditions={"x": 1, "y": 1}, interval=[0, 2]))
+    assert ask(text, "ode", "solve_ivp", equations=["dx/dt = -2*y", "dy/dt = x"], **system)["success"]
+    text = "Numerically integrate 1/(1 + x^2) from 0 to infinity."
+    assert refused(ask(text, "compute", "integrate", expression="1/(1 + x**2)", lower=0, upper=8))
+    assert refused(ask(text, "compute", "integrate", expression="1/(1 - x**2)", lower=0, upper="oo"))
+    assert near(ask(text, "compute", "integrate", expression="1/(1 + x**2)", lower=0, upper="oo")["value"], math.pi / 2)
+    text = "Interpolate between the points x = [2, 4, 8], y = [10, 30, 20] at x = 5."
+    assert refused(ask(text, "compute", "interpolate", x=[2, 4, 8], y=[10, 30, 20], at=[5], kind="pchip"))
+    assert ask(text, "compute", "interpolate", x=[2, 4, 8], y=[10, 30, 20], at=[5])["values"] == [27.5]
+    rows = [[4.0, 1.0, 0.5], [1.0, 3.0, 0.2], [0.5, 0.2, 2.0]]
+    text = f"Solve {rows} x = [1.0, 2.0, 3.0]."
+    assert refused(ask(text, "linalg", "solve", matrix=[r[:2] for r in rows], other=[1.0, 2.0, 3.0]))
+    assert refused(ask(text, "linalg", "solve", matrix=rows[:2], other=[1.0, 2.0]))
+    reply = ask(text, "linalg", "solve", matrix=rows, other=[1.0, 2.0, 3.0])
+    assert reply["success"] and any(line.startswith("matrix: 3 x 3") for line in reply["interpreted_input"]), reply
+
+
 def main():
     tests = [(name, function) for name, function in globals().items() if name.startswith("test_")]
     helper = Helper()

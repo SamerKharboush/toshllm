@@ -99,6 +99,33 @@ On top of that the worker:
 Inputs are capped at 4000 characters per expression and 64 KB per request, results at 6000
 characters per field.
 
+## Checking the call against the request
+
+A model sometimes writes a call that is not the user's problem: it drops a denominator, writes
+8 for infinity, adds an initial condition or loses a sample. The helper would compute that call
+correctly. So the app passes the user's own message next to the arguments, as `_source`
+(`{"request": ..., "context": ...}`); the model's own `_` arguments are dropped first.
+`tosh_sympy/anchor.py` reads the formulas, numbers, lists, matrices, conditions and ranges out
+of that text with the same restricted grammar and compares them with the call before it runs:
+
+- **inconsistent**: the call is not run and the reply says why (`transcription_mismatch`).
+  A formula that is only part of, one side of, or different from the one in the request; a
+  finite limit where the request goes to infinity; swapped or changed limits; an initial
+  condition the request does not state; a list with a value dropped or changed; a scalar taken
+  from inside a list; a matrix with a row or column missing; the opposite operation
+  (low-pass for high-pass); a series order that stops before the power asked for.
+- **uncertain**: nothing in the request to compare with, as in a word problem. The reply is
+  `needs_review`; the app asks the model, in a separate request that sees only the user's text
+  and what the helper read, whether the two state the same problem, and runs the call only on
+  "consistent".
+- **consistent**: the call runs. A number of the request the call leaves out is reported in
+  `warnings`.
+
+Every reply carries `interpreted_input`, short lines with what was read (`limits: [0, +oo)`,
+`initial conditions: y(0) = 1`, `x: n=5 [...]`), and `result_kind`, `exact` or `approximate`.
+The chat card shows those lines under the result. A call without `_source`, as from another
+client, runs as before.
+
 ## Tests
 
 ```sh
