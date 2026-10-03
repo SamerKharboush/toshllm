@@ -87,15 +87,18 @@ Firellama runs the biggest models this Mac Pro can hold at the fastest tok/s it 
   is how it is reported: the engine exits 86 naming the op and dimensions, and the app retries
   once with layers by itself (ticket 13). Marking the tensor unsplittable would hand the
   scheduler a split state that does not describe the data, so the failure stays loud.
-- Ticket 09's LAN curl is done from a second IP on the same host, not a second physical machine.
-  Still owed.
-- Notarization needs an Apple Developer identity and the notary-tool credentials. The pipeline is
-  wired in `build.yml` and skips cleanly when they are absent.
+- **Ticket 09's LAN proof is closed (2026-10-03).** Verified from a second physical machine by the
+  owner. The earlier same-host second-IP check stands as the local record.
+- **Notarization is deferred by decision (2026-10-03),** to the point the project is rebranded. The
+  pipeline in `build.yml` is wired and skips cleanly; adding the credentials is all that remains.
 - Precompiled Metal kernels are no longer blocked (2026-10-03): Xcode 26.3 and the Metal
   toolchain are installed on this machine, first launch is 16 s against 143 s, shipped in
   beta.3.
-- No arm64 or universal build has been produced. The machinery exists (`build-engines.sh`
-  `ARCH=universal`, `make-app.sh` `TOSH_ARCH=universal`) but has never been run for arm64.
+- **arm64 is out of scope by decision (2026-10-03).** The fork targets Intel x86_64 only. The
+  `ARCH=universal` / `TOSH_ARCH=universal` machinery stays in the scripts, unused.
+- The `NSMakeRange` fix still has no end-to-end A/B. Reachability is now settled statically: only
+  `llama-kv-cache-dsv4.cpp:38` calls memset at a non-zero offset, so a DSV4 model on two engines is
+  the whole test. Details in `docs/agents/apple-silicon-handoff.md` T5.
 
 See `docs/agents/apple-silicon-handoff.md` for the full open-work list and the gates.
 

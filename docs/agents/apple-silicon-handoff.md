@@ -217,71 +217,43 @@ gh workflow run build.yml --repo SamerKharboush/toshllm -f notarize=false
 
 Ordered by value. Each has an acceptance test you can actually run.
 
-### T1 — Build a universal or arm64 DMG and prove it runs
+### T1 — Universal/arm64 build: OUT OF SCOPE by decision, 2026-10-03
 
-**Now:** the shipped bundle is `x86_64`-only. `scripts/build-engines.sh` already accepts
-`ARCH=universal` and `make-app.sh` already accepts `TOSH_ARCH=universal`, so the machinery is
-there and untested for arm64.
+The owner has decided this fork targets **Intel x86_64 hardware only**. No arm64 slice will be
+built, and no Apple Silicon support will be added. Drop this task.
 
-Do:
+If that decision is ever reversed, the machinery is unchanged and still there:
+`scripts/build-engines.sh` accepts `ARCH=universal` and `make-app.sh` accepts
+`TOSH_ARCH=universal`, neither has been run for arm64, and the AVX2 intrinsics in patches `0115`
+and `0105` are guarded on `defined(__x86_64__)` / `defined(__AVX2__)` so arm64 should compile to
+the generic path. Verify rather than assume. An arm64 slice also needs its own Metal kernels
+compiled for it; `ggml_metal_library_precompiled_matches` refuses a library whose source hash
+does not match, so a mismatch falls back to compiling rather than loading something wrong.
 
-```sh
-ARCH=universal ./scripts/build-engines.sh
-TOSH_ARCH=universal TOSH_NO_BUMP=1 ./make-app.sh
-lipo -info dist/ToshLLM.app/Contents/MacOS/ToshLLM        # expect x86_64 + arm64
-for b in Contents/Resources/bin/*; do lipo -info "$b"; done
-```
+For day-to-day use on Apple Silicon, upstream's release remains the right answer. Every engine fix
+in this fork is an AMD GCN workaround that an Apple GPU switches off by construction.
 
-Then launch it on your Mac with a small model and confirm a coherent answer.
+### T2 — Notarization: DEFERRED by decision, 2026-10-03
 
-Watch for, and report honestly:
+The owner does not want this now; it is planned for the point the project is rebranded. Drop this
+task until then.
 
-- `llama/0115` and `llama/0105` contain AVX2 intrinsics. They are correctly guarded with
-  `defined(__x86_64__)` / `defined(__AVX2__)`, so arm64 should compile to the generic path — but
-  **verify, do not assume**. A silent fall-through that changes numerics is exactly the class of
-  bug this repo exists to catch.
-- The ISA_FLAGS block in `build-engines.sh:133-147` only applies when `ARCH == x86_64`. Confirm
-  the arm64 slice gets no stray `-mavx2`.
-- Any `kernel` library the arm64 slice ships must be compiled with `metal`, which you have. The
-  x86 slice's kernels are GPU-specific, so the fingerprint file must not make one slice accept
-  the other's libraries.
+For the record, so nobody re-derives it: the build is ad-hoc signed, so macOS quarantines it and
+the user must right-click → Open or run `xattr -dr com.apple.quarantine`. The pipeline is fully
+wired in `build.yml` and skips cleanly when the credentials are absent, so turning it on at rebrand
+time is a matter of adding the secrets, not writing code. It needs an Apple Developer identity: a
+Developer ID certificate as base64 in a CI variable, its passphrase, and the four notary-tool
+credentials. The exact variable names are in the `sign` step of `build.yml` — read them from there
+rather than guessing, and never write their values into this repo or any commit message. Apple's
+notary queue took 66 min on this account's first submission, so budget for it. Do not attempt to
+work around signing.
 
-**Acceptance:** a DMG that launches on Apple Silicon, `lipo -info` showing both slices on the app
-*and* every engine binary, and a measured tok/s number from a real model.
+### T3 — LAN fix from a second machine: CONFIRMED by the owner, 2026-10-03
 
-**This is the highest-value task on the list.** It is the one thing that makes this fork useful to
-anyone on a modern Mac, and it is unblocked on your hardware.
-
-### T2 — Close the notarization gap
-
-**Now:** the build is ad-hoc signed. macOS quarantines it; the user must right-click → Open.
-`build.yml` has the whole notarization pipeline wired and skips it when the secrets are absent:
-
-```yaml
-- name: Sign and notarize (if secrets configured)
-  if: startsWith(github.ref, 'refs/tags/v') || inputs.notarize
-```
-
-Needs an Apple Developer identity: a Developer ID certificate as base64 in a CI variable, its
-passphrase, and the four notary-tool credentials. The exact variable names are in the `sign` step
-of `build.yml` — read them from there rather than guessing, and never write their values into this
-repo or any commit message.
-
-You can verify the pipeline is *reachable* by dispatching with `-f notarize=true` and confirming
-the step logs "No signing secrets — keeping ad-hoc signature". Going further needs credentials the
-repo owner has to supply. Do not attempt to work around signing.
-
-### T3 — Prove the LAN fix from a second physical machine
-
-**Now:** verified from a second IP on the same host only. With discovery enabled the engine binds
-`0.0.0.0`, and `curl http://10.132.246.6:18095/health` returned `ok`, `/v1/models` returned 200,
-and chat answered coherently at 4.99 tok/s. That is the same box talking to itself over its LAN
-address.
-
-Do it from an actual second machine: laptop, phone on the same Wi-Fi, anything.
-
-**Acceptance:** `/health`, `/v1/models` and a chat completion from a different `hw.machine`, with
-the receiving IP and tok/s recorded.
+The owner has tested from a second machine and confirms it works. The earlier verification here was
+from a second IP on the same host, with the engine bound to `0.0.0.0`: `/health` returned `ok`,
+`/v1/models` returned 200, and chat answered coherently at 4.99 tok/s. Cross-machine confirmation
+now closes it. Drop this task.
 
 ### T4 — Precompiled Metal kernels: DONE on the Intel box, 2026-10-03
 
@@ -305,16 +277,50 @@ run on another; confirm the arm64 bundle loads rather than silently falling back
 
 ### T5 — Numerical A/B for the `NSMakeRange` fix
 
-**Now:** the fix is correct by inspection and the regression test covers it, but there is no
-end-to-end numerical comparison. The overfill only manifests on a path local models do not
-exercise.
+**The bug.** `ggml-metal-device.m:3502`, `ggml_metal_buffer_memset_tensor`:
 
-Do: find or construct an op sequence that calls `memset_tensor` at a non-zero offset on the Metal
-path, run it on the fixed and unfixed engine, and diff the outputs. `test-metal-memset` is the
-harness; extend it or write a second binary if a single memset cannot express it.
+```objc
+bid_dst.offs += offset;
+[encoder fillBuffer:bid_dst.metal range:NSMakeRange(bid_dst.offs, bid_dst.offs + size) value:value];
+```
 
-**Acceptance:** a recorded before/after on a real graph, or a documented proof that no reachable
-graph triggers it. Either is a real answer; silence is not.
+`NSRange` is `(location, length)`. The length argument was `offs + size`, the *end offset*, so the
+fill ran `offs` bytes past the region the caller asked for — into whatever tensor the allocator
+placed next in the same buffer. Patch 0126 changes it to `size`.
+
+**Who can trigger it.** Exactly two callers exist in the tree:
+
+| caller | offset | reachable? |
+|---|---|---|
+| `ggml.c:7813` — `memset(tensor, 0, 0, nbytes)` | always 0 | no: with `offs = 0`, `offs + size == size`, so the bug is invisible |
+| `llama-kv-cache-dsv4.cpp:38` — `memset(tensor, 0, stream*stream_size, stream_size)` | non-zero | **yes** |
+
+So the answer to "can this fire in production" is: only through the DSV4 KV cache. That is a
+static argument and needs no run to make.
+
+**What is still missing.** No end-to-end numerical comparison, because no DSV4 model has been run
+here.
+
+**The test.** One DSV4 model, two engines, same seed and prompt:
+
+- engine with patch 0126 → answer A
+- engine with the fill reverted to `offs + size` → answer B
+- A and B must be identical
+
+**What failure looks like.** For stream `n` the memset writes `n*stream_size` extra bytes starting
+at `n*stream_size + stream_size`, landing at the head of stream `n+1`'s region. `dsv4_clear_tensor_stream`
+is called per stream per layer on sequence removal (`llama-kv-cache-dsv4.cpp:1013-1014`, and
+`:1742` for `seq_rm` with `data`), so several streams get cleared per turn and they
+cross-contaminate. It would surface as wrong output after a conversation turn, or as a cache that
+degrades over a long session — never as a crash, which is why it survived upstream.
+
+**Why it is worth doing.** DSV4 is recent upstream code, so real models exist that reach it. If A
+and B differ, that is a live upstream bug affecting everyone on Metal, not just this fork. If they
+match, the fix is confirmed harmless and patch 0126 can go upstream with evidence rather than by
+inspection.
+
+**Acceptance:** A recorded, with both answers and the model named. Either outcome is a real
+answer. Silence is not.
 
 ### T6 — Clean up stale state
 

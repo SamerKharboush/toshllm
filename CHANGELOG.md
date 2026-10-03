@@ -3,6 +3,23 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Changed
+
+- **Intel x86_64 is the supported target, by decision.** No arm64 slice will be built and no Apple
+  Silicon support will be added. The AMD GCN fixes this fork carries are inert on an Apple GPU by
+  construction — an Apple GPU reports a 32-wide SIMD group, which switches off every gated path.
+  For Apple Silicon, use upstream's release. The `ARCH=universal` and `TOSH_ARCH=universal`
+  switches stay in the build scripts, unused, in case that changes.
+- Notarization is deferred to a future rebrand. The CI pipeline is already wired and skips cleanly
+  when the credentials are absent, so enabling it later is a matter of adding them.
+
+### Fixed
+
+- The LAN fix is confirmed from a second physical machine, not only from a second IP on the build
+  host.
+
 ## [0.87.14-beta.3] - 2026-10-03
 
 ### Changed
