@@ -123,6 +123,64 @@ final class SymPyToolsTests: XCTestCase {
         XCTAssertEqual(ScientificToolsService.readable(computed), "value: 1.5\n▸ limits: [0, 3]")
     }
 
+    private let refused = #"{"success": false, "operation": "limit", "error": {"code": "transcription_mismatch", "message": "Not computed."}}"#
+    private let computed = #"{"success": true, "operation": "limit", "exact": "-1/6", "warnings": []}"#
+
+    func testRefusedMathCallThenCorrectedCallFreesTheTurn() {
+        var guardState = MathTurnGuard()
+        guardState.record(tool: "sympy_expression", result: refused)
+        XCTAssertEqual(guardState.next, .mathOnly)
+        XCTAssertNil(guardState.closing(toolNames: ["sympy_expression"], arguments: ["{}"]))
+        guardState.record(tool: "sympy_expression", result: computed)
+        XCTAssertEqual(guardState.next, .free)
+        XCTAssertNil(guardState.closing(toolNames: [], arguments: []))
+    }
+
+    func testTwoRefusalsEndTheTurn() {
+        var guardState = MathTurnGuard()
+        guardState.record(tool: "scientific_compute", result: refused)
+        guardState.record(tool: "scientific_compute", result: refused)
+        XCTAssertEqual(guardState.next, .stop)
+    }
+
+    func testAnswerWithoutToolAfterRefusalIsReplaced() {
+        var guardState = MathTurnGuard()
+        guardState.record(tool: "sympy_solve", result: refused)
+        XCTAssertEqual(guardState.closing(toolNames: [], arguments: []), MathTranscriptionService.unresolvedMessage())
+        XCTAssertEqual(guardState.closing(toolNames: ["read_file"], arguments: ["{}"]), MathTranscriptionService.unresolvedMessage())
+    }
+
+    func testClarificationAfterRefusalIsAllowed() {
+        var guardState = MathTurnGuard()
+        let review = #"{"success": false, "operation": "solve", "error": {"code": "needs_review", "message": "Not computed."}}"#
+        guardState.record(tool: "sympy_solve", result: review)
+        let text = guardState.closing(toolNames: [MathTranscriptionService.clarifyToolName], arguments: [#"{"missing": "data"}"#])
+        XCTAssertEqual(text, MathTranscriptionService.unresolvedMessage(missing: "data"))
+        XCTAssertNotEqual(text, MathTranscriptionService.unresolvedMessage())
+    }
+
+    func testSuccessfulMathAndOtherToolsLeaveTheTurnAlone() {
+        var guardState = MathTurnGuard()
+        guardState.record(tool: "sympy_expression", result: computed)
+        XCTAssertEqual(guardState.next, .free)
+        XCTAssertNil(guardState.closing(toolNames: [], arguments: []))
+        // a non-math tool that fails, even with the same code, changes nothing
+        guardState.record(tool: "read_file", result: refused)
+        XCTAssertEqual(guardState.next, .free)
+        // an ordinary failure of a math tool is not a refused transcription
+        guardState.record(tool: "sympy_expression", result: #"{"success": false, "error": {"code": "timeout", "message": "x"}}"#)
+        XCTAssertEqual(guardState.next, .free)
+    }
+
+    func testClarifyToolOffersOnlyFixedReasons() throws {
+        let function = try XCTUnwrap(MathTranscriptionService.clarifyTool["function"] as? [String: Any])
+        XCTAssertEqual(function["name"] as? String, MathTranscriptionService.clarifyToolName)
+        let parameters = try XCTUnwrap(function["parameters"] as? [String: Any])
+        let missing = try XCTUnwrap((parameters["properties"] as? [String: Any])?["missing"] as? [String: Any])
+        XCTAssertEqual(missing["type"] as? String, "string")
+        XCTAssertNotNil(missing["enum"] as? [String])
+    }
+
     func testToolNames() {
         XCTAssertTrue(SymPyToolsService.isTool("sympy_expression"))
         XCTAssertTrue(SymPyToolsService.isTool("sympy_verify"))

@@ -223,6 +223,33 @@ final class SymPyEngineIntegrationTests: XCTestCase {
         XCTAssertTrue(word.content.contains("solutions") || word.content.contains("needs_review"), word.content)
     }
 
+    func testAfterARefusalTheEngineOnlyLetsTheModelCallAToolOrAsk() async throws {
+        let tools = try await ChatToolsService.listEnabled(port: Self.port)
+            .filter { MathTranscriptionService.isMathTool($0.name) }.compactMap(\.openAIDefinition)
+            + [MathTranscriptionService.clarifyTool]
+        let refused = #"{"success": false, "operation": "limit", "error": {"code": "transcription_mismatch", "message": "Not computed: 'expression' is `sin(x) - x`, which is only a part of `(sin(x) - x)/x^3` in the request."}}"#
+        let messages: [[String: Any]] = [
+            ["role": "user", "content": "Find the limit of (sin(x) - x)/x^3 as x approaches 0. /no_think"],
+            ["role": "assistant", "content": "", "tool_calls": [["id": "c1", "type": "function", "function": [
+                "name": "sympy_expression",
+                "arguments": #"{"operation": "limit", "expression": "sin(x) - x", "variable": "x", "point": "0"}"#]]]],
+            ["role": "tool", "tool_call_id": "c1", "content": refused],
+        ]
+        var request = URLRequest(url: URL(string: "http://127.0.0.1:\(Self.port)/v1/chat/completions")!)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 300
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: [
+            "messages": messages, "tools": tools, "tool_choice": "required", "temperature": 0, "max_tokens": 512,
+        ])
+        let (data, _) = try await URLSession.shared.data(for: request)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let message = try XCTUnwrap(((object["choices"] as? [[String: Any]])?.first)?["message"] as? [String: Any])
+        let calls = try XCTUnwrap(message["tool_calls"] as? [[String: Any]], "the engine let the model answer in text")
+        let name = try XCTUnwrap((calls.first?["function"] as? [String: Any])?["name"] as? String)
+        XCTAssertTrue(MathTranscriptionService.isMathTool(name) || name == MathTranscriptionService.clarifyToolName, name)
+    }
+
     func testFileAndShellToolsStillWork() async throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("tosh-tools-\(UUID().uuidString)")

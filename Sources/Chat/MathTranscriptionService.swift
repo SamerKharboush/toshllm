@@ -73,6 +73,41 @@ enum MathTranscriptionService {
         return try? JSONSerialization.jsonObject(with: Data(content[start...].utf8)) as? [String: Any]
     }
 
+    /// Replies that mean the call was not computed because it did not match the request.
+    static let rejectionCodes: Set<String> = ["transcription_mismatch", "needs_review"]
+    static let clarifyToolName = "ask_user_to_clarify"
+
+    /// Offered only after a rejected math call, next to the math tools, with a tool call required:
+    /// the model can correct the call or ask, but not answer from memory.
+    static let clarifyTool: [String: Any] = [
+        "type": "function",
+        "function": [
+            "name": clarifyToolName,
+            "description": "Ask the user to restate the problem when the math call cannot be written from the request.",
+            "parameters": [
+                "type": "object",
+                "properties": ["missing": ["type": "string",
+                                           "enum": ["formula", "data", "limits", "conditions", "method", "other"]]],
+                "required": ["missing"],
+            ] as [String: Any],
+        ] as [String: Any],
+    ]
+
+    static func unresolvedMessage(missing: String? = nil) -> String {
+        let loc = Localizer()
+        let base = loc.t("No pude validar cómo interpretar matemáticamente la petición. Reformúlala o escribe la expresión explícitamente.",
+                         "I couldn't validate the mathematical interpretation of that request. Please rephrase it or provide the expression explicitly.")
+        let hint: String? = switch missing {
+        case "formula": loc.t("Escribe la fórmula o ecuación completa.", "Write out the complete formula or equation.")
+        case "data": loc.t("Indica todos los datos o muestras.", "Give every data value or sample.")
+        case "limits": loc.t("Indica los límites o el intervalo.", "Give the limits or the interval.")
+        case "conditions": loc.t("Indica las condiciones iniciales, si las hay.", "Give the initial conditions, if there are any.")
+        case "method": loc.t("Indica el método que quieres usar.", "Say which method you want.")
+        default: nil
+        }
+        return hint.map { base + " " + $0 } ?? base
+    }
+
     /// What the helper read from the call, for the card: the user checks it against the request.
     static func interpreted(_ reply: [String: Any]) -> [String] {
         ((reply["interpreted_input"] as? [String]) ?? []).map { "▸ " + $0 }
@@ -80,5 +115,41 @@ enum MathTranscriptionService {
 
     static func errorCode(_ reply: [String: Any]) -> String? {
         (reply["error"] as? [String: Any])?["code"] as? String
+    }
+}
+
+/// Per turn: once a math call has been refused for not matching the request, the turn may end only
+/// with a validated math result, a request for clarification, or the fixed unresolved message.
+struct MathTurnGuard: Equatable {
+    private(set) var rejections = 0
+    private(set) var pending = false
+
+    enum Next: Equatable { case free, mathOnly, stop }
+
+    /// One corrected call is allowed after a refusal; a second refusal ends the turn.
+    var next: Next { !pending ? .free : rejections >= 2 ? .stop : .mathOnly }
+
+    mutating func record(tool: String, result: String) {
+        guard MathTranscriptionService.isMathTool(tool),
+              let reply = MathTranscriptionService.reply(result) else { return }
+        if reply["success"] as? Bool == true {
+            pending = false
+        } else if let code = MathTranscriptionService.errorCode(reply),
+                  MathTranscriptionService.rejectionCodes.contains(code) {
+            rejections += 1
+            pending = true
+        }
+    }
+
+    /// The text a mathOnly round may end with: a clarification or, with no tool call, the fixed message.
+    /// Nil means the round made a math call and the turn goes on.
+    func closing(toolNames: [String], arguments: [String]) -> String? {
+        guard pending else { return nil }
+        if let index = toolNames.firstIndex(of: MathTranscriptionService.clarifyToolName) {
+            let missing = (try? ChatToolsService.parseArguments(arguments[index]))?["missing"] as? String
+            return MathTranscriptionService.unresolvedMessage(missing: missing)
+        }
+        return toolNames.contains(where: MathTranscriptionService.isMathTool) ? nil
+            : MathTranscriptionService.unresolvedMessage()
     }
 }

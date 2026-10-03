@@ -11,7 +11,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 - **LLMs: numerical tools with NumPy and SciPy.** The model can integrate numerically, find roots, minimize and fit curves, solve differential equations over an interval, work with decimal matrices, run FFTs and filters, and compute statistics. It sends an operation and its numbers, never code. Off by default, in chat settings under Agents, next to the SymPy switch; it adds 26 MB to the download. Details in [tosh-scientific](helpers/tosh-scientific/README.md).
 
-- **LLMs: math tool calls are checked against your message before they run.** A call that drops part of a formula, changes a limit, invents a condition or loses a value is refused instead of computed, and the card shows what was actually computed.
+- **LLMs: math tool calls are checked against your message before they run.** A call that drops part of a formula, changes a limit, invents a condition or loses a value is refused instead of computed, and the card shows what was actually computed. After a refusal the model can only correct the call or ask you, never answer from memory.
 
 ## [0.87.13] - 2026-10-01
 
