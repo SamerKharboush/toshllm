@@ -86,6 +86,17 @@ if [ -x "$SYMPY_RUNTIME/python/bin/python3" ]; then
         exit 1
     fi
     cp -R "$SYMPY_RUNTIME" "$APP/Contents/Resources/tosh-sympy"
+    # The helpers come from helpers/, not from the runtime's copy, which only build-sympy.sh
+    # refreshes; checked-hash bytecode is ignored if it ever disagrees with its source.
+    BUNDLED_SYMPY="$APP/Contents/Resources/tosh-sympy"
+    rm -rf "$BUNDLED_SYMPY/tosh_sympy" "$BUNDLED_SYMPY/tosh_scientific"
+    mkdir -p "$BUNDLED_SYMPY/tosh_sympy" "$BUNDLED_SYMPY/tosh_scientific"
+    cp helpers/tosh-sympy/tosh_sympy/*.py "$BUNDLED_SYMPY/tosh_sympy/"
+    cp helpers/tosh-scientific/tosh_scientific/*.py "$BUNDLED_SYMPY/tosh_scientific/"
+    if "$BUNDLED_SYMPY/python/bin/python3" -I -c pass 2>/dev/null; then
+        "$BUNDLED_SYMPY/python/bin/python3" -I -m compileall -q -j 0 --invalidation-mode checked-hash \
+            "$BUNDLED_SYMPY/tosh_sympy" "$BUNDLED_SYMPY/tosh_scientific"
+    fi
     echo "bundled math runtime ($(<"$SYMPY_RUNTIME/VERSION"))"
 else
     echo "WARNING: math runtime not built; run ./scripts/build-sympy.sh to include it"

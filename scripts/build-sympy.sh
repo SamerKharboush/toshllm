@@ -163,7 +163,8 @@ if ! "$BUILD_PY" -I -c 'pass' 2>/dev/null; then
     BUILD_PY="$HOST/python/bin/python${PYTHON_VERSION%.*}"
 fi
 "$BUILD_PY" -I -m compileall -q -b -j 0 --invalidation-mode unchecked-hash "$LIB"
-"$BUILD_PY" -I -m compileall -q -j 0 --invalidation-mode unchecked-hash "$OUT/tosh_sympy" "$OUT/tosh_scientific"
+# the helpers keep their sources, so their bytecode is checked against them: a copied edit is never shadowed
+"$BUILD_PY" -I -m compileall -q -j 0 --invalidation-mode checked-hash "$OUT/tosh_sympy" "$OUT/tosh_scientific"
 [ -n "$HOST" ] && rm -rf "$HOST"
 # the libraries ship as bytecode only: half the size and half the files to seal in the signature
 find "$LIB" -name '*.py' -delete

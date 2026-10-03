@@ -330,4 +330,254 @@ final class SymPyEngineIntegrationTests: XCTestCase {
         XCTAssertTrue(text.contains("3") && text.contains("2"), text)
         XCTAssertNil(answer["tool_calls"] as? [[String: Any]])
     }
+    private static let reportedRequest = #"""
+        Calcula exactamente
+        \[
+        I=\int_{0}^{\infty}\frac{x^3}{e^x-1}\,dx
+        \]
+        Después:
+        1. expresa el resultado en forma exacta;
+        2. dame su valor decimal con 10 cifras decimales;
+        3. verifica el resultado mediante integración numérica independiente;
+        4. indica el error absoluto entre el valor exacto evaluado numéricamente y la integración numérica.
+        Usa las herramientas matemáticas/científicas disponibles cuando corresponda. No hagas el cálculo solo de memoria.
+        """#
+
+    /// Runs one request through the chat's own agent loop and returns the turn, how many model
+    /// passes it took and how long.
+    @MainActor
+    private func agentTurn(_ text: String, maxTokens: Int = 4096) async throws
+        -> (messages: [ChatMessage], passes: Int, seconds: Double, intent: MathIntent?) {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("tosh-agent-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = ChatStore(storageDirectory: directory)
+        var sampling = ChatSamplingSettings()
+        sampling.reasoningEffort = "off"
+        let started = Date()
+        store.send(text: text, port: Self.port, temperature: 0.7, maxTokens: maxTokens, system: "", thinking: false,
+                   sampling: sampling)
+        // every pass streams into a message of its own, also one that is dropped afterwards
+        var passes = Set<UUID>()
+        let deadline = Date().addingTimeInterval(900)
+        while store.agentFlowActive, store.pendingAgentContinuation == nil, Date() < deadline {
+            if store.generating, let id = store.current?.messages.last?.id { passes.insert(id) }
+            if store.pendingToolPermission != nil, !store.generating { store.respondToToolPermission(.once) }
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        XCTAssertFalse(store.agentFlowActive && store.pendingAgentContinuation == nil, "the turn did not end")
+        XCTAssertNil(store.lastError)
+        return (try XCTUnwrap(store.current?.messages), passes.count, Date().timeIntervalSince(started), store.lastMathIntent)
+    }
+
+    /// The math tools run without asking by default, which hands the chat's math turns to the engine's agent;
+    /// with that off the chat runs them itself. nil leaves the default.
+    private func useServerAgent(_ on: Bool?) async throws {
+        let names = try await ChatToolsService.listEnabled(port: Self.port).map(\.name).filter(MathTranscriptionService.isMathTool)
+        XCTAssertEqual(names.count, 10)
+        for name in names { UserDefaults.standard.removeObject(forKey: "toolPermission.always.builtin.\(name)") }
+        if let on { UserDefaults.standard.set(on, forKey: SettingsKeys.mathToolsAllowed) }
+        else { UserDefaults.standard.removeObject(forKey: SettingsKeys.mathToolsAllowed) }
+    }
+
+    private static var serverPath: Bool { ProcessInfo.processInfo.environment["TOSH_AGENT_PATH"] == "server" }
+
+    private func record(_ line: [String: Any], to destination: String? = nil) {
+        guard let path = destination ?? ProcessInfo.processInfo.environment["TOSH_AGENT_TRACE"] else { return }
+        if !FileManager.default.fileExists(atPath: path) { FileManager.default.createFile(atPath: path, contents: nil) }
+        guard let file = FileHandle(forWritingAtPath: path),
+              let data = try? JSONSerialization.data(withJSONObject: line, options: [.sortedKeys]) else { return }
+        file.seekToEndOfFile()
+        file.write(data + Data("\n".utf8))
+        file.closeFile()
+    }
+
+    /// A reported request through the chat's own agent loop, with the settings of the report:
+    /// math tools only, no reasoning. TOSH_AGENT_RUNS repeats it, since the model samples.
+    @MainActor
+    func testReportedImproperIntegralThroughTheAgent() async throws {
+        UserDefaults.standard.set(false, forKey: SettingsKeys.agentToolsEnabled)
+        UserDefaults.standard.set(false, forKey: SettingsKeys.memoryToolsEnabled)
+        defer { UserDefaults.standard.removeObject(forKey: SettingsKeys.memoryToolsEnabled) }
+        let runs = Int(ProcessInfo.processInfo.environment["TOSH_AGENT_RUNS"] ?? "") ?? 1
+        // the same request through the app's own loop and through the engine's agent
+        for (server, run) in [false, true].flatMap({ server in (1...max(1, runs)).map { (server, $0) } }) {
+            try await useServerAgent(server)
+            let (messages, passes, seconds, intent) = try await agentTurn(Self.reportedRequest)
+            if server { XCTAssertEqual(intent, .computational, "the agent's intent reaches the app") }
+            let ledger = MathLedger.results(messages)
+            let last = try XCTUnwrap(messages.last)
+            let answer = last.parts.body
+            let sources = messages.filter { $0.role == "user" }.map(\.wireContent)
+            let ungrounded = MathGrounding.ungrounded(answer, sources: sources, results: ledger)
+            record(["path": server ? "server" : "app", "run": run, "passes": passes, "seconds": seconds,
+                    "messages": messages.map(Self.trace),
+                    "ledger": ledger.map { "\($0.tool) \($0.operation): \($0.result.joined(separator: "; "))" },
+                    "answer": answer, "claims": MathGrounding.numbers(in: MathGrounding.withoutListMarkers(answer)).map(\.text)
+                        + MathGrounding.constants(in: answer),
+                    "ungrounded": ungrounded, "prompt_tokens": last.timings?.promptTokens ?? -1])
+
+            XCTAssertEqual(last.role, "assistant")
+            XCTAssertTrue(last.toolCalls?.isEmpty ?? true)
+            XCTAssertEqual(ungrounded, [], "run \(run): the answer states values no source or result gives")
+            for message in messages where message.role == "assistant" {
+                let calls = (message.toolCalls ?? []).filter { MathTranscriptionService.isMathTool($0.name) }
+                if !calls.allSatisfy(MathTranscriptionService.succeeded) {
+                    XCTAssertNil(message.interim, "run \(run): text before an unsuccessful math call was kept")
+                }
+            }
+            let integrals = ledger.filter { $0.operation == "integrate" && $0.tool == "scientific_compute" }
+            for integral in integrals {
+                let value = try XCTUnwrap(MathTranscriptionService.reply(integral.reply)?["value"] as? Double)
+                XCTAssertEqual(value, Double.pi * Double.pi * Double.pi * Double.pi / 15, accuracy: 1e-9)
+            }
+            if !ledger.isEmpty {
+                XCTAssertNotEqual(answer, MathTranscriptionService.unresolvedMessage(), "run \(run): a validated result was lost")
+            }
+            if !integrals.isEmpty {
+                XCTAssertTrue(answer.contains("6.49") || answer.contains("6,49"), "run \(run): the validated integral is not shown")
+            }
+        }
+        try await useServerAgent(nil)
+    }
+
+    /// With nothing set, a math turn of the chat runs in the engine's agent.
+    @MainActor
+    func testMathTurnsGoToTheServerAgentByDefault() async throws {
+        UserDefaults.standard.set(false, forKey: SettingsKeys.agentToolsEnabled)
+        UserDefaults.standard.set(false, forKey: SettingsKeys.memoryToolsEnabled)
+        defer { UserDefaults.standard.removeObject(forKey: SettingsKeys.memoryToolsEnabled) }
+        try await useServerAgent(nil)
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("tosh-agent-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = ChatStore(storageDirectory: directory)
+        var sampling = ChatSamplingSettings()
+        sampling.reasoningEffort = "off"
+        store.send(text: "Find the determinant of [[2, -1], [4, 3]].", port: Self.port, temperature: 0.7, maxTokens: 1024,
+                   system: "", thinking: false, sampling: sampling)
+        let deadline = Date().addingTimeInterval(300)
+        while store.agentFlowActive, Date() < deadline {
+            XCTAssertNil(store.pendingToolPermission, "a math call asked for permission")
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        XCTAssertTrue(store.lastTurnUsedServerAgent)
+        XCTAssertEqual(store.lastMathIntent, .computational)
+        let messages = try XCTUnwrap(store.current?.messages)
+        XCTAssertEqual(MathLedger.results(messages).count, 1)
+        XCTAssertTrue(messages.last?.parts.body.contains("10") == true, messages.last?.parts.body ?? "")
+    }
+
+    /// Stop in the chat ends the engine agent's turn: no model pass keeps running on the server.
+    @MainActor
+    func testStopEndsTheServerAgentTurn() async throws {
+        UserDefaults.standard.set(false, forKey: SettingsKeys.agentToolsEnabled)
+        UserDefaults.standard.set(false, forKey: SettingsKeys.memoryToolsEnabled)
+        defer { UserDefaults.standard.removeObject(forKey: SettingsKeys.memoryToolsEnabled) }
+        try await useServerAgent(true)
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("tosh-agent-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = ChatStore(storageDirectory: directory)
+        var sampling = ChatSamplingSettings()
+        sampling.reasoningEffort = "off"
+        // a long pass with nothing to compute, cut in the middle
+        store.send(text: "Write a 3000-word essay on the history of calculus, with no formulas.",
+                   port: Self.port, temperature: 0.7, maxTokens: 8192, system: "", thinking: false, sampling: sampling)
+        try await Task.sleep(for: .seconds(12))
+        XCTAssertTrue(store.generating, "the pass ended before the stop")
+        store.stop()
+        let stopped = Date()
+        var busy = true
+        while busy, Date().timeIntervalSince(stopped) < 20 {
+            try await Task.sleep(for: .milliseconds(500))
+            let (data, _) = try await URLSession.shared.data(from: URL(string: "http://127.0.0.1:\(Self.port)/slots")!)
+            let slots = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [[String: Any]])
+            busy = slots.contains { $0["is_processing"] as? Bool == true }
+        }
+        record(["stop": "server agent", "stopped_at": ISO8601DateFormatter().string(from: stopped),
+                "seconds_to_idle": Date().timeIntervalSince(stopped),
+                "intent": store.lastMathIntent?.rawValue ?? "none"])
+        XCTAssertFalse(busy, "the engine still generates for a stopped turn")
+        XCTAssertFalse(store.generating)
+        try await useServerAgent(nil)
+    }
+
+    /// Simple math and plain turns, to see what the final check costs when nothing is wrong.
+    @MainActor
+    func testFinalCheckCostOnSimpleTurns() async throws {
+        UserDefaults.standard.set(false, forKey: SettingsKeys.agentToolsEnabled)
+        UserDefaults.standard.set(false, forKey: SettingsKeys.memoryToolsEnabled)
+        defer { UserDefaults.standard.removeObject(forKey: SettingsKeys.memoryToolsEnabled) }
+        let prompts = ["Factoriza x^2 - 5x + 6.", "Integra numéricamente exp(-x^2) de 0 a 1.",
+                       "Calcula el determinante de [[2, 1], [1, 3]].", "Escribe una frase sobre el mar."]
+        let runs = Int(ProcessInfo.processInfo.environment["TOSH_AGENT_RUNS"] ?? "") ?? 1
+        for run in 1...max(1, runs) {
+            for prompt in prompts {
+                let (messages, passes, seconds, _) = try await agentTurn(prompt)
+                let rounds = messages.filter { $0.role == "assistant" }.count
+                let answer = messages.last?.parts.body ?? ""
+                let ungrounded = MathGrounding.ungrounded(answer, sources: [prompt], results: MathLedger.results(messages))
+                record(["cost": prompt, "run": run, "passes": passes, "rounds": rounds, "seconds": seconds,
+                        "answer": answer, "ungrounded": ungrounded,
+                        "math_calls": MathLedger.calls(messages).count,
+                        "prompt_tokens": messages.compactMap { $0.timings?.promptTokens }])
+                // a turn that used no math tool is not checked: the model answered on its own
+                if !MathLedger.calls(messages).isEmpty { XCTAssertEqual(ungrounded, [], prompt) }
+                XCTAssertFalse(answer.isEmpty, prompt)
+            }
+        }
+    }
+
+    /// A frozen suite through the chat's own loop: TOSH_SUITE is the suite, TOSH_SUITE_OUT gets one line per prompt.
+    @MainActor
+    func testFrozenSuiteThroughTheAgent() async throws {
+        let environment = ProcessInfo.processInfo.environment
+        guard let suitePath = environment["TOSH_SUITE"], let outPath = environment["TOSH_SUITE_OUT"] else {
+            throw XCTSkip("Set TOSH_SUITE and TOSH_SUITE_OUT to run a frozen suite")
+        }
+        UserDefaults.standard.set(false, forKey: SettingsKeys.agentToolsEnabled)
+        UserDefaults.standard.set(false, forKey: SettingsKeys.memoryToolsEnabled)
+        defer { UserDefaults.standard.removeObject(forKey: SettingsKeys.memoryToolsEnabled) }
+        try await useServerAgent(Self.serverPath)
+        let suite = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: suitePath))) as? [[String: String]])
+        let only = environment["TOSH_SUITE_ONLY"].map { Set($0.split(separator: ",").map(String.init)) }
+        let runs = Int(environment["TOSH_AGENT_RUNS"] ?? "") ?? 1
+        for run in 1...max(1, runs) {
+            for item in suite where only?.contains(item["id"] ?? "") ?? true {
+                let prompt = item["prompt"] ?? ""
+                let (messages, passes, seconds, intent) = try await agentTurn(prompt, maxTokens: 1024)
+                let start = MathLedger.turnStart(messages)
+                let calls = messages[min(start, messages.count)...].flatMap { $0.toolCalls ?? [] }
+                let results = MathLedger.results(messages, from: start)
+                let answer = messages.last.map { $0.role == "assistant" && ($0.toolCalls ?? []).isEmpty ? $0.parts.body : "" } ?? ""
+                let base = MathTranscriptionService.unresolvedMessage()
+                let outcome = answer.hasPrefix(base) ? (answer == base ? "unresolved" : "clarification_required")
+                    : answer.hasPrefix("This is what the tools validated") ? "validated_results_only" : "answered"
+                record(["id": item["id"] ?? "", "label": item["label"] ?? "", "run": run, "intent": intent?.rawValue ?? "none",
+                        "path": Self.serverPath ? "server" : "app",
+                        "outcome": outcome, "passes": passes, "seconds": seconds, "validated": results.map(\.reply),
+                        "calls": calls.map { call -> [String: Any] in
+                            let reply = call.result.flatMap(MathTranscriptionService.reply) ?? [:]
+                            return ["tool": call.name, "arguments": call.arguments,
+                                    "status": MathTranscriptionService.succeeded(call) ? "ok"
+                                        : MathTranscriptionService.errorCode(reply) ?? call.state.rawValue]
+                        },
+                        "content": answer,
+                        "ungrounded": MathGrounding.ungrounded(answer, sources: [prompt], results: results),
+                        "prompt_tokens": messages[min(start, messages.count)...].compactMap { $0.timings?.promptTokens }.reduce(0, +)],
+                       to: outPath)
+            }
+        }
+        try await useServerAgent(nil)
+    }
+
+    private static func trace(_ message: ChatMessage) -> String {
+        var line: [String: Any] = ["role": message.role, "body": message.parts.body]
+        if let interim = message.interim { line["interim"] = interim }
+        if let id = message.toolCallID { line["tool_call_id"] = id }
+        if let calls = message.toolCalls {
+            line["calls"] = calls.map { ["id": $0.serverID ?? "", "name": $0.name, "arguments": $0.arguments,
+                                         "state": $0.state.rawValue, "result": $0.result ?? ""] }
+        }
+        let data = (try? JSONSerialization.data(withJSONObject: line, options: [.sortedKeys])) ?? Data()
+        return String(decoding: data, as: UTF8.self)
+    }
 }

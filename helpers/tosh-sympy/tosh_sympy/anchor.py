@@ -56,11 +56,129 @@ def _within(value, numbers):
 
 # reading the request
 
+_TEX = re.compile(r"\\[A-Za-z]+|\\[\[\]()]|[_^]\{|\$")
+_TEX_HEAD = re.compile(r"\\[dt]?frac(?![A-Za-z])|\\sqrt(?![A-Za-z])|\\(?:int|sum|prod|lim)(?![A-Za-z])|[_^](?=\{)")
+_TEX_TOKEN = re.compile(r"-?(?:oo|pi|\d+(?:\.\d+)?|[A-Za-z])")
+_TEX_WORDS = {"int": "integral", "sum": "summation", "prod": "product"}
+_TEX_SYMBOLS = {"cdot": "*", "times": "*", "div": "/", "infty": "oo", "pi": "pi", "to": " approaches ",
+                "rightarrow": " approaches "}
+
+
+def _tex_group(text, start):
+    """(content, index after it) of the {...} group or the single token at start, or None."""
+    if start < len(text) and text[start] == "{":
+        depth = 0
+        for index in range(start, len(text)):
+            depth += (text[index] == "{") - (text[index] == "}")
+            if depth == 0:
+                return text[start + 1:index], index + 1
+        return None
+    match = _TEX_TOKEN.match(text, start)
+    return (match.group(0), match.end()) if match else None
+
+
+def _tex_structure(text):
+    out, index = [], 0
+    while index < len(text):
+        match = _TEX_HEAD.match(text, index)
+        if match is None:
+            out.append(text[index])
+            index += 1
+            continue
+        head, index = match.group(0).lstrip("\\"), match.end()
+        if head in ("_", "^"):
+            inner, index = _tex_group(text, index) or ("", index + 1)
+            inner = _tex_structure(inner)
+            if head == "^":
+                out.append(f"^({inner})")
+            elif re.fullmatch(r"\w+", inner.strip()):
+                out.append("_" + inner.strip())
+        elif head.endswith("frac"):
+            top = _tex_group(text, len(text) - len(text[index:].lstrip()))
+            bottom = top and _tex_group(text, len(text) - len(text[top[1]:].lstrip()))
+            if not bottom:
+                out.append(" ")
+                continue
+            out.append(f"(({_tex_structure(top[0])})/({_tex_structure(bottom[0])}))")
+            index = bottom[1]
+        elif head == "sqrt":
+            inner = _tex_group(text, index) if text[index:index + 1] == "{" else None
+            if inner is None:
+                out.append(" sqrt")
+                continue
+            out.append(f"sqrt({_tex_structure(inner[0])})")
+            index = inner[1]
+        else:
+            ends = {}
+            while text[index:index + 1] in ("_", "^") and text[index] not in ends:
+                group = _tex_group(text, index + 1)
+                if group is None:
+                    break
+                ends[text[index]] = re.sub(r"\s+", "", _tex_structure(group[0])) if head != "lim" else _tex_structure(group[0])
+                index = group[1]
+            if head == "lim":
+                out.append(" limit as " + " ".join(ends.get("_", "").split()) + " of ")
+            elif "_" in ends and "^" in ends:
+                out.append(f" {_TEX_WORDS[head]} from {ends['_']} to {ends['^']} of ")
+            else:
+                out.append(f" {_TEX_WORDS[head]} of ")
+    return "".join(out)
+
+
+def _tex(text):
+    """LaTeX markup as the plain math text the rest of this module reads. Not a TeX parser:
+    fractions, roots, powers, infinity and the limits of an integral, sum or product."""
+    if not _TEX.search(text):
+        return text
+    text = re.sub(r"\\[\[\]()]|\$|\\[{}]", " ", text)
+    text = re.sub(r"\\(?:mathrm|operatorname|text|textrm|mathit|mbox)\s*\{d\}\s*([A-Za-z])(?![A-Za-z])", r" d\1 ", text)
+    text = re.sub(r"\\(?:mathrm|operatorname|text|textrm|mathit|mathbf|mbox)\s*\{([^{}]*)\}", r" \1 ", text)
+    text = re.sub(r"\\[,;:!]\s*d\s*([A-Za-z])(?![A-Za-z])", r" d\1 ", text)
+    text = re.sub(r"\\[,;:! ]|\\q?quad(?![A-Za-z])|\\(?:left|right|displaystyle|big|Big)(?![A-Za-z])", " ", text)
+
+    def symbol(match):
+        value = _TEX_SYMBOLS.get(match.group(1))
+        if value is None:
+            return match.group(0)
+        before, after = match.string[:match.start()][-1:], match.string[match.end():][:1]
+        return (" " if before.isalnum() else "") + value + (" " if after.isalnum() else "")
+    text = re.sub(r"\\([A-Za-z]+)", symbol, text)
+    text = _tex_structure(text).replace("{", "(").replace("}", ")")
+    return re.sub(r"\\([A-Za-z]+)", lambda m: m.group(1) if m.group(1) in _KNOWN else f" {m.group(1)} ", text)
+
+
+_PRECISION = (r"(?:decimal\s+(?:places?|digits?)|decimals?|significant\s+(?:figures?|digits?)|correct\s+digits?"
+              r"|cifras\s+(?:decimales|significativas)|decimales|d[ií]gitos\s+(?:decimales|significativos)"
+              r"|lugares\s+decimales)")
+_PRECISION_AFTER = r"(?:to|with|within|at|of|con|a|en|hasta)\s+\d+\s+(?:digits?|figures?|places?|cifras|d[ií]gitos)"
+_TOLERANCE = r"(?:tolerance|accuracy|precision|tolerancia|precisi[oó]n|exactitud)"
+
+
+def _format_numbers(text):
+    """Cuts out the numbers that say how to answer rather than what to compute: the markers of a
+    numbered list and a count of digits go; a tolerance is returned apart, since some requests use
+    that word for a quantity of the problem."""
+    markers = list(re.finditer(r"(?m)^[ \t]*\(?(\d{1,2})[.)][ \t]+(?=\S)", text))
+    if len(markers) >= 2 and all(int(m.group(1)) == index + 1 for index, m in enumerate(markers)):
+        for match in reversed(markers):
+            text = text[:match.start()] + " ; " + text[match.end():]
+    text = re.sub(rf"\b\d+\s+{_PRECISION}\b", " ", text, flags=re.I)
+    text = re.sub(rf"\b{_PRECISION_AFTER}\b", " ", text, flags=re.I)
+    meta = []
+
+    def take(match):
+        meta.append(float(match.group(1)))
+        return " ; "
+    text = re.sub(rf"(?<![\w.])({_NUMBER})\s+(?:absolute\s+|relative\s+)?{_TOLERANCE}\b", take, text, flags=re.I)
+    text = re.sub(rf"\b{_TOLERANCE}\s*(?:of|de|=|:)?\s*({_NUMBER})", take, text, flags=re.I)
+    return text, meta
+
+
 class Source:
     """What a piece of text states: formulas, numbers, lists, matrices and conditions."""
 
     def __init__(self, text):
-        text = str(text or "")[:MAX_TEXT].translate(_TRANSLATE)
+        text, self.meta = _format_numbers(_tex(str(text or "")[:MAX_TEXT].translate(_TRANSLATE)))
         self.text = text
         self.matrices, self.lists, self.named, self.conditions, self.points = [], [], {}, {}, []
         self.hertz, self.seconds = [], []
@@ -77,8 +195,6 @@ class Source:
         text = self._points(text)
         text = self._conditions(text)
         text = re.sub(r"\b\d+\s*[xX]\s*\d+\b(?=\s+[A-Za-z])", " ", text)
-        text = re.sub(r"\b(?:to|with|within|at|of)\s+\d+\s+(?:significant\s+)?(?:digits?|decimals?|decimal\s+places?"
-                      r"|figures?|places?)\b", " ", text, flags=re.I)
         text = re.sub(r"\b(\d+)(?:st|nd|rd|th)\b", r"\1 ", text)
         self.hertz = [float(n) for n in re.findall(rf"({_NUMBER})\s*(?:Hz|hertz)\b", text, re.I)]
         self.hertz += [1000 * float(n) for n in re.findall(rf"({_NUMBER})\s*kHz\b", text, re.I)]
@@ -584,7 +700,7 @@ class _Check:
                     if _within(number, extra):
                         extra.remove(next(n for n in extra if _same(n, number)))
                 if all(_within(number, self.grounded()) for number in extra):
-                    verdict = _combination(call, self.request.text)
+                    verdict = _combination(call, self.request.text, [given[index][0] for index in whole] + extra)
                     if verdict is True:
                         continue
                     if verdict is False:
@@ -624,12 +740,14 @@ class _Check:
             return None
         if any(call.has(value) and name not in self.request.constants for name, value in constants.items()):
             return None
-        return _combination(call, self.request.text)
+        named = [name for name, value in constants.items() if call.has(value)]
+        return _combination(call, self.request.text, numbers + named)
 
     # numbers
 
     def grounded(self):
         numbers = list(self.request.standalone) + list(self.context.standalone) + list(self.context.inside)
+        numbers += self.request.meta + self.context.meta
         for source in (self.request, self.context):
             numbers += [math.pi for name in source.constants if name == "pi"]
             numbers += [math.e for name in source.constants if name == "e"]
@@ -733,7 +851,8 @@ class _Check:
         infinite = [v for v in limits if v is not None and (_constant(v) or 0) in (math.inf, -math.inf)]
         if self.request.infinity and not infinite and not self.context.infinity:
             finite = [v for v in limits if v is not None]
-            self.no("the request goes to infinity; the call has " + (f"the finite limits {finite}" if finite else "no infinite limit"))
+            self.no("the request goes to infinity; the call has " + (f"the finite limits {finite}" if finite else "no infinite limit")
+                    + '; write an infinite limit as "oo" or "-oo"')
         elif infinite and not self.request.infinity and not self.context.infinity:
             self.unsure("the call has an infinite limit that the request does not mention")
 
@@ -898,10 +1017,30 @@ _COMBINATIONS = (
 )
 
 
-def _combination(call, text):
-    """Whether the call joins the quantities of the request the way its words say: True, False, or None
-    when the request names no single way."""
+def _beside(text, quantities):
+    """The sentences of the text that state one of the quantities: formulas and names as written, numbers by value."""
+    found = []
+    for sentence in re.split(r"(?<=[.;?!])\s+|\n+", text):
+        packed = re.sub(r"\s+", "", sentence)
+        numbers = [float(n) for n in re.findall(rf"(?<![\w.])(?:\d+\.\d*|\.\d+|\d+)(?:[eE][+-]?\d+)?", sentence)]
+        for quantity in quantities:
+            if isinstance(quantity, float):
+                here = _within(quantity, numbers)
+            elif re.fullmatch(r"[A-Za-z]+", quantity):
+                here = bool(re.search(rf"(?<![A-Za-z]){quantity}(?![A-Za-z])", sentence))
+            else:
+                here = re.sub(r"\s+", "", quantity) in packed
+            if here:
+                found.append(sentence)
+                break
+    return " ".join(found)
+
+
+def _combination(call, text, quantities):
+    """Whether the call joins the quantities of the request the way the words next to them say: True,
+    False, or None when no single way is named there. A word elsewhere in the request is not evidence."""
     import sympy as sp
+    text = _beside(text, quantities)
     named = [kind for kind, pattern in _COMBINATIONS if re.search(pattern, text, re.I)]
     if len(named) != 1:
         return None

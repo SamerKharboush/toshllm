@@ -10,6 +10,7 @@ arguments the helper takes without advertising them.
 
 _TEXT = {"type": "string"}
 _NUMBER = {"type": "number"}
+_BOUND = {"type": ["number", "string"], "description": "Number, or \"oo\" / \"-oo\" for infinity."}
 _ARRAY = {"type": "array"}
 _OBJECT = {"type": "object"}
 _COMMON = ("max_values", "parameters")
@@ -23,8 +24,8 @@ TOOLS = {
             "expression": {**_TEXT, "description": "Function, sin(x**2), or for root the whole equation, "
                                                    "cos(x) = x."},
             "variable": _TEXT,
-            "lower": _NUMBER,
-            "upper": _NUMBER,
+            "lower": _BOUND,
+            "upper": _BOUND,
             "bracket": {**_ARRAY, "description": "root: [a, b] with a sign change."},
             "initial_guess": {**_ARRAY, "description": "root: start value."},
             "x": _ARRAY,

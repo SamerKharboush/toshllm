@@ -3,10 +3,10 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
-## [0.87.14-beta.4] - 2026-10-03
+## [0.87.15-beta.5] - 2026-10-03
 
-Upstream 0.87.14 merged (SymPy and NumPy math tools, math-call guards, Flash-Next 64-lane
-speedups). All three earlier betas are carried forward unchanged.
+Upstream 0.87.15 merged: math answers now come from one agent in the engine, for the chat,
+the web chat and the API. All four earlier betas are carried forward unchanged.
 
 ### Added
 
@@ -35,6 +35,17 @@ speedups). All three earlier betas are carried forward unchanged.
   tensor holding several streams, cleared one at a time at a non-zero offset. On the pre-fix engine
   it fails: clearing stream 1 overfills into stream 2. That closes the A/B for the range fix at the
   level the bug lives, without needing an 82.5 GB DSV4 model.
+
+## [0.87.14-beta.4] - 2026-10-03
+
+Upstream 0.87.14 merged (SymPy and NumPy math tools, math-call guards, Flash-Next 64-lane
+speedups). All three earlier betas are carried forward unchanged.
+
+### Added
+
+- **The math runtime ships.** Built with `scripts/build-sympy.sh`: CPython 3.13.16, SymPy 1.14.0,
+  mpmath 1.3.0, NumPy 2.5.3, SciPy 1.18.1 — 125 MB, x86_64. Off by default in chat settings.
+  The 9 SymPy engine integration tests pass with `TOSH_SYMPY_E2E_MODEL` set.
 
 ## [0.87.14-beta.3] - 2026-10-03
 
@@ -88,6 +99,47 @@ new multi-GPU default. Known gaps are listed at the bottom of this section.
 - The cross-GPU events setting is still only turned on for a tensor split. It makes no measurable difference on a layer split, so forcing it on there buys nothing.
 - A 27B Qwen3.5 model cannot be split by tensor: an internal state tensor's width does not divide evenly. The engine now says which operation and which dimensions instead of failing a bare assert. The layer split, which that model uses, is unaffected.
 - The engine falls back to compiling its Metal kernels from embedded sources when the bundle has no precompiled copy. Functionally identical, slower on first start.
+
+## [0.87.15] - 2026-10-03
+
+### Added
+
+- **LLMs: math answers come from one agent in the engine, for the chat, the web chat and the API.** API clients ask for it with `X-Tosh-Agent: on`, also from another computer and without the app; the reply carries a `tosh` object with the intent, every call and the validated results.
+
+### Improved
+
+- **LLMs: a request for a calculation is answered with the math tools.** The model can no longer skip them and write the result from memory; explanations and questions without a calculation are answered as before.
+
+- **LLMs: stopping a math answer also stops its model passes and tool calls in the engine.** So does a client that closes the connection.
+
+- **LLMs: math answers for several clients at once run side by side** instead of one after another.
+
+- **LLMs: the math tools run without asking by default**, so the chat's math turns go through the engine's agent. "Use the math tools without asking" in the chat settings turns it off; no other tool changes.
+
+- **LLMs: the tool calls of a turn show as one block that folds.** It names the tools and counts those without a result; what the model wrote before a call sits inside it, marked as not verified.
+
+### Fixed
+
+- **LLMs: the web chat can no longer run the math tools without their checks.** Its conversations go through the engine's agent, and a page in a browser no longer gets the math tools for a loop of its own.
+
+- **LLMs: a request without streaming stops when its client goes away**, also while other requests keep the engine busy and in router mode.
+
+- **LLMs: the math answers written by the engine follow the language of the conversation.**
+
+- **LLMs: math written in LaTeX is checked like plain text.** A correct call is no longer refused for `\frac`, `\infty` or the limits of `\int`, and list numbers or digit counts in a request no longer count as data.
+
+- **LLMs: a numerical integral can go to infinity.** A call that puts a number such as 100 in place of infinity is refused instead of computed.
+
+- **LLMs: a math call refused once stays refused when the model repeats it.**
+
+- **LLMs: neither an API client nor the model can pass a math call off as checked.** The fields that carry your request to the tools are honoured only from Tosh itself.
+
+- **LLMs: what the model writes before a math call is dropped when the call gives no result.** An exact value written from memory no longer stays on screen after the call that should have computed it was refused.
+
+- **LLMs: a math turn keeps the results it already validated when a later call is refused.** The answer states them and says which parts could not be validated, instead of only saying that nothing could be.
+
+- **LLMs: after math tools, the answer only states numbers from your message or from a validated result.** An answer that adds others goes back to the model once and is otherwise replaced by the validated results, so it shows once it has been checked.
+
 
 ## [0.87.14] - 2026-10-02
 

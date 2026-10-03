@@ -9,26 +9,32 @@ it when a call runs past its time or memory budget, and lets it go after a while
 
 import ctypes
 import importlib
+import hmac
 import json
 import os
 import select
 import signal
 import subprocess
 import sys
+import threading
 import time
 
 HOME = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, HOME)
 
 TOOLSET = sys.argv[1] if len(sys.argv) > 1 else "sympy"
-if TOOLSET not in ("sympy", "scientific"):
+if TOOLSET not in ("sympy", "scientific", "agent"):
     sys.exit(f"unknown tool set '{TOOLSET}'")
-schema = importlib.import_module(f"tosh_{TOOLSET}.schema")
+# the agent computes nothing itself: it calls the engine, which calls the other two
+if TOOLSET == "agent":
+    from tosh_sympy import agent
+else:
+    schema = importlib.import_module(f"tosh_{TOOLSET}.schema")
 
 VERSION = "1.1.0"
 PROTOCOL = "2024-11-05"
 # numeric data is typed out in the request, so the scientific tools take a larger one
-MAX_REQUEST_BYTES = (1024 if TOOLSET == "scientific" else 64) * 1024
+MAX_REQUEST_BYTES = (1024 if TOOLSET in ("scientific", "agent") else 64) * 1024
 MAX_REPLY_BYTES = 96 * 1024
 STARTUP_SECONDS = 30
 
@@ -196,18 +202,52 @@ class Worker:
             best = reply["progress"]
 
 
+# the app starts this server with a key of its own; only a call carrying it may say what the user asked
+TRUST_KEY = os.environ.get("TOSH_TRUST_KEY", "")
+_PRIVATE = ("_source", "_reviewed")
+
+
+def _trusted(arguments):
+    """The arguments without the fields that start with "_", which a client or a model could
+    otherwise set to vouch for its own call. The app's own come back when it shows the key."""
+    plain = {k: v for k, v in arguments.items() if not str(k).startswith("_")}
+    trusted = bool(TRUST_KEY) and hmac.compare_digest(str(arguments.get("_trust", "")).encode(), TRUST_KEY.encode())
+    if trusted:
+        plain.update({k: arguments[k] for k in _PRIVATE if k in arguments})
+    ignored = len(plain) < len(arguments) - (1 if trusted else 0)
+    return plain, ignored
+
+
+_OUT = threading.Lock()
+_TURNS = {}
+
+
+def _write(message):
+    with _OUT:
+        sys.stdout.write(json.dumps(message) + "\n")
+        sys.stdout.flush()
+
+
+def _notify(method, params):
+    _write({"jsonrpc": "2.0", "method": method, "params": params})
+
+
 def _respond(message_id, result=None, error=None):
     message = {"jsonrpc": "2.0", "id": message_id}
     if error is not None:
         message["error"] = error
     else:
         message["result"] = result
-    sys.stdout.write(json.dumps(message) + "\n")
-    sys.stdout.flush()
+    _write(message)
 
 
 def _handle(message, worker):
     method, message_id = message.get("method"), message.get("id")
+    if method == "notifications/cancelled":
+        engine = _TURNS.get((message.get("params") or {}).get("requestId"))
+        if engine is not None:
+            engine.cancel()
+        return
     if message_id is None:
         return
     if method == "initialize":
@@ -219,10 +259,31 @@ def _handle(message, worker):
     elif method == "ping":
         _respond(message_id, {})
     elif method == "tools/list":
-        _respond(message_id, {"tools": schema.definitions()})
+        _respond(message_id, {"tools": [agent.DEFINITION] if TOOLSET == "agent" else schema.definitions()})
+    elif method == "tools/call" and TOOLSET == "agent":
+        # the turn runs on its own thread, so that a cancellation sent meanwhile is read and acted on
+        params = message.get("params") if isinstance(message.get("params"), dict) else {}
+        token = (params.get("_meta") or {}).get("progressToken")
+        counter = iter(range(1, 1 << 30))
+
+        def emit(event):
+            if token is not None:
+                _notify("notifications/progress", {"progressToken": token, "progress": next(counter),
+                                                   "message": json.dumps(event)})
+
+        def work():
+            reply = agent.run(params.get("arguments") or {}, emit, lambda engine: _TURNS.__setitem__(message_id, engine))
+            _TURNS.pop(message_id, None)
+            _respond(message_id, {"content": [{"type": "text", "text": json.dumps(reply)}], "isError": False})
+        threading.Thread(target=work, daemon=True).start()
     elif method == "tools/call":
         params = message.get("params") if isinstance(message.get("params"), dict) else {}
-        reply = worker.call(params.get("name"), params.get("arguments") or {})
+        arguments = params.get("arguments") if isinstance(params.get("arguments"), dict) else {}
+        arguments, ignored = _trusted(arguments)
+        reply = worker.call(params.get("name"), arguments)
+        if ignored and isinstance(reply, dict):
+            reply["warnings"] = list(reply.get("warnings") or []) + [
+                "fields starting with _ are reserved for Tosh and were ignored"]
         _respond(message_id, {
             "content": [{"type": "text", "text": json.dumps(reply)}],
             # a request that ran out of time or has no closed form was still a valid call
