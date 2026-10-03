@@ -108,8 +108,16 @@ enum ChatToolsService {
         "file_glob_search", "grep_search", "exec_shell_command", "run_javascript"
     ]
 
-    static func isAlwaysAllowed(_ name: String) -> Bool {
-        UserDefaults.standard.bool(forKey: permissionKey(name))
+    /// `bundled` is false for tools of the user's own MCP servers. The math tools of the bundled helpers
+    /// run without asking unless the user turned that off: they only compute, and the engine's agent,
+    /// which runs math turns, cannot ask.
+    static func isAlwaysAllowed(_ name: String, bundled: Bool = true) -> Bool {
+        if UserDefaults.standard.bool(forKey: permissionKey(name)) { return true }
+        return bundled && mathToolsAllowed && MathTranscriptionService.isMathTool(name)
+    }
+
+    static var mathToolsAllowed: Bool {
+        UserDefaults.standard.object(forKey: SettingsKeys.mathToolsAllowed) as? Bool ?? true
     }
 
     static func allowAlways(_ name: String) {

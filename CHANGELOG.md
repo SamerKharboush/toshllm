@@ -3,6 +3,48 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Added
+
+- **LLMs: math answers come from one agent in the engine, for the chat, the web chat and the API.** An API client asks for it with `X-Tosh-Agent: on`, or gets it without asking when "Answer with the tools over the API" is on, also from another computer and without the app; requests with tools of their own still reach the model as they are. The reply carries a `tosh` object with the intent, the outcome, every call and the validated results.
+
+### Improved
+
+- **LLMs: a request for a calculation is answered with the math tools.** The model can no longer skip them and write the result from memory; explanations and questions without a calculation are answered as before.
+
+- **LLMs: stopping a math answer also stops its model passes and tool calls in the engine.** So does a client that closes the connection.
+
+- **LLMs: math answers for several clients at once run side by side** instead of one after another.
+
+- **LLMs: the math tools run without asking by default**, so the chat's math turns go through the engine's agent. "Use the math tools without asking" in the chat settings turns it off; no other tool changes.
+
+- **LLMs: the tool calls of a turn show as one block that folds.** It names the tools and counts those without a result; what the model wrote before a call sits inside it, marked as not verified.
+
+### Fixed
+
+- **LLMs: the web chat can no longer run the math tools without their checks.** Its conversations go through the engine's agent, and a page in a browser no longer gets the math tools for a loop of its own.
+
+- **LLMs: a request without streaming stops when its client goes away**, also while other requests keep the engine busy and in router mode.
+
+- **LLMs: the math answers written by the engine follow the language of the conversation.**
+
+- **LLMs: a build can no longer ship an old copy of the math helpers.**
+
+- **LLMs: math written in LaTeX is checked like plain text.** A correct call is no longer refused for `\frac`, `\infty` or the limits of `\int`, and list numbers or digit counts in a request no longer count as data.
+
+- **LLMs: a numerical integral can go to infinity.** A call that puts a number such as 100 in place of infinity is refused instead of computed.
+
+- **LLMs: a math call refused once stays refused when the model repeats it.**
+
+- **LLMs: neither an API client nor the model can pass a math call off as checked.** The fields that carry your request to the tools are honoured only from Tosh itself.
+
+- **LLMs: what the model writes before a math call is dropped when the call gives no result.** An exact value written from memory no longer stays on screen after the call that should have computed it was refused.
+
+- **LLMs: a math turn keeps the results it already validated when a later call is refused.** The answer states them and says which parts could not be validated, instead of only saying that nothing could be.
+
+- **LLMs: after math tools, the answer only states numbers from your message or from a validated result.** An answer that adds others goes back to the model once and is otherwise replaced by the validated results, so it shows once it has been checked.
+
 ## [0.87.14] - 2026-10-02
 
 ### Added

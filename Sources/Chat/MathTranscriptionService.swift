@@ -16,14 +16,28 @@ enum MathTranscriptionService {
         SymPyToolsService.isTool(name) || ScientificToolsService.isTool(name)
     }
 
-    /// The last user message is the request; earlier user messages and tool results are context.
+    /// The last user message is the request; earlier user messages and the results of calls that
+    /// succeeded are context. A refused or failed call stays out, or its own numbers would vouch for it.
     static func source(messages: [ChatMessage]) -> [String: Any]? {
         guard let last = messages.lastIndex(where: { $0.role == "user" }) else { return nil }
+        let calls = Dictionary(messages.flatMap { $0.toolCalls ?? [] }.map { ($0.serverID ?? $0.id.uuidString, $0) },
+                               uniquingKeysWith: { first, _ in first })
         let earlier = messages.enumerated().compactMap { index, message -> String? in
-            guard index != last, message.role == "user" || message.role == "tool" else { return nil }
-            return message.role == "user" ? message.wireContent : message.content
+            guard index != last else { return nil }
+            if message.role == "user" { return message.wireContent }
+            guard message.role == "tool" else { return nil }
+            guard let call = message.toolCallID.flatMap({ calls[$0] }) else {
+                return reply(message.content)?["success"] as? Bool == true ? message.content : nil
+            }
+            let trusted = isMathTool(call.name) ? succeeded(call) : call.state == .completed
+            return trusted ? message.content : nil
         }.joined(separator: "\n")
         return ["request": messages[last].wireContent, "context": String(earlier.suffix(contextLimit))]
+    }
+
+    /// A math call that ran and gave a result; refused, failed and unfinished calls did not.
+    static func succeeded(_ call: ChatToolCall) -> Bool {
+        call.state == .completed && call.result.flatMap(reply)?["success"] as? Bool == true
     }
 
     static func execute(name: String, arguments: [String: Any], source: [String: Any]?, port: Int,
@@ -34,6 +48,7 @@ enum MathTranscriptionService {
                                                       workingDirectory: workingDirectory)
         }
         plain["_source"] = source
+        plain["_trust"] = SymPyToolsService.trustKey
         let first = try await ChatToolsService.execute(name: name, arguments: plain, port: port,
                                                        workingDirectory: workingDirectory)
         guard let reply = reply(first.content), errorCode(reply) == "needs_review" else { return first }

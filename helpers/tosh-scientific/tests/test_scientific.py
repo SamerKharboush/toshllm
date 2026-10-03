@@ -18,12 +18,16 @@ RUNTIME = os.path.abspath(sys.argv[1]) if len(sys.argv) > 1 else os.path.join(RO
 PYTHON = os.path.join(RUNTIME, "python", "bin", "python3")
 
 
+# the key the app gives the helpers, so a test can vouch for a request the way the app does
+KEY = "test-trust-key"
+
+
 class Helper:
     def __init__(self, toolset="scientific", **environment):
         self.process = subprocess.Popen(
             [PYTHON, "-I", "-B", os.path.join(RUNTIME, "tosh_sympy", "server.py"), toolset],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True,
-            env={key: str(value) for key, value in environment.items()})
+            env={"TOSH_TRUST_KEY": KEY, **{key: str(value) for key, value in environment.items()}})
         self.next_id = 0
         self.rpc("initialize", {"protocolVersion": "2024-11-05", "capabilities": {}})
 
@@ -565,7 +569,7 @@ def test_a_call_that_cannot_mean_what_it_says_is_refused(h):
 
 def test_a_call_that_does_not_say_what_the_request_says_is_not_run(h):
     def ask(text, tool, operation, **arguments):
-        return h.call(tool, operation, _source={"request": text}, **arguments)
+        return h.call(tool, operation, _trust=KEY, _source={"request": text}, **arguments)
 
     def refused(reply):
         return reply["success"] is False and reply["error"]["code"] == "transcription_mismatch" and reply["interpreted_input"]
@@ -603,6 +607,43 @@ def test_a_call_that_does_not_say_what_the_request_says_is_not_run(h):
     assert refused(ask(text, "linalg", "solve", matrix=rows[:2], other=[1.0, 2.0]))
     reply = ask(text, "linalg", "solve", matrix=rows, other=[1.0, 2.0, 3.0])
     assert reply["success"] and any(line.startswith("matrix: 3 x 3") for line in reply["interpreted_input"]), reply
+
+
+REPORTED = r"""Calcula exactamente
+\[
+I=\int_{0}^{\infty}\frac{x^3}{e^x-1}\,dx
+\]
+Después:
+1. expresa el resultado en forma exacta;
+2. dame su valor decimal con 10 cifras decimales;
+3. verifica el resultado mediante integración numérica independiente;
+4. indica el error absoluto entre el valor exacto evaluado numéricamente y la integración numérica.
+Usa las herramientas matemáticas/científicas disponibles cuando corresponda. No hagas el cálculo solo de memoria."""
+
+
+def test_an_improper_integral_written_in_latex(h):
+    def ask(context="", **bounds):
+        return h.call("compute", "integrate", _trust=KEY, _source={"request": REPORTED, "context": context},
+                      expression="x**3/(exp(x)-1)", variable="x", **bounds)
+
+    for upper in ("oo", "inf"):
+        reply = ask(lower=0, upper=upper)
+        assert reply["success"] and abs(reply["value"] - math.pi ** 4 / 15) <= max(reply["error_estimate"], 1e-9), reply
+        assert "limits: [0, +oo)" in reply["interpreted_input"] and not reply["warnings"], reply
+    first = ask(lower=0, upper=100)
+    assert first["error"]["code"] == "transcription_mismatch", first
+    assert "goes to infinity" in first["reasons"][0] and not any("combine" in r or "has 2" in r for r in first["reasons"]), first
+    # the same call again stays refused, also if its own refusal were taken for context
+    assert ask(lower=0, upper=100)["error"]["code"] == "transcription_mismatch"
+    assert ask(context=json.dumps(first), lower=0, upper=100)["error"]["code"] == "transcription_mismatch"
+    assert near(h.call("compute", "integrate", expression="exp(x)", lower="-oo", upper=0)["value"], 1.0)
+
+
+def test_infinite_limits_are_in_the_definition(h):
+    compute = next(t for t in h.rpc("tools/list")["result"]["tools"] if t["name"] == "compute")
+    for key in ("lower", "upper"):
+        bound = compute["inputSchema"]["properties"][key]
+        assert set(bound["type"]) == {"number", "string"} and '"oo"' in bound["description"], bound
 
 
 def main():

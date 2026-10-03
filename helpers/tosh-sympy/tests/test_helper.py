@@ -18,12 +18,16 @@ RUNTIME = os.path.abspath(sys.argv[1]) if len(sys.argv) > 1 else os.path.join(RO
 PYTHON = os.path.join(RUNTIME, "python", "bin", "python3")
 
 
+# the key the app gives the helpers, so a test can vouch for a request the way the app does
+KEY = "test-trust-key"
+
+
 class Helper:
     def __init__(self, **environment):
         self.process = subprocess.Popen(
             [PYTHON, "-I", "-B", os.path.join(RUNTIME, "tosh_sympy", "server.py")],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True,
-            env={key: str(value) for key, value in environment.items()})
+            env={"TOSH_TRUST_KEY": KEY, **{key: str(value) for key, value in environment.items()}})
         self.next_id = 0
         self.rpc("initialize", {"protocolVersion": "2024-11-05", "capabilities": {}})
 
@@ -435,7 +439,7 @@ def test_the_check_knows_every_name_of_the_grammar(_):
 
 def test_a_call_that_does_not_say_what_the_request_says_is_not_run(h):
     def ask(text, tool, **arguments):
-        return h.call(tool, _source={"request": text}, **arguments)
+        return h.call(tool, _trust=KEY, _source={"request": text}, **arguments)
 
     def refused(reply):
         return reply["success"] is False and reply["error"]["code"] == "transcription_mismatch" and reply["interpreted_input"]
@@ -462,10 +466,81 @@ def test_a_call_that_does_not_say_what_the_request_says_is_not_run(h):
     text = "The sum of two numbers is 9 and their product is 20. What are they?"
     reply = ask(text, "solve", operation="solve", equations=["x + y = 9", "x*y = 20"])
     assert reply["error"]["code"] == "needs_review" and reply["reasons"], reply
-    reply = h.call("solve", _source={"request": text}, _reviewed="consistent", operation="solve", equations=["x + y = 9", "x*y = 20"])
+    reply = h.call("solve", _trust=KEY, _source={"request": text}, _reviewed="consistent", operation="solve", equations=["x + y = 9", "x*y = 20"])
     assert reply["success"], reply
     # without the request, as from another client, the call runs as before
     assert h.call("expression", operation="factor", expression="x**2 - 5*x + 6")["exact"] == "(x - 3)*(x - 2)"
+
+
+def _check(text, operation, **arguments):
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from tosh_sympy import anchor
+    return anchor.check(text, "", operation, arguments)
+
+
+def test_latex_requests_are_read_as_math(_):
+    text = r"Simplifica \[ \frac{\frac{1}{x} + 1}{x^{2} - 1} \]"
+    assert _check(text, "simplify", expression="(1/x + 1)/(x**2 - 1)")[0] == "consistent"
+    assert _check(text, "simplify", expression="(1/x + 1)/(x**2 + 1)")[0] == "inconsistent"
+    assert _check(text, "simplify", expression="1/x + 1")[0] == "inconsistent"
+    text = r"Factoriza $x^{3} - 2 \cdot x^{2} + x$"
+    assert _check(text, "factor", expression="x**3 - 2*x**2 + x")[0] == "consistent"
+    assert _check(text, "factor", expression="x**3 - 2*x + x")[0] == "inconsistent"
+    text = r"Calcula \(\int_{-\infty}^{0} e^{2x}\,dx\)"
+    assert _check(text, "integrate", expression="exp(2*x)", lower="-oo", upper="0")[0] == "consistent"
+    status, reasons = _check(text, "integrate", expression="exp(2*x)", lower="-100", upper="0")
+    assert status == "inconsistent" and "goes to infinity" in reasons[0], reasons
+    text = r"Evalúa \int_0^1 \frac{\ln(1+x)}{1+x^{2}} \mathrm{d}x"
+    assert _check(text, "integrate", expression="log(1+x)/(1+x**2)", lower="0", upper="1")[0] == "consistent"
+    assert _check(text, "integrate", expression="log(1+x)/(1+x**2)", lower="0", upper="2")[0] == "inconsistent"
+    assert _check(text, "integrate", expression="log(1+x)", lower="0", upper="1")[0] == "inconsistent"
+    text = r"Suma \sum_{n=1}^{\infty} \frac{1}{n^{2}}"
+    assert _check(text, "summation", expression="1/n**2", variable="n", lower="1", upper="oo")[0] == "consistent"
+    assert _check(text, "summation", expression="1/n**2", variable="n", lower="1", upper="100")[0] == "inconsistent"
+    text = r"Halla \lim_{x \to 0} \frac{\sin(x)}{x}"
+    assert _check(text, "limit", expression="sin(x)/x", variable="x", point="0")[0] == "consistent"
+    assert _check(text, "limit", expression="sin(x)", variable="x", point="0")[0] == "inconsistent"
+    text = r"Calcula \sqrt{x^{2} + 1} \times \left( x - 1 \right) en x = 2"
+    assert _check(text, "evaluate", expression="sqrt(x**2 + 1)*(x - 1)", at={"x": 2})[0] == "consistent"
+
+
+def test_a_word_elsewhere_does_not_set_the_operator(_):
+    status, reasons = _check("Take x^3 and e^x - 1.\nIndica el error absoluto del resultado.", "simplify",
+                             expression="x**3/(exp(x)-1)")
+    assert status == "uncertain", (status, reasons)
+    assert _check("What is the difference between x^3 and e^x - 1?", "simplify",
+                  expression="x**3/(exp(x)-1)")[0] == "inconsistent"
+    assert _check("What is the error of approximating e by 2.718?", "evaluate", expression="E - 2.718")[0] == "consistent"
+    assert _check("What is the error of approximating e by 2.718?", "evaluate", expression="E/2.718")[0] != "consistent"
+
+
+def test_format_numbers_are_not_data(_):
+    text = ("Integrate x^2 from 0 to 1.\n1. Give the exact value.\n2. Give it to 10 decimal places.\n"
+            "3. Check it within 1e-9 tolerance.")
+    assert _check(text, "integrate", expression="x**2", lower="0", upper="1") == ("consistent", [])
+    status, reasons = _check(text, "integrate", expression="x**2", lower="0", upper="3")
+    assert status == "inconsistent" and not any("has 2" in r or "has 10" in r for r in reasons), reasons
+    status, reasons = _check("Calcula la integral de x^2 from 0 to 1 con 10 cifras decimales.", "integrate",
+                             expression="x**2", lower="0", upper="10")
+    assert status == "inconsistent" and "the call goes from 0 to 10" in reasons[0], reasons
+    # a tolerance is not data the call must use, but a call may still use it
+    assert _check("Integrate x^2 from 0 to 1 with a tolerance of 0.001.", "integrate",
+                  expression="x**2", lower="0", upper="1") == ("consistent", [])
+
+
+def test_a_client_cannot_vouch_for_its_own_call(h):
+    text = "Factor x^2 + 5x + 6."
+    # without the key the fields are dropped: the call runs as a plain call, and says so
+    for extra in ({}, {"_trust": "guess"}, {"_trust": ""}):
+        reply = h.call("expression", _source={"request": text}, _reviewed="consistent", operation="factor",
+                       expression="x**2 - 5*x + 6", **extra)
+        assert reply["success"] and any("reserved" in w for w in reply["warnings"]), reply
+    reply = h.call("expression", _trust=KEY, _source={"request": text}, operation="factor", expression="x**2 - 5*x + 6")
+    assert reply["error"]["code"] == "transcription_mismatch", reply
+    # a forged review never passes a call the request does not support
+    reply = h.call("solve", _trust="guess", _reviewed="consistent", _source={"request": "Solve x + y = 9."},
+                   operation="solve", equations=["x + y = 9", "x*y = 20"])
+    assert reply["success"] and any("reserved" in w for w in reply["warnings"]), reply
 
 
 def test_calls_in_the_shapes_models_use(h):

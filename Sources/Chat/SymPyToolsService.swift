@@ -26,26 +26,39 @@ enum SymPyToolsService {
         return directory
     }
 
+    /// Lets the helpers tell the app's own provenance fields from ones a client or a model wrote.
+    /// New on every launch, and only the app and the helpers it starts know it.
+    static let trustKey = UUID().uuidString + UUID().uuidString
+
+    static let agentName = "agent"
+
     /// One MCP server per tool set that is switched on. Both run the same helper from the
-    /// same runtime, the scientific one with its name as an argument.
-    static func serverArguments(enabled: Bool, scientific: Bool = false,
+    /// same runtime, the scientific one with its name as an argument. A third is the engine's
+    /// agent, which the chat asks for by header; with `agent` it also answers API clients that
+    /// do not ask, which otherwise get the model as it is.
+    static func serverArguments(enabled: Bool, scientific: Bool = false, agent: Bool = false,
                                 resources: URL? = Bundle.main.resourceURL) -> [String] {
         guard enabled || scientific, let runtime = runtimeDirectory(resources: resources) else { return [] }
         let python = runtime.appendingPathComponent("python/bin/python3").path
         let helper = runtime.appendingPathComponent("tosh_sympy/server.py").path
         var servers: [String: Any] = [:]
         if enabled {
-            servers[serverName] = ["command": python, "args": ["-I", "-B", helper], "timeout_ms": 30_000]
+            servers[serverName] = ["command": python, "args": ["-I", "-B", helper], "timeout_ms": 30_000,
+                                   "env": ["TOSH_TRUST_KEY": trustKey]]
         }
         if scientific {
             servers[ScientificToolsService.serverName] = [
                 "command": python, "args": ["-I", "-B", helper, ScientificToolsService.serverName],
-                "timeout_ms": 30_000,
+                "timeout_ms": 30_000, "env": ["TOSH_TRUST_KEY": trustKey],
             ]
         }
+        // a turn can take minutes: it runs every round and tool call of the answer
+        servers[agentName] = ["command": python, "args": ["-I", "-B", helper, agentName],
+                              "timeout_ms": 900_000, "env": ["TOSH_TRUST_KEY": trustKey]]
         guard let data = try? JSONSerialization.data(withJSONObject: ["mcpServers": servers],
                                                      options: [.sortedKeys]) else { return [] }
-        return ["--mcp-servers-json", String(decoding: data, as: UTF8.self)]
+        return ["--mcp-servers-json", String(decoding: data, as: UTF8.self), "--mcp-agent", agentName]
+            + (agent ? [] : ["--mcp-agent-explicit"])
     }
 
     /// What the call was asked to work on, for the tool card.

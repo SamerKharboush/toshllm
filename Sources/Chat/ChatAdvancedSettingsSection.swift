@@ -15,6 +15,8 @@ struct ChatAdvancedSettingsSection: View {
     @AppStorage(SettingsKeys.jsSandboxEnabled) private var jsSandboxEnabled = false
     @AppStorage(SettingsKeys.sympyEnabled) private var sympyEnabled = false
     @AppStorage(SettingsKeys.scientificEnabled) private var scientificEnabled = false
+    @AppStorage(SettingsKeys.mathAgentEnabled) private var mathAgentEnabled = false
+    @AppStorage(SettingsKeys.mathToolsAllowed) private var mathToolsAllowed = true
     @AppStorage(SettingsKeys.memoryToolsEnabled) private var memoryToolsEnabled = true
     @AppStorage(SettingsKeys.toolResultLimit) private var toolResultLimit = ToolResultLimit.defaultCharacters
     @State private var blockedToolModels: [String] = ToolSupport.blockedModels
@@ -265,6 +267,20 @@ struct ChatAdvancedSettingsSection: View {
                                                 "Adds numerical tools: linear algebra, integration, optimization, curve fitting, FFT and filters, differential equations and statistics. It ships inside the app, runs no code from the model and neither reads nor writes files. Off, it uses nothing; on, the libraries load only when used and compute on a single thread so the model is not slowed down. Applies when the server restarts.")) {
                             SettingsToggle(isOn: $scientificEnabled)
                         }
+                        if sympyEnabled || scientificEnabled {
+                            SettingsRow(icon: "checkmark.shield",
+                                        title: loc.t("Usar las herramientas matemáticas sin preguntar", "Use the math tools without asking"),
+                                        help: loc.t("Las herramientas matemáticas solo calculan: no leen ni escriben archivos ni ejecutan comandos. Así el agente de Tosh en el motor lleva estos turnos con todas sus comprobaciones. Apagado, el chat pide permiso en cada llamada y lleva el turno él mismo, con las mismas reglas. No cambia los permisos de ninguna otra herramienta.",
+                                                    "The math tools only compute: they neither read nor write files nor run commands. This way the Tosh agent in the engine runs these turns with all its checks. Off, the chat asks before each call and runs the turn itself, with the same rules. It does not change the permissions of any other tool.")) {
+                                SettingsToggle(isOn: $mathToolsAllowed)
+                            }
+                            SettingsRow(icon: "server.rack",
+                                        title: loc.t("Responder con las herramientas por la API", "Answer with the tools over the API"),
+                                        help: loc.t("El agente de Tosh, el mismo que usan este chat y el chat web, responde también a los clientes de /v1/chat/completions que no lo piden con la cabecera X-Tosh-Agent: on, también en remoto y sin la app. Las peticiones que traen herramientas propias (VS Code, agentes) o X-Tosh-Agent: off siguen yendo al modelo tal cual. Se aplica al reiniciar el servidor.",
+                                                    "The Tosh agent, the one this chat and the web chat use, also answers /v1/chat/completions clients that do not ask for it with the X-Tosh-Agent: on header, also remotely and without the app. Requests that bring tools of their own (VS Code, agents) or X-Tosh-Agent: off still go to the model as they are. Applies when the server restarts.")) {
+                                SettingsToggle(isOn: $mathAgentEnabled)
+                            }
+                        }
                     }
                     integerStepper(loc.t("Turnos máximos del agente", "Maximum agent turns"),
                                    value: $agenticMaxTurns, range: 1...100,
@@ -477,7 +493,7 @@ struct ChatAdvancedSettingsSection: View {
         backendSampling = false; customJSON = ""; agenticMaxTurns = 10; pasteLongTextLength = 2500
         maxImageMegapixels = 1; pdfAsImages = false
         autoCompact = true; smoothTyping = true; agentToolsEnabled = false; jsSandboxEnabled = false
-        sympyEnabled = false; scientificEnabled = false
+        sympyEnabled = false; scientificEnabled = false; mathAgentEnabled = false; mathToolsAllowed = true
         memoryToolsEnabled = true; toolsRuntime = ""; toolResultLimit = ToolResultLimit.defaultCharacters
         archiveHookURL = ""; archiveHookSecret = ""
     }

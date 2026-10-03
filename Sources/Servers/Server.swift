@@ -52,6 +52,8 @@ struct ServerSettings {
     var agentToolsEnabled: Bool = false
     var sympyEnabled: Bool = false
     var scientificEnabled: Bool = false
+    /// API clients that do not ask for the engine's agent get it too.
+    var mathAgentEnabled: Bool = false
     var uiMcpProxy: Bool = false
     /// `--tools-runtime` target (`docker:image`, `podman:image`, `ssh:host`...). Empty
     /// runs the tools in the app's own environment, which is the engine default.
@@ -340,7 +342,8 @@ struct ServerSettings {
             args += ["--tools", "all"]
             if !toolsRuntime.isEmpty { args += ["--tools-runtime", toolsRuntime] }
         }
-        let sympyArguments = SymPyToolsService.serverArguments(enabled: sympyEnabled, scientific: scientificEnabled)
+        let sympyArguments = SymPyToolsService.serverArguments(enabled: sympyEnabled, scientific: scientificEnabled,
+                                                                agent: mathAgentEnabled)
         if !sympyArguments.isEmpty {
             if !args.contains("--jinja") { args.append("--jinja") }
             args += sympyArguments
@@ -411,7 +414,8 @@ struct ServerSettings {
             args += ["--jinja", "--tools", "all"]
             if !toolsRuntime.isEmpty { args += ["--tools-runtime", toolsRuntime] }
         }
-        let sympyArguments = SymPyToolsService.serverArguments(enabled: sympyEnabled, scientific: scientificEnabled)
+        let sympyArguments = SymPyToolsService.serverArguments(enabled: sympyEnabled, scientific: scientificEnabled,
+                                                                agent: mathAgentEnabled)
         if !sympyArguments.isEmpty {
             if !args.contains("--jinja") { args.append("--jinja") }
             args += sympyArguments
@@ -832,6 +836,7 @@ struct ServerSettings {
             agentToolsEnabled: bool(SettingsKeys.agentToolsEnabled, false),
             sympyEnabled: bool(SettingsKeys.sympyEnabled, false),
             scientificEnabled: bool(SettingsKeys.scientificEnabled, false),
+            mathAgentEnabled: bool(SettingsKeys.mathAgentEnabled, false),
             uiMcpProxy: bool(SettingsKeys.uiMcpProxy, false),
             toolsRuntime: (d.string(forKey: SettingsKeys.toolsRuntime) ?? "")
                 .trimmingCharacters(in: .whitespaces),
@@ -1885,7 +1890,7 @@ final class ServerController: ObservableObject {
         func redact(_ items: [String]) -> [String] {
             var out = items
             if let i = out.firstIndex(of: "--api-key"), i + 1 < out.count { out[i + 1] = "***" }
-            return out
+            return out.map { $0.replacingOccurrences(of: SymPyToolsService.trustKey, with: "***") }
         }
         let engine: String
         engine = settings.serverBinary == ServerSettings.defaultBinary ? "bundled (official)" : "external"
@@ -1937,6 +1942,7 @@ final class ServerController: ObservableObject {
 
     private func launch(_ settings: ServerSettings) {
         guard state == .starting else { return }   // user hit Stop meanwhile
+        ChatStore.serverAgentMissing = false
 
         if settings.routerMode {
             let models = LocalModel.scan(in: ServerSettings.modelsDirectory)

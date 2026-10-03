@@ -44,6 +44,7 @@ jobs:
           ./scripts/build-sympy.sh
           vendor/tosh-sympy/python/bin/python3 -I helpers/tosh-sympy/tests/test_helper.py
           vendor/tosh-sympy/python/bin/python3 -I helpers/tosh-scientific/tests/test_scientific.py
+          vendor/tosh-sympy/python/bin/python3 -I helpers/tosh-sympy/tests/test_agent.py
 
   build:
     # PRs validate a single variant; tags and manual runs build BOTH CPU variants
@@ -101,6 +102,7 @@ jobs:
             "$PY" -I -c "import sympy, numpy, scipy.fft, scipy.signal, scipy.integrate, scipy.optimize, scipy.interpolate, scipy.stats, scipy.linalg"
             "$PY" -I helpers/tosh-sympy/tests/test_helper.py
             "$PY" -I helpers/tosh-scientific/tests/test_scientific.py
+            "$PY" -I helpers/tosh-sympy/tests/test_agent.py
           else
             echo "x86_64 runtime cannot run on this runner; its tests ran in the unit test job"
           fi
