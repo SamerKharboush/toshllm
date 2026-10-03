@@ -14,11 +14,18 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
   switches stay in the build scripts, unused, in case that changes.
 - Notarization is deferred to a future rebrand. The CI pipeline is already wired and skips cleanly
   when the credentials are absent, so enabling it later is a matter of adding them.
+- The LAN fix is confirmed from a second physical machine, not only from a second IP on the build
+  host.
 
 ### Fixed
 
-- The LAN fix is confirmed from a second physical machine, not only from a second IP on the build
-  host.
+- Three launch-environment tests were asserting against hardware the test machine does not have,
+  so they had never passed here. They now state the topology they mean and cover the unbridged
+  case that had no coverage. 319 tests, 1 skipped, 0 failures.
+- The Metal memset regression test now reproduces the shape the DSV4 KV cache actually uses — one
+  tensor holding several streams, cleared one at a time at a non-zero offset. On the pre-fix engine
+  it fails: clearing stream 1 overfills into stream 2. That closes the A/B for the range fix at the
+  level the bug lives, without needing an 82.5 GB DSV4 model.
 
 ## [0.87.14-beta.3] - 2026-10-03
 

@@ -15,9 +15,10 @@ diff --git a/tests/CMakeLists.txt b/tests/CMakeLists.txt
      target_include_directories(test-tosh-moe-cache PRIVATE ../tosh-moe)
 diff --git a/tests/test-metal-memset.cpp b/tests/test-metal-memset.cpp
 new file mode 100644
+index 000000000..4cde5450f
 --- /dev/null
 +++ b/tests/test-metal-memset.cpp
-@@ -0,0 +1,119 @@
+@@ -0,0 +1,215 @@
 +// Fills a sub-range of a backend buffer and checks the bytes outside it.
 +//
 +// The Metal path built the fill range with NSMakeRange(offs, offs + size). NSRange is
@@ -108,6 +109,99 @@ new file mode 100644
 +    ggml_free(ctx);
 +}
 +
++// The shape DSV4 actually produces. `dsv4_clear_tensor_stream` clears one stream of a
++// KV tensor with `memset(tensor, 0, stream*stream_size, stream_size)`, so consecutive
++// streams sit next to each other in one buffer. With the pre-fix `NSMakeRange(offs,
++// offs + size)` the fill ran `offs` bytes past the region, which for stream n lands at
++// the head of stream n+1 -- so clearing one stream silently zeroes the next one's cache.
++//
++// The single-tensor test above catches the overrun as guard bytes inside one tensor.
++// This one catches it as a neighbour being damaged, which is what a user would see.
++static void test_adjacent_streams(ggml_backend_t backend) {
++    const int n_streams = 8;
++    const size_t stream_size = 512;
++    const size_t nbytes = (size_t) n_streams * stream_size;
++
++    printf("adjacent streams: %d x %zu bytes in one buffer\n", n_streams, stream_size);
++
++    struct ggml_init_params params = {
++        /*.mem_size   =*/ ggml_tensor_overhead()*(n_streams + 1),
++        /*.mem_buffer =*/ NULL,
++        /*.no_alloc   =*/ true,
++    };
++    struct ggml_context * ctx = ggml_init(params);
++
++    // Allocated together, so the buffer lays them out contiguously like the real KV cache.
++    struct ggml_tensor * t[8];
++    for (int i = 0; i < n_streams; i++) {
++        t[i] = ggml_new_tensor_1d(ctx, GGML_TYPE_I8, (int64_t) stream_size);
++        char name[32];
++        snprintf(name, sizeof(name), "stream_%d", i);
++        ggml_set_name(t[i], name);
++    }
++
++    ggml_backend_buffer_t buf = ggml_backend_alloc_ctx_tensors(ctx, backend);
++    check(buf != NULL, "buffer allocated");
++    if (buf == NULL) { ggml_free(ctx); return; }
++
++    const uint8_t seed = 0xA5;
++
++    // One KV tensor holding every stream, as the real cache does. `dsv4_clear_tensor_stream`
++    // clears stream n with `memset(tensor, 0, n*stream_size, stream_size)`, so the offset is
++    // non-zero and the pre-fix fill ran n*stream_size bytes past the region.
++    struct ggml_tensor * kv = ggml_new_tensor_1d(ctx, GGML_TYPE_I8, (int64_t) nbytes);
++    ggml_set_name(kv, "kv_streams");
++    ggml_backend_buffer_free(buf);
++    buf = ggml_backend_alloc_ctx_tensors(ctx, backend);
++    if (buf == NULL) { check(false, "buffer re-allocated for the single KV tensor"); ggml_free(ctx); return; }
++
++    // A non-zero byte everywhere, so a zeroed byte is attributable to the memset. Clearing
++    // every stream instead would hide the bug: overfilled regions get zeroed twice anyway.
++    std::vector<uint8_t> pat(nbytes, seed);
++    for (size_t k = 0; k < nbytes; k++) {
++        pat[k] = (uint8_t) (0x10 + (k % 0x60));   // 0x10..0x6F, never 0x00
++    }
++    ggml_backend_tensor_set(kv, pat.data(), 0, nbytes);
++
++    // Clear one middle stream. Stream 0 has offset 0 and is unaffected either way, which is
++    // why this bug only shows from stream 1 on. Stream 1 is where the arithmetic is smallest
++    // and clearest: offs = 512, so pre-fix the fill ran to 512 + 512 + 512 = 1536 and took
++    // all of stream 2 with it.
++    const int target = 1;
++    ggml_backend_tensor_memset(kv, 0x00, (size_t) target * stream_size, stream_size);
++    ggml_backend_synchronize(backend);
++
++    std::vector<uint8_t> out(nbytes, 0);
++    ggml_backend_tensor_get(kv, out.data(), 0, nbytes);
++
++    size_t not_zero = 0;
++    for (size_t k = 0; k < stream_size; k++) {
++        if (out[(size_t) target * stream_size + k] != 0x00) not_zero++;
++    }
++
++    // Every byte outside the target stream must still hold what was written before. Pre-fix,
++    // stream 2 comes back entirely zero.
++    int streams_damaged = 0;
++    for (int n = 0; n < n_streams; n++) {
++        if (n == target) continue;
++        for (size_t k = 0; k < stream_size; k++) {
++            uint8_t want = (uint8_t) (0x10 + ((size_t) n * stream_size + k) % 0x60);
++            if (out[(size_t) n * stream_size + k] != want) { streams_damaged++; break; }
++        }
++    }
++
++    char msg[160];
++    snprintf(msg, sizeof(msg), "the cleared stream is zero (%zu bytes not zero)", not_zero);
++    check(not_zero == 0, msg);
++    snprintf(msg, sizeof(msg),
++             "clearing stream %d left the other %d alone (%d damaged)",
++             target, n_streams - 1, streams_damaged);
++    check(streams_damaged == 0, msg);
++
++    ggml_backend_buffer_free(buf);
++    ggml_free(ctx);
++}
++
 +int main(int argc, char ** argv) {
 +    const char * backend_name = argc > 1 ? argv[1] : "MTL0";
 +
@@ -127,6 +221,9 @@ new file mode 100644
 +    test_one(backend, 4096, 4000,   16, 0x11);
 +    // Fills the tail exactly: nothing after it, so only a short size is caught.
 +    test_one(backend, 4096, 2048, 2048, 0x7E);
++
++    // The production shape: consecutive streams of a KV tensor in one buffer.
++    test_adjacent_streams(backend);
 +
 +    ggml_backend_free(backend);
 +

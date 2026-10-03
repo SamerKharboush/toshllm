@@ -96,9 +96,12 @@ Firellama runs the biggest models this Mac Pro can hold at the fastest tok/s it 
   beta.3.
 - **arm64 is out of scope by decision (2026-10-03).** The fork targets Intel x86_64 only. The
   `ARCH=universal` / `TOSH_ARCH=universal` machinery stays in the scripts, unused.
-- The `NSMakeRange` fix still has no end-to-end A/B. Reachability is now settled statically: only
-  `llama-kv-cache-dsv4.cpp:38` calls memset at a non-zero offset, so a DSV4 model on two engines is
-  the whole test. Details in `docs/agents/apple-silicon-handoff.md` T5.
+- **The `NSMakeRange` A/B is closed (2026-10-03).** `test-metal-memset` gained the DSV4 shape:
+  one KV tensor, 8 streams of 512 bytes, cleared one at a time at `n*stream_size`. Fixed engine:
+  0 streams damaged. Reverted engine: stream 1's overfill takes stream 2 with it, 4 checks fail.
+  Not run with a real DSV4 model — the smallest is 82.5 GB and the mechanism is already pinned at
+  one call site with a deterministic reproducer. Details in `docs/agents/apple-silicon-handoff.md`
+  T5.
 
 See `docs/agents/apple-silicon-handoff.md` for the full open-work list and the gates.
 

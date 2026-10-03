@@ -244,10 +244,10 @@ machine was sized as if it were single-card. That is fixed too.
 - A 27B Qwen3.5 model cannot be split by tensor: an internal SSM state tensor's width does
   not divide evenly. The engine now names the operation and the dimensions instead of failing
   a bare assertion. Its layer split, which is what that model uses, is unaffected.
-- The `NSMakeRange` fix has no end-to-end numerical A/B yet. Which caller can reach it is settled:
-  of the two callers in the tree, one always passes offset 0 where the bug is invisible, and only
-  `llama-kv-cache-dsv4.cpp:38` passes a non-zero offset. Closing it needs one DSV4 model run on the
-  fixed and unfixed engines and a diff of the two answers.
+- The `NSMakeRange` fix is verified on the production shape but not on a live DSV4 model. Of the
+  two callers of the memset in the tree, one always passes offset 0 where the bug is invisible, and
+  only `llama-kv-cache-dsv4.cpp:38` passes a non-zero offset. The regression test now reproduces
+  that shape and fails on the pre-fix engine, but no DSV4 model was run end to end.
 
 ## Install
 

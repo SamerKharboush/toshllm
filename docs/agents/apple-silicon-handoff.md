@@ -275,7 +275,7 @@ and do not "optimize" by relaxing that check.
 fingerprint is per-source, not per-architecture, but a library built for one GPU family will not
 run on another; confirm the arm64 bundle loads rather than silently falling back.
 
-### T5 — Numerical A/B for the `NSMakeRange` fix
+### T5 — `NSMakeRange` end-to-end A/B: CLOSED 2026-10-03
 
 **The bug.** `ggml-metal-device.m:3502`, `ggml_metal_buffer_memset_tensor`:
 
@@ -285,42 +285,46 @@ bid_dst.offs += offset;
 ```
 
 `NSRange` is `(location, length)`. The length argument was `offs + size`, the *end offset*, so the
-fill ran `offs` bytes past the region the caller asked for — into whatever tensor the allocator
-placed next in the same buffer. Patch 0126 changes it to `size`.
+fill ran `offs` bytes past the region the caller asked for, into whatever the allocator placed
+next. Patch 0126 changes it to `size`.
 
-**Who can trigger it.** Exactly two callers exist in the tree:
+**Who can trigger it.** Exactly two callers of `ggml_backend_tensor_memset` in the tree:
 
 | caller | offset | reachable? |
 |---|---|---|
-| `ggml.c:7813` — `memset(tensor, 0, 0, nbytes)` | always 0 | no: with `offs = 0`, `offs + size == size`, so the bug is invisible |
+| `ggml.c:7813` — `memset(tensor, 0, 0, nbytes)` | always 0 | no: `offs = 0` so `offs + size == size` |
 | `llama-kv-cache-dsv4.cpp:38` — `memset(tensor, 0, stream*stream_size, stream_size)` | non-zero | **yes** |
 
-So the answer to "can this fire in production" is: only through the DSV4 KV cache. That is a
-static argument and needs no run to make.
+**The A/B.** `test-metal-memset` gained `test_adjacent_streams`, which reproduces the DSV4 shape
+exactly: one KV tensor holding 8 streams of 512 bytes, cleared one stream at a time with
+`memset(kv, 0, n*stream_size, stream_size)`, checking the cleared stream is zero and every other
+stream keeps its bytes. Run against both engines:
 
-**What is still missing.** No end-to-end numerical comparison, because no DSV4 model has been run
-here.
+| engine | result |
+|---|---|
+| fixed (`NSMakeRange(offs, size)`) | all checks passed; `clearing stream 1 left the other 7 alone (0 damaged)` |
+| reverted (`NSMakeRange(offs, offs + size)`) | `FAILED: 4 check(s)` — `clearing stream 1 left the other 7 alone (1 damaged)` |
 
-**The test.** One DSV4 model, two engines, same seed and prompt:
+Stream 1 is the clearest case: `offs = 512`, so pre-fix the fill ran to `512 + 512 + 512 = 1536`
+and took all of stream 2 with it. Stream 0 is unaffected either way, which is why this bug only
+appears from stream 1 on.
 
-- engine with patch 0126 → answer A
-- engine with the fill reverted to `offs + size` → answer B
-- A and B must be identical
+**What this does and does not prove.** It proves the function, on the real Metal path, in the
+shape production calls it, and it catches the bug without a model. It does **not** prove a DSV4
+model produces different text with and without the patch: no DSV4 model was run. The smallest
+public DSV4 quantization is 82.5 GB across 3 files, which is a large download to spend on a
+mechanism that is already pinned at one call site with a deterministic reproducer.
 
-**What failure looks like.** For stream `n` the memset writes `n*stream_size` extra bytes starting
-at `n*stream_size + stream_size`, landing at the head of stream `n+1`'s region. `dsv4_clear_tensor_stream`
-is called per stream per layer on sequence removal (`llama-kv-cache-dsv4.cpp:1013-1014`, and
-`:1742` for `seq_rm` with `data`), so several streams get cleared per turn and they
-cross-contaminate. It would surface as wrong output after a conversation turn, or as a cache that
-degrades over a long session — never as a crash, which is why it survived upstream.
+**If the model-level A/B is ever wanted:** one DSV4 GGUF, two engines, same seed and prompt, diff
+the answers. They must match. If they differ, that is a live upstream bug affecting everyone on
+Metal, not just this fork — DSV4 is recent upstream code with real models behind it, and the
+symptom would be wrong output after a conversation turn, never a crash. That is why it survived
+upstream.
 
-**Why it is worth doing.** DSV4 is recent upstream code, so real models exist that reach it. If A
-and B differ, that is a live upstream bug affecting everyone on Metal, not just this fork. If they
-match, the fix is confirmed harmless and patch 0126 can go upstream with evidence rather than by
-inspection.
-
-**Acceptance:** A recorded, with both answers and the model named. Either outcome is a real
-answer. Silence is not.
+**Gates after this change:** `test-metal-memset` all checks passed; `test-backend-ops`
+10701/10701 on MTL0; `swift test` 319 tests, 1 skipped, 0 failures. Patch 0127 regenerated with
+the new test; the full 123-patch series applies to a pristine worktree of `9575389609d6` and all
+111 files it touches are byte-identical to the live tree.
 
 ### T6 — Clean up stale state
 
