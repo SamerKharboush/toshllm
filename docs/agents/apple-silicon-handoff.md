@@ -326,10 +326,8 @@ answer. Silence is not.
 
 Minor, but it misleads the next reader:
 
-- `.scratch/firellama-maxperf/map.md`, "Blocked" section, still says the app does not compile.
-  It does. Both errors were fixed in beta.2 work. Update it.
-- `.scratch/firellama-toolchain/`, `CLAUDE.md.firellama-skills` — untracked leftovers, safe to
-  delete.
+- **Done 2026-10-03.** The map's "Blocked" section no longer claims the app fails to compile; it
+  records that `swift build` is green and why `swift test` could not previously run.
 
 **Do not delete `patches/llama/0114-server-agent-clients-get-what-they-send.patch`.** It looks
 like a stray diagnostic file with a descriptive name and no number-series sibling, but it is
