@@ -3,6 +3,18 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Fixed
+
+- **LLMs: math in the chat no longer leaves blank space under its paragraph**, and resizing the window no longer makes that space grow.
+
+- **LLMs: a numbered list split by paragraphs keeps the numbers it was written with** instead of starting each part at 1.
+
+- **LLMs: formulas inside list items and numbers such as `$84$` render as math.** Prices such as `$10` stay as text.
+
+- **LLMs: a long formula or matrix on its own line renders as a formula** instead of its LaTeX source.
+
 ## [0.87.15] - 2026-10-03
 
 ### Added
