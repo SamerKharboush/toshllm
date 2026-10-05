@@ -3,6 +3,12 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Fixed
+
+- **LLMs: the FirePro D500 and D700 of a Mac Pro 6,1 can keep the AMD attention kernels when generating.** Those cards give a kernel 32 KB of local memory and the AMD one asked for about 34 KB, so it fell back to the generic kernels, which there are slower than turning flash attention off. A version with half the work groups now fits, and a kernel the driver refuses is no longer rebuilt on every token. Reported in [#12](https://github.com/engeldlgado/toshllm/issues/12).
+
 ## [0.87.16] - 2026-10-05
 
 ### Added
