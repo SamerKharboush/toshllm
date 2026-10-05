@@ -15,6 +15,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 - **LLMs: a long formula or matrix on its own line renders as a formula** instead of its LaTeX source.
 
+- **LLMs: a request with `tool_choice: "required"` always ends in a tool call.** The model could write a whole answer instead and run out of tokens; now it may write a short preamble at most, and `auto` is unchanged.
+
 ## [0.87.15] - 2026-10-03
 
 ### Added
