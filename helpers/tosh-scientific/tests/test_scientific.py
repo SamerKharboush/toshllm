@@ -463,7 +463,9 @@ def test_timeout_and_recovery(_):
     helper = Helper(TOSH_SYMPY_TIMEOUT_MS=400)
     try:
         started = time.monotonic()
-        reply = helper.call("linalg", "eigen", matrix={"random": [1000, 1000]})
+        # a Python callback per solver step over ~10^7 periods: seconds on any machine, unlike linear algebra
+        reply = helper.call("ode", "solve_ivp", equations=["dy/dt = cos(1000*t)"], initial_conditions={"y": 0},
+                            interval=[0, 100000])
         assert code(reply) == "timeout" and reply["timed_out"] is True and time.monotonic() - started < 8, reply
         assert helper.call("linalg", "determinant", matrix=[[1, 2], [3, 4]])["determinant"] == -2.0
         workers = helper.children()
