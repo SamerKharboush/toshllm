@@ -403,8 +403,10 @@ struct RichText: View {
                     else { known = false; break }
                     text.replaceSubrange(r, with: glyph)
                 }
+                // arithmetic stays for KaTeX: `|4/3 - x| \approx 0` as text reads as prose
                 guard known, text != body,
-                      text.range(of: #"^[\p{L}\p{N}\p{Sm}\p{So}\s.,;:+\-=<>()\[\]|/*!'…·]*$"#,
+                      !text.contains(where: { "+-*/=<>|^".contains($0) }),
+                      text.range(of: #"^[\p{L}\p{N}\p{Sm}\p{So}\s.,;:()\[\]!'…·]*$"#,
                                  options: .regularExpression) != nil
                 else { continue }
                 out.replaceSubrange(whole, with: text)
