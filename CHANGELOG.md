@@ -11,7 +11,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Improved
 
-- **LLMs: Qwen3.8-Flash-Next writes about 8% faster with MTP on Radeon Pro Vega II.** On one card of a Radeon Pro Vega II Duo with Dynamic MoE it writes prose at 31.1 tokens a second instead of 28.8, and code at 35.4 instead of 32.7.
+- **LLMs: Qwen3.8-Flash-Next writes faster on Radeon Pro Vega II.** On one card of a Radeon Pro Vega II Duo with Dynamic MoE and MTP, code goes from 32.7 to 36.2 tokens a second and prose from 28.8 to about 31; without MTP it gains about 1%.
 
 ### Fixed
 
