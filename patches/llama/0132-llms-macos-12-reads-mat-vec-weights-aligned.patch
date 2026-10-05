@@ -1,0 +1,29 @@
+diff --git a/ggml/src/ggml-metal/ggml-metal-device.m b/ggml/src/ggml-metal/ggml-metal-device.m
+--- a/ggml/src/ggml-metal/ggml-metal-device.m
++++ b/ggml/src/ggml-metal/ggml-metal-device.m
+@@ -1866,16 +1866,24 @@ ggml_metal_device_t ggml_metal_device_init(int device, int n_devices) {
+                              strstr(name, "Instinct MI60") != NULL);
+                         snprintf(how, sizeof(how), "name (no architecture before macOS 14)");
+                     }
+                     dev->props.needs_aligned_loads = is_wave64 && !tolerant;
+ 
++                    // the macOS 12 driver misreads unaligned mat-vec loads on RDNA too
++                    const bool monterey = [[NSProcessInfo processInfo] operatingSystemVersion].majorVersion < 13 &&
++                                          ![dev->mtl_device supportsFamily:MTLGPUFamilyApple1];
++                    if (monterey && !dev->props.needs_aligned_loads) {
++                        dev->props.needs_aligned_loads = true;
++                        snprintf(how, sizeof(how), "macOS 12");
++                    }
++
+                     const char * force = TOSH_ENV("TOSH_MV_ALIGN");
+                     if (force != NULL) {
+                         dev->props.needs_aligned_loads = atoi(force) != 0;
+                         snprintf(how, sizeof(how), "TOSH_MV_ALIGN=%s", force);
+                     }
+-                    if (is_wave64 || force != NULL) {
++                    if (is_wave64 || monterey || force != NULL) {
+                         fprintf(stderr, "ggml_metal: aligned mat-vec reads %s by %s "
+                                         "(override with TOSH_MV_ALIGN=1 or =0)\n",
+                                 dev->props.needs_aligned_loads ? "ON" : "off", how);
+                     }
+                 }
