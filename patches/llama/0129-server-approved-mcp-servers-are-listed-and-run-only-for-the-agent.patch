@@ -1,0 +1,247 @@
+diff --git a/common/arg.cpp b/common/arg.cpp
+--- a/common/arg.cpp
++++ b/common/arg.cpp
+@@ -3494,10 +3494,17 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
+         "experimental: with --mcp-agent, answer only requests that carry X-Tosh-Agent: on or come from a page in a browser; the rest stay raw inference (default: disabled)",
+         [](common_params & params) {
+             params.mcp_agent_explicit = true;
+         }
+     ).set_examples({LLAMA_EXAMPLE_SERVER}).set_env("LLAMA_ARG_MCP_AGENT_EXPLICIT"));
++    add_opt(common_arg(
++        {"--mcp-agent-only"}, "NAMES",
++        "experimental: with --mcp-agent, comma-separated MCP servers whose tools /tools lists and runs only for the agent (default: none)",
++        [](common_params & params, const std::string & value) {
++            params.mcp_agent_only = value;
++        }
++    ).set_examples({LLAMA_EXAMPLE_SERVER}).set_env("LLAMA_ARG_MCP_AGENT_ONLY"));
+     add_opt(common_arg(
+         {"-ag", "--agent"},
+         {"-no-ag", "--no-agent"},
+         "whether to enable CORS proxy and all built-in tools - do not enable in untrusted environments (default: disabled)\n"
+         "note: for security reasons, this will limit --cors-origins to localhost by default",
+diff --git a/common/common.h b/common/common.h
+--- a/common/common.h
++++ b/common/common.h
+@@ -684,10 +684,11 @@ struct common_params {
+     // MCP server configs (Cursor-compatible JSON)
+     std::string mcp_servers_config;   // path to JSON file with MCP server definitions
+     std::string mcp_servers_json;     // inline JSON with MCP server definitions
+     std::string mcp_agent;            // MCP server whose "run" tool answers chat completions that bring no tools
+     bool        mcp_agent_explicit = false; // the agent answers only requests with X-Tosh-Agent: on
++    std::string mcp_agent_only;       // comma-separated MCP servers whose tools only the agent may list and call
+ 
+     // router server configs
+     std::string models_dir    = "";     // directory containing models for the router server
+     std::string models_preset = "";     // directory containing model presets for the router server
+     int models_max = 4;                 // maximum number of models to load simultaneously
+diff --git a/tools/server/server-tools.cpp b/tools/server/server-tools.cpp
+--- a/tools/server/server-tools.cpp
++++ b/tools/server/server-tools.cpp
+@@ -1995,11 +1995,15 @@ static std::unique_ptr<server_tools_runtime> make_tools_runtime(const std::strin
+ }
+ 
+ void server_tools::setup(const std::vector<std::string> & enabled_tools,
+                          server_mcp & mcp_mgr,
+                          const std::string & tools_runtime,
+-                         const std::string & hidden_server) {
++                         const std::string & hidden_server,
++                         const std::set<std::string> & agent_only_servers,
++                         const std::string & agent_request_key) {
++    agent_only = agent_only_servers;
++    agent_key  = agent_request_key;
+     if (!tools_runtime.empty()) {
+         runtime = make_tools_runtime(tools_runtime);
+     }
+ 
+     if (!enabled_tools.empty()) {
+@@ -2068,17 +2072,30 @@ void server_tools::setup(const std::vector<std::string> & enabled_tools,
+     // browsers keep the whole list. Browsers mark every request with Sec-Fetch-Site or Origin.
+     auto from_browser = [](const server_http_req & req) {
+         return !get_header(req.headers, "sec-fetch-site").empty() || !get_header(req.headers, "origin").empty();
+     };
+ 
+-    handle_get = [this, from_browser](const server_http_req & req) -> server_http_res_ptr {
++    // Tools of an agent-only server are listed and run only for the agent, which proves itself with
++    // the key the engine handed it; any other client keeps the rest of the list.
++    auto hidden_from = [this](const server_http_req & req, const server_tool & tool) {
++        if (tool.type() != "mcp" || agent_only.empty()) {
++            return false;
++        }
++        const auto * mcp_tool = dynamic_cast<const server_mcp_tool *>(&tool);
++        if (mcp_tool == nullptr || agent_only.count(mcp_tool->server_name) == 0) {
++            return false;
++        }
++        return agent_key.empty() || get_header(req.headers, "x-tosh-agent-key") != agent_key;
++    };
++
++    handle_get = [this, from_browser, hidden_from](const server_http_req & req) -> server_http_res_ptr {
+         auto res = std::make_unique<server_http_res>();
+         try {
+             json result = json::array();
+             const bool browser = from_browser(req);
+             for (const auto & t : tools) {
+-                if (browser && t->type() == "mcp") {
++                if ((browser && t->type() == "mcp") || hidden_from(req, *t)) {
+                     continue;
+                 }
+                 result.push_back(t->to_json());
+             }
+             res->data = safe_json_to_str(result);
+@@ -2088,11 +2105,11 @@ void server_tools::setup(const std::vector<std::string> & enabled_tools,
+             res->data   = safe_json_to_str(format_error_response(e.what(), ERROR_TYPE_SERVER));
+         }
+         return res;
+     };
+ 
+-    handle_post = [this, from_browser](const server_http_req & req) -> server_http_res_ptr {
++    handle_post = [this, from_browser, hidden_from](const server_http_req & req) -> server_http_res_ptr {
+         auto res = std::make_unique<server_tools_res>();
+         try {
+             json body = json::parse(req.body);
+             std::string tool_name = body.at("tool").get<std::string>();
+             json params = body.value("params", json::object());
+@@ -2127,10 +2144,14 @@ void server_tools::setup(const std::vector<std::string> & enabled_tools,
+             if (!resp_type.empty()) {
+                 params["resp_type"] = resp_type;
+             }
+ 
+             server_tool & tool = find_tool(tools, tool_name, stream);
++            if (hidden_from(req, tool)) {
++                // the same answer as a tool that does not exist
++                throw std::invalid_argument(string_format("unknown tool \"%s\"", tool_name.c_str()));
++            }
+             if (from_browser(req) && tool.type() == "mcp") {
+                 res->status = 403;
+                 res->data   = safe_json_to_str(format_error_response(
+                     "MCP tools are not run for pages in a browser; use the Tosh agent", ERROR_TYPE_PERMISSION));
+                 return res;
+diff --git a/tools/server/server-tools.h b/tools/server/server-tools.h
+--- a/tools/server/server-tools.h
++++ b/tools/server/server-tools.h
+@@ -3,10 +3,12 @@
+ #include "server-common.h"
+ #include "server-http.h"
+ #include "server-queue.h"
+ #include "server-mcp.h"
+ 
++#include <set>
++
+ #include <atomic>
+ #include <functional>
+ #include <memory>
+ 
+ struct server_tool {
+@@ -41,14 +43,20 @@ struct server_tools {
+     std::atomic<int> res_id{0};
+ 
+     // set when --tools-runtime is configured; routes every tool call through an isolate
+     std::unique_ptr<server_tools_runtime> runtime;
+ 
++    // servers whose tools only the agent may list and call, and the key its requests carry
++    std::set<std::string> agent_only;
++    std::string           agent_key;
++
+     void setup(const std::vector<std::string> & enabled_tools,
+                server_mcp & mcp_mgr,
+                const std::string & tools_runtime,
+-               const std::string & hidden_server = "");
++               const std::string & hidden_server = "",
++               const std::set<std::string> & agent_only_servers = {},
++               const std::string & agent_request_key = "");
+ 
+     server_http_context::handler_t handle_get;
+     server_http_context::handler_t handle_post;
+ 
+     server_tools();
+diff --git a/tools/server/server.cpp b/tools/server/server.cpp
+--- a/tools/server/server.cpp
++++ b/tools/server/server.cpp
+@@ -16,10 +16,11 @@
+ #include <atomic>
+ #include <clocale>
+ #include <condition_variable>
+ #include <deque>
+ #include <mutex>
++#include <random>
+ #include <exception>
+ #include <signal.h>
+ #include <thread> // for std::thread::hardware_concurrency
+ 
+ #if defined(_WIN32)
+@@ -157,14 +158,25 @@ static server_http_res_ptr tosh_agent_refuse(const std::string & message) {
+     res->status = 400;
+     res->data = json{{"error", {{"message", message}, {"type", "invalid_request_error"}}}}.dump();
+     return res;
+ }
+ 
++// 256 bits from the system's generator
++static std::string tosh_agent_key() {
++    std::random_device rd;
++    std::string key;
++    for (int i = 0; i < 8; i++) {
++        key += string_format("%08x", (unsigned) rd());
++    }
++    return key;
++}
++
+ static server_http_context::handler_t tosh_agent_handler(server_http_context::handler_t raw,
+                                                          server_mcp & mcp_mgr,
+-                                                         const common_params & params) {
+-    return [raw, &mcp_mgr, &params](const server_http_req & req) -> server_http_res_ptr {
++                                                         const common_params & params,
++                                                         const std::string & agent_key) {
++    return [raw, &mcp_mgr, &params, agent_key](const server_http_req & req) -> server_http_res_ptr {
+         const std::string mode = tosh_header(req, "x-tosh-agent");
+         if (mode == "off" || mode == "raw") {
+             return raw(req);
+         }
+         const bool asked = mode == "on";
+@@ -190,11 +202,12 @@ static server_http_context::handler_t tosh_agent_handler(server_http_context::ha
+         if (host.empty() || host == "0.0.0.0" || host == "::") {
+             host = "127.0.0.1";
+         }
+         json args = {{"request", body},
+                      {"base_url", "http://" + host + ":" + std::to_string(params.port)},
+-                     {"api_key", params.api_keys.empty() ? "" : params.api_keys.front()}};
++                     {"api_key", params.api_keys.empty() ? "" : params.api_keys.front()},
++                     {"agent_key", agent_key}};
+         if (!body.value("stream", false)) {
+             auto res = std::make_unique<server_http_res>();
+             int status = 502;
+             json answer = tosh_agent_answer(mcp_mgr.call_tool(params.mcp_agent, "run", args, req.should_stop), status);
+             res->status = status;
+@@ -468,12 +481,14 @@ int llama_server(common_params & params, int argc, char ** argv) {
+     ctx_http.get ("/models",                   ex_wrapper(routes.get_models));
+     ctx_http.get ("/v1/models",                ex_wrapper(routes.get_models));
+     ctx_http.post("/completion",               ex_wrapper(routes.post_completions)); // legacy
+     ctx_http.post("/completions",              ex_wrapper(routes.post_completions));
+     ctx_http.post("/v1/completions",           ex_wrapper(routes.post_completions_oai));
++    // the agent shows this key to /tools for the servers only it may use; new on every start
++    const std::string agent_key = params.mcp_agent.empty() ? "" : tosh_agent_key();
+     // also without an agent, so that X-Tosh-Agent: on is refused instead of silently answered raw
+-    auto chat_completions = tosh_agent_handler(routes.post_chat_completions, mcp_mgr, params);
++    auto chat_completions = tosh_agent_handler(routes.post_chat_completions, mcp_mgr, params, agent_key);
+     ctx_http.post("/chat/completions",         ex_wrapper(chat_completions));
+     ctx_http.post("/v1/chat/completions",      ex_wrapper(chat_completions));
+     ctx_http.post("/v1/chat/completions/control", ex_wrapper(routes.post_control));
+     ctx_http.post("/v1/responses",             ex_wrapper(routes.post_responses_oai));
+     ctx_http.post("/responses",                ex_wrapper(routes.post_responses_oai));
+@@ -564,11 +579,17 @@ int llama_server(common_params & params, int argc, char ** argv) {
+         return 1;
+     }
+ 
+     if (!params.server_tools.empty() || !mcp_mgr.empty()) {
+         try {
+-            tools.setup(params.server_tools, mcp_mgr, params.server_tools_runtime, params.mcp_agent);
++            std::set<std::string> agent_only;
++            for (const auto & name : string_split<std::string>(params.mcp_agent_only, ',')) {
++                if (!name.empty()) {
++                    agent_only.insert(name);
++                }
++            }
++            tools.setup(params.server_tools, mcp_mgr, params.server_tools_runtime, params.mcp_agent, agent_only, agent_key);
+         } catch (const std::exception & e) {
+             SRV_ERR("tools setup failed: %s\n", e.what());
+             return 1;
+         }
+         ctx_http.get ("/tools",           ex_wrapper(tools.handle_get));

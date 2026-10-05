@@ -343,7 +343,7 @@ struct ServerSettings {
             if !toolsRuntime.isEmpty { args += ["--tools-runtime", toolsRuntime] }
         }
         let sympyArguments = SymPyToolsService.serverArguments(enabled: sympyEnabled, scientific: scientificEnabled,
-                                                                agent: mathAgentEnabled)
+                                                                agent: mathAgentEnabled, shared: MCPServerStore.load())
         if !sympyArguments.isEmpty {
             if !args.contains("--jinja") { args.append("--jinja") }
             args += sympyArguments
@@ -415,7 +415,7 @@ struct ServerSettings {
             if !toolsRuntime.isEmpty { args += ["--tools-runtime", toolsRuntime] }
         }
         let sympyArguments = SymPyToolsService.serverArguments(enabled: sympyEnabled, scientific: scientificEnabled,
-                                                                agent: mathAgentEnabled)
+                                                                agent: mathAgentEnabled, shared: MCPServerStore.load())
         if !sympyArguments.isEmpty {
             if !args.contains("--jinja") { args.append("--jinja") }
             args += sympyArguments

@@ -37,11 +37,14 @@ enum SymPyToolsService {
     /// agent, which the chat asks for by header; with `agent` it also answers API clients that
     /// do not ask, which otherwise get the model as it is.
     static func serverArguments(enabled: Bool, scientific: Bool = false, agent: Bool = false,
-                                resources: URL? = Bundle.main.resourceURL) -> [String] {
-        guard enabled || scientific, let runtime = runtimeDirectory(resources: resources) else { return [] }
+                                resources: URL? = Bundle.main.resourceURL, shared: [MCPServer] = []) -> [String] {
+        // approved servers exist only for the agent, so they need its runtime too
+        var servers = engineServers(shared)
+        let approved = servers.keys.sorted()
+        guard enabled || scientific || !approved.isEmpty, let runtime = runtimeDirectory(resources: resources)
+        else { return [] }
         let python = runtime.appendingPathComponent("python/bin/python3").path
         let helper = runtime.appendingPathComponent("tosh_sympy/server.py").path
-        var servers: [String: Any] = [:]
         if enabled {
             servers[serverName] = ["command": python, "args": ["-I", "-B", helper], "timeout_ms": 30_000,
                                    "env": ["TOSH_TRUST_KEY": trustKey]]
@@ -54,11 +57,34 @@ enum SymPyToolsService {
         }
         // a turn can take minutes: it runs every round and tool call of the answer
         servers[agentName] = ["command": python, "args": ["-I", "-B", helper, agentName],
-                              "timeout_ms": 900_000, "env": ["TOSH_TRUST_KEY": trustKey]]
+                              "timeout_ms": 900_000,
+                              "env": ["TOSH_TRUST_KEY": trustKey, "TOSH_AGENT_SERVERS": approved.joined(separator: ",")]]
+        let arguments = mcpServersArguments(servers)
+        guard !arguments.isEmpty else { return [] }
+        return arguments + ["--mcp-agent", agentName] + (agent ? [] : ["--mcp-agent-explicit"])
+            + (approved.isEmpty ? [] : ["--mcp-agent-only", approved.joined(separator: ",")])
+    }
+
+    /// The MCP servers an administrator approved for the engine, by the name the engine gives them.
+    /// A name the engine's own servers use, or one already taken, is left out.
+    static func engineServers(_ shared: [MCPServer]) -> [String: Any] {
+        let reserved: Set = [serverName, ScientificToolsService.serverName, agentName]
+        var servers: [String: Any] = [:]
+        for server in shared where server.sharedWithEngine {
+            let name = server.engineName
+            guard !reserved.contains(name), servers[name] == nil else { continue }
+            var entry: [String: Any] = ["command": server.command, "args": server.arguments,
+                                        "env": server.environment, "timeout_ms": server.timeoutSeconds * 1000]
+            if !server.workingDirectory.isEmpty { entry["cwd"] = server.workingDirectory }
+            servers[name] = entry
+        }
+        return servers
+    }
+
+    private static func mcpServersArguments(_ servers: [String: Any]) -> [String] {
         guard let data = try? JSONSerialization.data(withJSONObject: ["mcpServers": servers],
                                                      options: [.sortedKeys]) else { return [] }
-        return ["--mcp-servers-json", String(decoding: data, as: UTF8.self), "--mcp-agent", agentName]
-            + (agent ? [] : ["--mcp-agent-explicit"])
+        return ["--mcp-servers-json", String(decoding: data, as: UTF8.self)]
     }
 
     /// What the call was asked to work on, for the tool card.

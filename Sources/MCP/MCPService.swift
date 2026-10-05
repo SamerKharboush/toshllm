@@ -23,7 +23,8 @@ actor ToshMCPService {
 
     func discoverTools() async -> [BuiltinToolInfo] {
         var output: [BuiltinToolInfo] = []
-        for server in MCPServerStore.load() where server.enabled {
+        // a server shared with the engine is reached through its agent instead
+        for server in MCPServerStore.load() where server.enabled && !server.sharedWithEngine {
             do {
                 try await connect(server)
                 let result = try await request(serverID: server.id, method: "tools/list", params: [:])

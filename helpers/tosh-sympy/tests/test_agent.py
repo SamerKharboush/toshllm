@@ -60,6 +60,10 @@ class Engine:
         expression = params.get("expression", "")
         return self.results.get(expression, INTEGRAL)
 
+    def call_checked(self, name, params, timeout=120):
+        self.calls.append((name, params))
+        return self.results.get(name, "unknown tool"), name in self.results
+
 
 def call(name, **arguments):
     return {"id": "c%d" % id(arguments), "type": "function", "function": {"name": name, "arguments": json.dumps(arguments)}}
@@ -285,6 +289,120 @@ def test_numbers_and_constants_are_read_as_in_the_app():
     assert set(policy.ungrounded("$\\frac{\\pi^4}{15} \\approx 6.4939$, porque es $6\\zeta(4)$", [REPORTED],
                                  policy.ledger([{"name": "scientific_compute", "state": "completed",
                                                  "reply": json.loads(INTEGRAL), "result": INTEGRAL}]))) == {"15", "6", "π", "ζ"}
+
+
+def with_approved(servers, test):
+    saved = agent.APPROVED
+    agent.APPROVED = tuple(name + "_" for name in servers)
+    try:
+        test()
+    finally:
+        agent.APPROVED = saved
+
+
+def gis_engine(rounds, math_tools):
+    engine = Engine(rounds, {"gis_count": "42 features"}, tools=math_tools, intent=policy.NO_MATH)
+    engine.listed.append({"tool": "gis_count",
+                          "definition": {"type": "function", "function": {"name": "gis_count", "parameters": {}}}})
+    return engine
+
+
+def test_an_approved_server_answers_with_the_arguments_it_was_given():
+    def check():
+        engine = gis_engine([{"content": "", "tool_calls": [call("gis_count", layer="parks", _trust="x")]},
+                             {"content": "The layer has 42 parks."}], math_tools=False)
+        turn, content, outcome = run(engine, "How many parks are in the city layer?")
+        assert (content, outcome) == ("The layer has 42 parks.", "answered"), (content, outcome)
+        assert engine.calls == [("gis_count", {"layer": "parks"})], engine.calls
+        assert [agent._describe(c)["status"] for c in turn.calls] == ["ok"], turn.calls
+        assert engine.bodies[0]["tool_choice"] == "auto" and "gis_count" in json.dumps(engine.bodies[0]["tools"])
+    with_approved(["gis"], check)
+
+
+def test_a_server_nobody_approved_stays_out():
+    def check():
+        engine = gis_engine([{"content": "", "tool_calls": [call("gis_count", layer="parks")]},
+                             {"content": "I could not count them."}], math_tools=True)
+        turn, _, _ = run(engine, "How many parks are in the city layer?")
+        assert engine.calls == [], engine.calls
+        assert "no such tool" in turn.calls[0]["result"], turn.calls[0]
+    with_approved([], check)
+
+
+def test_numbers_from_an_approved_server_count_as_sources_beside_math():
+    def check():
+        engine = gis_engine([
+            {"content": "", "tool_calls": [call("gis_count", layer="parks")]},
+            {"content": "", "tool_calls": [call("scientific_compute", operation="integrate", expression="x**3/(exp(x)-1)",
+                                                lower=0, upper="oo")]},
+            {"content": "There are 42 parks and the integral is 6.49393940227."}], math_tools=True)
+        engine.intent = policy.COMPUTATIONAL
+        _, content, outcome = run(engine, REPORTED + "\nTambién: ¿cuántos features tiene la capa parks?")
+        assert outcome == "answered" and "42 parks" in content, (content, outcome)
+    with_approved(["gis"], check)
+
+
+def test_a_missing_input_for_an_approved_tool_gets_a_question():
+    def check():
+        engine = gis_engine([{"content": "", "tool_calls": [call(policy.CLARIFY, missing=["the layer"])]}], math_tools=False)
+        turn, content, outcome = run(engine, "How many features does the layer have?")
+        assert outcome == "clarification_required" and engine.calls == [], (outcome, engine.calls)
+        assert policy.CLARIFY in json.dumps(engine.bodies[0]["tools"])
+    with_approved(["gis"], check)
+
+
+def test_malformed_or_unknown_calls_never_run():
+    def check():
+        broken = {"id": "x1", "type": "function", "function": {"name": "gis_count", "arguments": "{\"layer\": \"par"}}
+        engine = gis_engine([{"content": "", "tool_calls": [broken, call("gis_delete", layer="parks"),
+                                                            call("exec_shell_command", command="ls")]},
+                             {"content": "I could not run them."}], math_tools=False)
+        turn, _, _ = run(engine, "How many parks are in the city layer?")
+        assert engine.calls == [], engine.calls
+        assert [c["state"] for c in turn.calls] == ["failed"] * 3, turn.calls
+        assert "invalid_arguments" in turn.calls[0]["result"] and "no such tool" in turn.calls[1]["result"]
+    with_approved(["gis"], check)
+
+
+def test_an_approved_tool_never_gets_a_value_nobody_gave():
+    def check():
+        engine = gis_engine([{"content": "", "tool_calls": [call("gis_count", layer="layer_name")]},
+                             {"content": "", "tool_calls": [call(policy.CLARIFY, missing="data")]}], math_tools=False)
+        engine.listed[-1]["definition"]["function"]["parameters"] = {
+            "type": "object", "properties": {"layer": {"type": "string"}, "unit": {"enum": ["km", "mi"]}}}
+        turn, content, outcome = run(engine, "How many features does the layer have?")
+        assert engine.calls == [] and outcome == "clarification_required", (engine.calls, outcome)
+        assert content == "To answer, I need you to tell me `layer`.", content
+        assert "needs_user_input" in turn.calls[0]["result"], turn.calls[0]
+        turn = agent.Turn(engine, {"messages": [{"role": "user", "content": "Count the parks layer, 3 times"}]})
+        turn.listed, turn.definitions = {"gis_count"}, {"gis_count": engine.listed[-1]["definition"]}
+        assert turn._ungiven("gis_count", {"layer": "Parks", "unit": "km", "times": 3, "query": "green areas near"}) == []
+        assert turn._ungiven("gis_count", {"layer": "roads", "times": 7}) == ["layer='roads'", "times=7"]
+        assert turn._ungiven("gis_count", {"layer": "layer"}) == ["layer='layer'"]
+        assert turn._ungiven("gis_count", {"layer": "<parks>"}) == ["layer='<parks>'"]
+        assert agent._describe(dict(turn.calls[0], name="gis_count") if turn.calls else {
+            "name": "gis_count", "arguments": "{}", "state": "failed",
+            "reply": {"success": False, "error": {"code": "needs_user_input"}}})["status"] == "needs_user_input"
+    with_approved(["gis"], check)
+
+
+def test_the_review_sees_what_an_approved_server_returned():
+    def check():
+        engine = gis_engine([
+            {"content": "", "tool_calls": [call("gis_count", layer="parks")]},
+            {"content": "", "tool_calls": [call("sympy_expression", operation="evaluate", expression="pi**4/15")]},
+            {"content": "Done."}], math_tools=True)
+        engine.results["pi**4/15"] = MEMORY
+        engine.intent, engine.review = policy.COMPUTATIONAL, "consistent"
+        run(engine, "Square the number of features of the parks layer.")
+        review = [b for b in engine.side if b["messages"][0]["content"].startswith("You check")]
+        assert review and "42 features" in review[0]["messages"][1]["content"], engine.side
+        engine = Engine([{"content": "", "tool_calls": [call("sympy_expression", operation="evaluate", expression="pi**4/15")]},
+                         {"content": "Done."}], {"pi**4/15": MEMORY}, review="consistent")
+        run(engine, "Evaluate pi^4/15.")
+        review = [b for b in engine.side if b["messages"][0]["content"].startswith("You check")]
+        assert "RETURNED BY THE TOOLS" not in review[0]["messages"][1]["content"]
+    with_approved(["gis"], check)
 
 
 def test_intent_reads_the_examples_of_the_brief():

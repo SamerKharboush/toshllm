@@ -5,6 +5,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+
+- **LLMs: a local MCP server can be approved for the server agent.** "Available to the server agent" in the server's MCP settings makes the engine start it for the agent alone: its tools answer through the agent for the app's chat, the web chat and API clients, and stay hidden from `/tools`. A value the user never gave is not sent to it, and math keeps its checks.
+
 ### Fixed
 
 - **LLMs: math in the chat no longer leaves blank space under its paragraph**, and resizing the window no longer makes that space grow.
