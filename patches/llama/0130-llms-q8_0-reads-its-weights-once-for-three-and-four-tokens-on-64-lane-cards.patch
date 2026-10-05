@@ -1,0 +1,148 @@
+diff --git a/ggml/src/ggml-metal/ggml-metal-device.cpp b/ggml/src/ggml-metal/ggml-metal-device.cpp
+--- a/ggml/src/ggml-metal/ggml-metal-device.cpp
++++ b/ggml/src/ggml-metal/ggml-metal-device.cpp
+@@ -1227,20 +1227,27 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mv_pq2_swigl
+ static int nc2_probe() {
+     static const int r = TOSH_ENV("TOSH_MV_NC2_PROBE") ? atoi(TOSH_ENV("TOSH_MV_NC2_PROBE")) : 0;
+     return r;
+ }
+ 
+-int ggml_metal_mv_nc2_rows(ggml_type type, int simd_width, int ne11, int ne01) {
++int ggml_metal_mv_nc2_rows(ggml_type type, int simd_width, int ne11, int ne01, int ne00) {
+     static const bool disabled = TOSH_ENV("TOSH_MV_NC2_DISABLE") != nullptr;
+     if (disabled || ne11 < 2 || ne11 > 4) {
+         return 0;
+     }
+     const bool w64 = simd_width == 64;
+     // three columns in one pass, where that beat the batched kernel
+     if (ne11 == 3) {
+         static const bool nc3_off = TOSH_ENV("TOSH_MV_NC3_DISABLE") != nullptr;
+-        if (w64 || nc3_off) {
++        if (nc3_off) {
++            return 0;
++        }
++        if (w64) {
++            // q8_0 on 64 lanes: few rows want more groups, a short row stays on the batched kernel
++            if (type == GGML_TYPE_Q8_0) {
++                return ne01 < 2048 ? 2 : (ne00 >= 2048 || ne01 >= 8192 ? 8 : 0);
++            }
+             return 0;
+         }
+         switch (type) {
+             case GGML_TYPE_Q5_K:    return 4;
+             default: return 0;
+@@ -1254,11 +1261,12 @@ int ggml_metal_mv_nc2_rows(ggml_type type, int simd_width, int ne11, int ne01) {
+         case GGML_TYPE_Q4_0: return w64 ? (ne11 != 2 || (ne01 % 2048 == 0 && ne01 >= 4096) || ne01 >= 16384 ? 8 : 4)
+                                         : (ne11 == 2 ? 4 : 0);
+         case GGML_TYPE_Q4_1: return w64 ? 8 : (ne11 == 2 ? 4 : 0);
+         case GGML_TYPE_Q5_0: return w64 ? 8 : 4;
+         case GGML_TYPE_Q5_1: return 4;
+-        case GGML_TYPE_Q8_0: return w64 ? 8 : 0;
++        // four q8_0 columns in one pass on 64 lanes; two passes of two cost twice the reads
++        case GGML_TYPE_Q8_0: return w64 ? (ne11 == 4 ? (ne01 >= 2048 ? 4 : 2) : 8) : 0;
+         case GGML_TYPE_IQ3_S: return w64 ? nc2_probe() : 8;
+         case GGML_TYPE_IQ3_XXS: return w64 ? nc2_probe() : 8;
+         // 64 lanes only gain on matrices of few rows, with two rows per simdgroup
+         case GGML_TYPE_Q5_K: return w64 ? (nc2_probe() ? nc2_probe() : (ne11 == 2 && ne01 <= 5120 ? 2 : 0)) : 4;
+         case GGML_TYPE_Q6_K: return w64 ? nc2_probe() : (ne11 == 2 ? 2 : 0);
+@@ -1770,13 +1778,13 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mv(ggml_meta
+                 nsg = atoi(sns);
+             }
+         }
+     }
+ 
+-    if (const int rows = ggml_metal_mv_nc2_rows(tsrc0, simd_width, ne11, ne01); rows > 0) {
++    if (const int rows = ggml_metal_mv_nc2_rows(tsrc0, simd_width, ne11, ne01, ne00); rows > 0) {
+         nr0 = rows;
+-        nr1 = ne11 == 3 ? 3 : 2;
++        nr1 = ne11 == 3 ? 3 : (ne11 == 4 && tsrc0 == GGML_TYPE_Q8_0 && simd_width == 64 ? 4 : 2);
+         nsg = simd_width == 64 ? 1 : 2;
+         static thread_local char nc_sfx[16];
+         snprintf(nc_sfx, sizeof(nc_sfx), "_c%d_r%d", nr1, rows);
+         suffix = nc_sfx;
+         // q4_K and q5_K have a 64-lane twin; the others run their one kernel at either width
+diff --git a/ggml/src/ggml-metal/ggml-metal-device.h b/ggml/src/ggml-metal/ggml-metal-device.h
+--- a/ggml/src/ggml-metal/ggml-metal-device.h
++++ b/ggml/src/ggml-metal/ggml-metal-device.h
+@@ -153,11 +153,11 @@ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mv_ex
+ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mm            (ggml_metal_library_t lib, const struct ggml_tensor * op);
+ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mv            (ggml_metal_library_t lib, const struct ggml_tensor * op);
+ 
+ // rows per simdgroup of the few-column mat-vec for this type, lane width and column count,
+ // 0 if the batch does not take it
+-int ggml_metal_mv_nc2_rows(enum ggml_type type, int simd_width, int ne11, int ne01);
++int ggml_metal_mv_nc2_rows(enum ggml_type type, int simd_width, int ne11, int ne01, int ne00);
+ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mm_id_map0    (ggml_metal_library_t lib, int ne02, int ne20);
+ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mm_id_amax(ggml_metal_library_t lib);
+ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mm_id_amax_part(ggml_metal_library_t lib);
+ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mm_id         (ggml_metal_library_t lib, const struct ggml_tensor * op);
+ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mv_id         (ggml_metal_library_t lib, const struct ggml_tensor * op);
+diff --git a/ggml/src/ggml-metal/ggml-metal-ops.cpp b/ggml/src/ggml-metal/ggml-metal-ops.cpp
+--- a/ggml/src/ggml-metal/ggml-metal-ops.cpp
++++ b/ggml/src/ggml-metal/ggml-metal-ops.cpp
+@@ -3428,11 +3428,11 @@ int ggml_metal_op_mul_mat(ggml_metal_op_t ctx, int idx) {
+     // wave32 and wave64. wave64 rides on wave64_decode (matches the mat-vec gating).
+     static const bool ext_disabled = TOSH_ENV("TOSH_EXT_DISABLE") != nullptr;
+     if (!ext_disabled &&
+         (props_dev->simd_width == 32 || (props_dev->simd_width == 64 && props_dev->wave64_decode)) &&
+         !(props_dev->simd_width == 64 && ext_loses_w64(op->src[0]->type, ne11)) &&
+-        ggml_metal_mv_nc2_rows(op->src[0]->type, props_dev->simd_width, ne11, ne01) == 0 &&
++        ggml_metal_mv_nc2_rows(op->src[0]->type, props_dev->simd_width, ne11, ne01, ne00) == 0 &&
+         op->src[1]->type == GGML_TYPE_F32 && (ne00%128 == 0) &&
+         (
+          (
+           (
+            op->src[0]->type == GGML_TYPE_F32  || // TODO: helper function
+diff --git a/ggml/src/ggml-metal/kernels/mul_mv.metal b/ggml/src/ggml-metal/kernels/mul_mv.metal
+--- a/ggml/src/ggml-metal/kernels/mul_mv.metal
++++ b/ggml/src/ggml-metal/kernels/mul_mv.metal
+@@ -1756,10 +1756,29 @@ kernel void kernel_mul_mv_q8_0_f32_c2_r##NR0( \
+     kernel_mul_mv_q8_0_f32_nc_impl<NR0, 2>(args, src0, src1, dst, tgpig, tiisg, sgitg); \
+ }
+ 
+ Q8_0_MV_NC(2)
+ Q8_0_MV_NC(4)
++
++// three and four columns in one pass (64 lanes), for MTP verify windows
++#define Q8_0_MV_NCN(NC, NR0) \
++[[host_name("kernel_mul_mv_q8_0_f32_c" #NC "_r" #NR0)]] \
++kernel void kernel_mul_mv_q8_0_f32_c##NC##_r##NR0( \
++        constant ggml_metal_kargs_mul_mv & args, \
++        device const char * src0, \
++        device const char * src1, \
++        device       char * dst, \
++        uint3  tgpig[[threadgroup_position_in_grid]], \
++        ushort tiisg[[thread_index_in_simdgroup]], \
++        ushort sgitg[[simdgroup_index_in_threadgroup]]) { \
++    kernel_mul_mv_q8_0_f32_nc_impl<NR0, NC>(args, src0, src1, dst, tgpig, tiisg, sgitg); \
++}
++
++Q8_0_MV_NCN(3, 2)
++Q8_0_MV_NCN(3, 8)
++Q8_0_MV_NCN(4, 2)
++Q8_0_MV_NCN(4, 4)
+ Q8_0_MV_NC(8)
+ 
+ [[host_name("kernel_mul_mv_q8_0_f32")]]
+ kernel void kernel_mul_mv_q8_0_f32(
+         constant ggml_metal_kargs_mul_mv & args,
+diff --git a/tests/test-backend-ops.cpp b/tests/test-backend-ops.cpp
+--- a/tests/test-backend-ops.cpp
++++ b/tests/test-backend-ops.cpp
+@@ -9979,10 +9979,16 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
+         test_cases.emplace_back(new test_mul_mat(GGML_TYPE_Q4_K, GGML_TYPE_F32, m, 2, 1024, { 1, 1 }, { 1, 1 }));
+     }
+ 
+     test_cases.emplace_back(new test_mul_mat(GGML_TYPE_Q4_0, GGML_TYPE_F32, 2880, 32, 2880, {1, 1}, {1, 1}));
+     test_cases.emplace_back(new test_mul_mat(GGML_TYPE_Q8_0, GGML_TYPE_F32, 2880, 32, 2880, {1, 1}, {1, 1}));
++    // q8_0 with three and four columns: few rows, a short row, and a large matrix
++    for (int64_t n : {3, 4}) {
++        for (auto mk : std::vector<std::array<int64_t, 2>>{{320, 2560}, {2560, 640}, {4096, 2560}, {8192, 512}}) {
++            test_cases.emplace_back(new test_mul_mat(GGML_TYPE_Q8_0, GGML_TYPE_F32, mk[0], n, mk[1], {1, 1}, {1, 1}));
++        }
++    }
+     test_cases.emplace_back(new test_mul_mat(GGML_TYPE_MXFP4, GGML_TYPE_F32, 2880, 32, 2880, {1, 1}, {1, 1}));
+ 
+     // m == 1, with n on both sides of MMVF_MAX_BATCH_SIZE (8): mmvf below, operand swap above
+     for (int64_t n : {1, 7, 8, 9, 16, 127, 128, 511, 512}) {
+         test_cases.emplace_back(new test_mul_mat(GGML_TYPE_F32, GGML_TYPE_F32, 1, n, 2048, {1, 1}, {1, 1}));

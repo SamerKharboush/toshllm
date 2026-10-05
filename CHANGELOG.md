@@ -9,6 +9,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 - **LLMs: a local MCP server can be approved for the server agent.** "Available to the server agent" in the server's MCP settings makes the engine start it for the agent alone: its tools answer through the agent for the app's chat, the web chat and API clients, and stay hidden from `/tools`. A value the user never gave is not sent to it, and math keeps its checks.
 
+### Improved
+
+- **LLMs: Qwen3.8-Flash-Next writes about 8% faster with MTP on Radeon Pro Vega II.** On one card of a Radeon Pro Vega II Duo with Dynamic MoE it writes prose at 31.1 tokens a second instead of 28.8, and code at 35.4 instead of 32.7.
+
 ### Fixed
 
 - **LLMs: math in the chat no longer leaves blank space under its paragraph**, and resizing the window no longer makes that space grow.
