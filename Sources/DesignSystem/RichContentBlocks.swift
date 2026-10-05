@@ -111,13 +111,15 @@ private struct RichContentPreview: View {
 
 struct InlineMathText: View {
     let source: String
+    var base: ChatFont.Base = .body
+    var bold = false
     @State private var height: CGFloat = 24
     @State private var baseline: CGFloat = 0
     @Environment(\.chatFontScale) private var scale
 
     var body: some View {
         RichWebView(source: source, kind: .inlineMath, contentHeight: $height,
-                    fontSize: ChatFont.Base.body.points * scale, firstBaseline: $baseline)
+                    fontSize: base.points * scale, bold: bold, firstBaseline: $baseline)
             .frame(height: min(max(height, 16), 360))
             // Lines up with a list marker beside it.
             .alignmentGuide(.firstTextBaseline) { d in baseline > 0 ? baseline : d[.firstTextBaseline] }
@@ -149,6 +151,7 @@ struct RichWebView: NSViewRepresentable {
     /// Only the expanded preview keeps its own scrolling.
     var scrollsInternally = false
     var fontSize: CGFloat = 14
+    var bold = false
     var firstBaseline: Binding<CGFloat>?
 
     func makeCoordinator() -> Coordinator { Coordinator(height: $contentHeight, baseline: firstBaseline) }
@@ -164,8 +167,9 @@ struct RichWebView: NSViewRepresentable {
         view.navigationDelegate = context.coordinator
         view.allowsMagnification = true
         view.setMagnification(zoom, centeredAt: .zero)
-        context.coordinator.signature = Self.signature(source: source, kind: kind, fontSize: fontSize)
-        view.loadHTMLString(Self.html(source: source, kind: kind, fontSize: fontSize), baseURL: Self.assetsDirectory)
+        context.coordinator.signature = signature
+        view.loadHTMLString(Self.html(source: source, kind: kind, fontSize: fontSize, bold: bold),
+                            baseURL: Self.assetsDirectory)
         return view
     }
 
@@ -181,10 +185,10 @@ struct RichWebView: NSViewRepresentable {
         if abs(view.magnification - zoom) > 0.001 {
             view.setMagnification(zoom, centeredAt: CGPoint(x: view.bounds.midX, y: view.bounds.midY))
         }
-        let signature = Self.signature(source: source, kind: kind, fontSize: fontSize)
         guard context.coordinator.signature != signature else { return }
         context.coordinator.signature = signature
-        view.loadHTMLString(Self.html(source: source, kind: kind, fontSize: fontSize), baseURL: Self.assetsDirectory)
+        view.loadHTMLString(Self.html(source: source, kind: kind, fontSize: fontSize, bold: bold),
+                            baseURL: Self.assetsDirectory)
     }
 
     final class Coordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
@@ -234,11 +238,11 @@ struct RichWebView: NSViewRepresentable {
         return FileManager.default.fileExists(atPath: local.path) ? local : nil
     }
 
-    private static func signature(source: String, kind: RichContentKind, fontSize: CGFloat) -> String {
-        "\(String(describing: kind)):\(fontSize):\(source.hashValue)"
+    private var signature: String {
+        "\(String(describing: kind)):\(fontSize):\(bold):\(source.hashValue)"
     }
 
-    static func html(source: String, kind: RichContentKind, fontSize: CGFloat = 14) -> String {
+    static func html(source: String, kind: RichContentKind, fontSize: CGFloat = 14, bold: Bool = false) -> String {
         let encoded = (try? String(data: JSONEncoder().encode(source), encoding: .utf8)) ?? "\"\""
         let payload: String
         switch kind {
@@ -314,7 +318,7 @@ struct RichWebView: NSViewRepresentable {
         <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src data: blob:; connect-src 'none'; media-src 'none'; frame-src 'none'">
         <style>
         :root { color-scheme: light dark; } html,body { margin:0; background:transparent; overflow:auto; }
-        body { padding:\(bodyPadding); font:\(fontSize)px -apple-system, BlinkMacSystemFont, sans-serif; color:CanvasText; }
+        body { padding:\(bodyPadding); font:\(bold ? "bold " : "")\(fontSize)px -apple-system, BlinkMacSystemFont, sans-serif; color:CanvasText; }
         #content { display:flow-root; min-width:\(minimumWidth); transform-origin:top left; overflow-wrap:anywhere; }
         #content p { margin:0; } .inline-math { white-space:nowrap; }
         #toshBaseline { display:inline-block; width:0; height:0; }

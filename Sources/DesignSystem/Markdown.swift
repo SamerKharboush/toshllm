@@ -486,9 +486,7 @@ private struct MDBlockView: View, Equatable {
         case .paragraph(let s):
             InlineMarkdown(source: s)
         case .header(let level, let s):
-            Text(RichText.inline(s))
-                .chatFont(level <= 1 ? .heading1 : level == 2 ? .heading2 : .heading3, weight: .bold)
-                .textSelection(.enabled)
+            InlineMarkdown(source: s, heading: level <= 1 ? .heading1 : level == 2 ? .heading2 : .heading3)
                 .padding(.top, 2)
         case .bullet(let items):
             VStack(alignment: .leading, spacing: 3) {
@@ -537,14 +535,18 @@ private struct MDBlockView: View, Equatable {
     }
 }
 
-/// One line-level renderer for paragraphs and list items: formulas go to
-/// KaTeX, everything else stays native text.
+/// One line-level renderer for paragraphs, list items and headings: formulas
+/// go to KaTeX, everything else stays native text.
 private struct InlineMarkdown: View {
     let source: String
+    var heading: ChatFont.Base?
 
     var body: some View {
         if RichText.containsInlineMath(RichText.symbolizingMath(source)) {
-            InlineMathText(source: source)
+            InlineMathText(source: source, base: heading ?? .body, bold: heading != nil)
+        } else if let heading {
+            Text(RichText.inline(source)).chatFont(heading, weight: .bold).textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
         } else {
             Text(RichText.inline(source)).textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)

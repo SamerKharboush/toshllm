@@ -100,6 +100,13 @@ final class MarkdownParserTests: XCTestCase {
         XCTAssertEqual(blocks[5], .numbered(3, ["**Verificación**:"]))
     }
 
+    func testHeadingKeepsItsFormula() {
+        XCTAssertEqual(parse("### 1) Determinante de $A$"), [.header(3, "1) Determinante de $A$")])
+        XCTAssertEqual(RichText.inlineMathBodies("3) Verificación ($A \\cdot A^{-1} = I$)"), ["A \\cdot A^{-1} = I"])
+        XCTAssertTrue(RichWebView.html(source: "$A$", kind: .inlineMath, fontSize: 15, bold: true)
+            .contains("font:bold 15.0px"))
+    }
+
     func testCodeIsNotTouched() {
         XCTAssertEqual(parse("1. step\n\n   ```swift\n   let x = $84$\n   ```"),
                        [.numbered(1, ["step"]), .code("swift", "   let x = $84$")])

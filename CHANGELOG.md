@@ -11,7 +11,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 - **LLMs: a numbered list split by paragraphs keeps the numbers it was written with** instead of starting each part at 1.
 
-- **LLMs: formulas inside list items and numbers such as `$84$` render as math.** Prices such as `$10` stay as text.
+- **LLMs: formulas inside list items and headings, and numbers such as `$84$`, render as math.** Prices such as `$10` stay as text.
 
 - **LLMs: a long formula or matrix on its own line renders as a formula** instead of its LaTeX source.
 
