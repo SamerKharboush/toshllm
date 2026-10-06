@@ -11,6 +11,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Improved
 
+- **LLMs: MTP keeps more of its draft when the chat has a temperature.** The draft is sampled and the model verifies it by rejection instead of keeping only exact matches, which leaves the text distribution unchanged. At the default temperature of 0.7, prose with a 9B model goes up to 7% faster and with Qwen3.6-35B-A3B under Dynamic MoE up to 3%; at temperature 0 nothing changes.
 - **LLMs: Qwen3.8-Flash-Next runs its attention indexer on AMD GPUs.** It ran on the CPU because its kernel needs matrix units AMD cards do not have. On one card of a Radeon Pro Vega II Duo, generation goes from about 15 to 20 tokens a second with a 6K prompt.
 
 ### Fixed

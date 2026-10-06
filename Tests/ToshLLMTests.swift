@@ -1525,6 +1525,7 @@ final class ServerSettingsTests: XCTestCase {
         XCTAssertEqual(URL(fileURLWithPath: args[args.firstIndex(of: "-md")! + 1])
             .resolvingSymlinksInPath().path, canonicalDraft)
         XCTAssertEqual(args[args.firstIndex(of: "--spec-type")! + 1], "draft-mtp")
+        XCTAssertEqual(args[args.firstIndex(of: "--spec-draft-sampling")! + 1], "probabilistic")
     }
 
     func testModelPublishDateReadsCreationAndBaseModel() {
