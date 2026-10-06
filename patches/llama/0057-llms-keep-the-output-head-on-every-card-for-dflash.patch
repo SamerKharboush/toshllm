@@ -1,8 +1,8 @@
 diff --git a/src/llama-model.cpp b/src/llama-model.cpp
-index da3ef5d22..4493680b3 100644
+index 0ab1bf5..0ee677c 100644
 --- a/src/llama-model.cpp
 +++ b/src/llama-model.cpp
-@@ -591,17 +591,20 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
+@@ -595,17 +595,20 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
              return get_tensor_config_impl(GGML_BACKEND_SPLIT_AXIS_MIRRORED);
          }
          if (std::regex_match(tensor_name, pattern_ffn_down_exps_bias)) {

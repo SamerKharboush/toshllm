@@ -1,8 +1,8 @@
 diff --git a/src/llama-context.cpp b/src/llama-context.cpp
-index a8013d8a6..cf01ebbc4 100644
+index d196b0d..296f6a8 100644
 --- a/src/llama-context.cpp
 +++ b/src/llama-context.cpp
-@@ -432,19 +432,19 @@ llama_context::llama_context(
+@@ -435,19 +435,19 @@ llama_context::llama_context(
              model.split_mode() == LLAMA_SPLIT_MODE_LAYER &&
              cparams.offload_kqv &&
              !model.has_tensor_overrides();

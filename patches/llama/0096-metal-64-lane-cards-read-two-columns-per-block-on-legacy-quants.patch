@@ -1,8 +1,8 @@
 diff --git a/ggml/src/ggml-metal/ggml-metal-device.cpp b/ggml/src/ggml-metal/ggml-metal-device.cpp
-index 02bee5e3e..f27e6f95f 100644
+index 9fe0fff..3ccce18 100644
 --- a/ggml/src/ggml-metal/ggml-metal-device.cpp
 +++ b/ggml/src/ggml-metal/ggml-metal-device.cpp
-@@ -1208,17 +1208,17 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mv_pq2_swigl
+@@ -1338,17 +1338,17 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mv_pq2_swigl
  // a pair of columns shares one read of each block, where one pass per column would read and
  // unpack the weights twice. Four columns go as two pairs where that measured faster.
  // TOSH_MV_NC2_PROBE=R opens the untuned widths with R rows, for measuring
@@ -21,7 +21,7 @@ index 02bee5e3e..f27e6f95f 100644
      // three columns in one pass, where that beat the batched kernel
      if (ne11 == 3) {
          static const bool nc3_off = TOSH_ENV("TOSH_MV_NC3_DISABLE") != nullptr;
-@@ -1227,25 +1227,29 @@ int ggml_metal_mv_nc2_rows(ggml_type type, int simd_width, int ne11) {
+@@ -1357,25 +1357,29 @@ int ggml_metal_mv_nc2_rows(ggml_type type, int simd_width, int ne11) {
          }
          switch (type) {
              case GGML_TYPE_Q5_K:    return 4;
@@ -58,7 +58,7 @@ index 02bee5e3e..f27e6f95f 100644
  ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mv(ggml_metal_library_t lib, const ggml_tensor * op) {
      GGML_TENSOR_LOCALS( int32_t, ne0, op->src[0], ne);
      GGML_TENSOR_LOCALS( int32_t, ne1, op->src[1], ne);
-@@ -1747,25 +1751,25 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mv(ggml_meta
+@@ -1877,25 +1881,25 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mv(ggml_meta
              }
  
              if (sns != nullptr) {
@@ -88,13 +88,13 @@ index 02bee5e3e..f27e6f95f 100644
      if (w64) {
          snprintf(sfx, sizeof(sfx), "%s_w64", suffix);
 diff --git a/ggml/src/ggml-metal/ggml-metal-device.h b/ggml/src/ggml-metal/ggml-metal-device.h
-index fa6fb9029..3e7651433 100644
+index 015296d..5e903ea 100644
 --- a/ggml/src/ggml-metal/ggml-metal-device.h
 +++ b/ggml/src/ggml-metal/ggml-metal-device.h
-@@ -140,17 +140,17 @@ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_gated_del
- struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_turbo_wht         (ggml_metal_library_t lib);
- struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_solve_tri         (ggml_metal_library_t lib, const struct ggml_tensor * op);
+@@ -142,17 +142,17 @@ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_solve_tri
  struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mv_ext        (ggml_metal_library_t lib, const struct ggml_tensor * op, int nsg, int nxpsg, int r1ptg, int nr0);
+ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mv_mma        (ggml_metal_library_t lib, const struct ggml_tensor * op, int nsg, int nt, int rt, bool add);
+ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mv_mma_auto   (ggml_metal_library_t lib, const struct ggml_tensor * op, bool add);
  struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mm            (ggml_metal_library_t lib, const struct ggml_tensor * op);
  struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mv            (ggml_metal_library_t lib, const struct ggml_tensor * op);
  
@@ -111,10 +111,10 @@ index fa6fb9029..3e7651433 100644
  struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_tosh_topk_moe     (ggml_metal_library_t lib);
  struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_argsort           (ggml_metal_library_t lib, const struct ggml_tensor * op);
 diff --git a/ggml/src/ggml-metal/ggml-metal-ops.cpp b/ggml/src/ggml-metal/ggml-metal-ops.cpp
-index 773c14e5c..0e30dd320 100644
+index f833557..31a348a 100644
 --- a/ggml/src/ggml-metal/ggml-metal-ops.cpp
 +++ b/ggml/src/ggml-metal/ggml-metal-ops.cpp
-@@ -3408,17 +3408,17 @@ int ggml_metal_op_mul_mat(ggml_metal_op_t ctx, int idx) {
+@@ -3614,17 +3614,17 @@ int ggml_metal_op_mul_mat(ggml_metal_op_t ctx, int idx) {
      // first try to use small-batch mat-mv kernels
      // these should be efficient for BS [2, ~8]
      // ext kernel derives its row split from the simdgroup width, so it runs on both
@@ -134,7 +134,7 @@ index 773c14e5c..0e30dd320 100644
             op->src[0]->type == GGML_TYPE_BF16 ||
             op->src[0]->type == GGML_TYPE_Q1_0 ||
 diff --git a/ggml/src/ggml-metal/kernels/mul_mv_w64.metal b/ggml/src/ggml-metal/kernels/mul_mv_w64.metal
-index b391826b3..fbc51861c 100644
+index b391826..fbc5186 100644
 --- a/ggml/src/ggml-metal/kernels/mul_mv_w64.metal
 +++ b/ggml/src/ggml-metal/kernels/mul_mv_w64.metal
 @@ -1032,16 +1032,173 @@ kernel void kernel_mul_mv_q4_K_f32_c##NC##_r##NR0##_w64( \

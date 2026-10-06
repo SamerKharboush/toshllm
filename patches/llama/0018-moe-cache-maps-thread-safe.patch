@@ -1,5 +1,5 @@
 diff --git a/ggml/src/ggml-metal/ggml-metal-ops.cpp b/ggml/src/ggml-metal/ggml-metal-ops.cpp
-index 59970fbb5..d10b22598 100644
+index 526e34b..30ec0ed 100644
 --- a/ggml/src/ggml-metal/ggml-metal-ops.cpp
 +++ b/ggml/src/ggml-metal/ggml-metal-ops.cpp
 @@ -27,24 +27,28 @@ static inline int tosh_moe_off_ids(int, int, int)          { return 0; }
@@ -25,13 +25,13 @@ index 59970fbb5..d10b22598 100644
 +static std::mutex g_tosh_moe_mutex;
  static std::unordered_map<const ggml_tensor *, ggml_metal_buffer_id> g_tosh_moe_staged_ids;
  
+ // threadgroups needed to fill the GPU
+ // TODO: dedup
+ static constexpr int64_t GGML_METAL_MIN_THREADGROUPS = 128;
+ 
  static std::unordered_map<const ggml_tensor *, ggml_metal_buffer_id> g_tosh_moe_full_cold;
  static ggml_metal_buffer_id ggml_metal_get_buffer_id(const ggml_tensor * t) {
-     if (!t) {
-         return { nullptr, 0 };
-     }
- 
-@@ -114,28 +118,32 @@ const ggml_tensor * ggml_metal_op_cached_moe_host(const ggml_tensor * op) {
+@@ -118,28 +122,32 @@ const ggml_tensor * ggml_metal_op_cached_moe_host(const ggml_tensor * op) {
      }
  #else
      (void) op;

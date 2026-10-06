@@ -1,8 +1,8 @@
 diff --git a/ggml/src/ggml-metal/ggml-metal-context.m b/ggml/src/ggml-metal/ggml-metal-context.m
-index 92846d11c..71516638e 100644
+index 0af19e1..4693dec 100644
 --- a/ggml/src/ggml-metal/ggml-metal-context.m
 +++ b/ggml/src/ggml-metal/ggml-metal-context.m
-@@ -1613,16 +1613,25 @@ enum ggml_status ggml_metal_graph_compute(ggml_metal_t ctx, struct ggml_cgraph *
+@@ -1616,16 +1616,25 @@ enum ggml_status ggml_metal_graph_compute(ggml_metal_t ctx, struct ggml_cgraph *
              const char * threshold_mb = getenv("TOSH_MOE_BOUNDED_STAGE_THRESHOLD_MB");
              if (threshold_mb != NULL) {
                  const unsigned long long value = strtoull(threshold_mb, NULL, 10);
@@ -29,10 +29,10 @@ index 92846d11c..71516638e 100644
              GGML_LOG_WARN("%s: Dynamic MoE bounded staging active: bank %.2f GiB, threshold %.2f GiB%s\n",
                  __func__, bounded_bank_size/(1024.0*1024.0*1024.0),
 diff --git a/src/llama-graph.cpp b/src/llama-graph.cpp
-index 2807aa4e2..ed5b2b9b6 100644
+index 2202a5c..24695a3 100644
 --- a/src/llama-graph.cpp
 +++ b/src/llama-graph.cpp
-@@ -2151,17 +2151,21 @@ ggml_tensor * llm_graph_context::build_moe_ffn(
+@@ -2202,17 +2202,21 @@ ggml_tensor * llm_graph_context::build_moe_ffn(
          moe_cached = bank && n_bank_experts > 0 && need <= tosh_moe_ids_room(n_bank_experts);
      }
      if (moe_cached) {

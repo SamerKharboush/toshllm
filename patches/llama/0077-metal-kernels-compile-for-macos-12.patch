@@ -1,5 +1,5 @@
 diff --git a/ggml/src/ggml-metal/kernels/mul_mm.metal b/ggml/src/ggml-metal/kernels/mul_mm.metal
-index d0f40fdca..1702418d7 100644
+index be35d15..62dafd0 100644
 --- a/ggml/src/ggml-metal/kernels/mul_mm.metal
 +++ b/ggml/src/ggml-metal/kernels/mul_mm.metal
 @@ -1228,17 +1228,19 @@ template [[host_name("kernel_mul_mm_iq2_s_f32_w")]]   kernel mul_mm_t kernel_mul
@@ -43,7 +43,7 @@ index d0f40fdca..1702418d7 100644
  template [[host_name("kernel_mul_mm_id_q5_1_f32")]]    kernel mul_mm_id kernel_mul_mm_id<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_q5_1,    2,     dequantize_q5_1,    float,  float4x4,  float, float2x4>;
  template [[host_name("kernel_mul_mm_id_q8_0_f32")]]    kernel mul_mm_id kernel_mul_mm_id<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_q8_0,    2,     dequantize_q8_0,    float,  float4x4,  float, float2x4>;
 diff --git a/ggml/src/ggml-metal/kernels/mul_mm_w64.metal b/ggml/src/ggml-metal/kernels/mul_mm_w64.metal
-index f666bcaaa..1c368efe5 100644
+index f666bca..1c368ef 100644
 --- a/ggml/src/ggml-metal/kernels/mul_mm_w64.metal
 +++ b/ggml/src/ggml-metal/kernels/mul_mm_w64.metal
 @@ -615,17 +615,19 @@ template [[host_name("kernel_mul_mm_iq2_s_f32_w_w64")]]   kernel mul_mm_w64_t ke
@@ -87,7 +87,7 @@ index f666bcaaa..1c368efe5 100644
  template [[host_name("kernel_mul_mm_id_q5_1_f32_w64")]]    kernel mul_mm_id_w64_t kernel_mul_mm_id_w64<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_q5_1,    2,     dequantize_q5_1,    float,  float4x4,  float, float2x4>;
  template [[host_name("kernel_mul_mm_id_q8_0_f32_w64")]]    kernel mul_mm_id_w64_t kernel_mul_mm_id_w64<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_q8_0,    2,     dequantize_q8_0,    float,  float4x4,  float, float2x4>;
 diff --git a/ggml/src/ggml-metal/kernels/mul_mv.metal b/ggml/src/ggml-metal/kernels/mul_mv.metal
-index 70adf06bc..d51d2c513 100644
+index 70adf06..d51d2c5 100644
 --- a/ggml/src/ggml-metal/kernels/mul_mv.metal
 +++ b/ggml/src/ggml-metal/kernels/mul_mv.metal
 @@ -3788,17 +3788,22 @@ kernel void kernel_mul_mv_ext_q4_K_raw_lds_f32_disp(

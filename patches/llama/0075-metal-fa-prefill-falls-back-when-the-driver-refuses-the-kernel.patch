@@ -1,8 +1,8 @@
 diff --git a/ggml/src/ggml-metal/ggml-metal-ops.cpp b/ggml/src/ggml-metal/ggml-metal-ops.cpp
-index a1a12bdf2..9a6f441fb 100644
+index 8a2eb42..e5c80d9 100644
 --- a/ggml/src/ggml-metal/ggml-metal-ops.cpp
 +++ b/ggml/src/ggml-metal/ggml-metal-ops.cpp
-@@ -4368,18 +4368,21 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
+@@ -4542,18 +4542,21 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
              // never reaches the kernel gives the same number on both sides.
              if (getenv("TOSH_FA_PF_DEBUG") != nullptr) {
                  fprintf(stderr, "FA_PF dk=%d dv=%d bq=%d -> %s%s\n",

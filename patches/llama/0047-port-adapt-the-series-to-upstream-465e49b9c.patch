@@ -1,5 +1,5 @@
 diff --git a/ggml/src/ggml-metal/ggml-metal-common.cpp b/ggml/src/ggml-metal/ggml-metal-common.cpp
-index 9c0b9474c..ddea967d1 100644
+index 8b065f5..fcea023 100644
 --- a/ggml/src/ggml-metal/ggml-metal-common.cpp
 +++ b/ggml/src/ggml-metal/ggml-metal-common.cpp
 @@ -1,15 +1,16 @@
@@ -13,19 +13,19 @@ index 9c0b9474c..ddea967d1 100644
 +#include <cstdlib>
  #include <vector>
  
- // must stay in sync with the kernel_fwht_<type>_<N> templates in misc.metal
- static bool ggml_metal_fwht_supported_size(int64_t n) {
-     return n == 64 || n == 128 || n == 256 || n == 512;
- }
- 
- // the FWHT kernels handle a Hadamard-hinted MUL_MAT only under these conditions. supports_op
-@@ -20,32 +21,16 @@ bool ggml_metal_op_mul_mat_use_fwht(const struct ggml_tensor * op) {
-            op->type == GGML_TYPE_F32 &&
-            (op->src[1]->type == GGML_TYPE_F32 || op->src[1]->type == GGML_TYPE_F16) &&
-            ggml_is_contiguous(op->src[1]) &&
-            ggml_is_contiguous(op) &&
-            ggml_are_same_shape(op->src[1], op) &&
-            ggml_metal_fwht_supported_size(op->src[1]->ne[0]);
+ // must stay in sync with the kernel_fwht_<type>_<N> templates in misc.metal. Widths up to
+ // 512 run on the simdgroup kernel and need no threadgroup memory. The wider ones allocate
+ // float[N] per threadgroup, so they are only available where that fits.
+ static bool ggml_metal_fwht_supported_size(int64_t n, size_t max_tg_mem) {
+     if (n == 64 || n == 128 || n == 256 || n == 512) {
+         return true;
+@@ -27,32 +28,16 @@ static bool ggml_metal_fwht_supported_size(int64_t n, size_t max_tg_mem) {
+ // through reaches the generic path, which has no F32 src0 by F16 src1 kernel.
+ bool ggml_metal_op_mul_mat_use_fwht(const struct ggml_tensor * op, size_t max_tg_mem) {
+     return ggml_get_op_params_i32(op, 1) == GGML_HINT_SRC0_IS_HADAMARD && op->type == GGML_TYPE_F32 &&
+            (op->src[1]->type == GGML_TYPE_F32 || op->src[1]->type == GGML_TYPE_F16) && ggml_is_contiguous(op->src[1]) &&
+            ggml_is_contiguous(op) && ggml_are_same_shape(op->src[1], op) &&
+            ggml_metal_fwht_supported_size(op->src[1]->ne[0], max_tg_mem);
  }
  
 -bool ggml_metal_op_mul_mat_use_mm(const struct ggml_tensor * op, bool has_simdgroup_mm) {
@@ -44,42 +44,27 @@ index 9c0b9474c..ddea967d1 100644
 -    return has_simdgroup_mm && ne00 >= 64 && ne21 >= 32;
 -}
 -
- // represents a memory range (i.e. an interval from a starting address p0 to an ending address p1 in a given buffer pb)
- // the type indicates whether it is a source range (i.e. ops read data from it) or a destination range (i.e. ops write data to it)
- struct ggml_mem_range {
-     uint64_t pb; // buffer id
+ // the most src1 rows of the few-row MMA kernels
+ static constexpr int64_t GGML_METAL_MMA_ROWS_MAX = 16;
  
-     uint64_t p0; // begin
-     uint64_t p1; // end
+ // src1 rows per 8x8 simdgroup matrix tile of the few-row MMA kernels
+ static constexpr int64_t GGML_METAL_MMA_TILE_ROWS = 8;
  
+ // weights per K step of the q5_K and generic few-row MMA kernels
+ static constexpr int64_t GGML_METAL_MMA_K_CHUNK = 64;
 diff --git a/ggml/src/ggml-metal/ggml-metal-common.h b/ggml/src/ggml-metal/ggml-metal-common.h
-index e6a28d032..11f378446 100644
+index c86d92b..402b758 100644
 --- a/ggml/src/ggml-metal/ggml-metal-common.h
 +++ b/ggml/src/ggml-metal/ggml-metal-common.h
-@@ -1,12 +1,14 @@
- // helper functions for ggml-metal that are too difficult to implement in Objective-C
- 
- #pragma once
- 
-+#include "ggml.h"
-+
- #include <stdbool.h>
- 
- #ifdef __cplusplus
- extern "C" {
- #endif
- 
- struct ggml_tensor;
- struct ggml_cgraph;
-@@ -44,14 +46,24 @@ bool ggml_mem_ranges_check(ggml_mem_ranges_t mrs, const struct ggml_tensor * ten
- // reorder the nodes in the graph to improve concurrency, while respecting fusion
+@@ -47,18 +47,28 @@ bool ggml_mem_ranges_check(ggml_mem_ranges_t mrs, const struct ggml_tensor * ten
+ // reorder the nodes in the graph to improve concurrency, while respecting the fusions of a device with props
  //
  // note: this implementation is generic and not specific to metal
  //       if it proves to work well, we can start using it for other backends in the future
  void ggml_graph_optimize(struct ggml_cgraph * gf);
  
  // mat-mat vs mat-vec dispatch; used by both supports_op and ggml_metal_op_mul_mat*
- bool ggml_metal_op_mul_mat_use_fwht (const struct ggml_tensor * op);
+ bool ggml_metal_op_mul_mat_use_fwht (const struct ggml_tensor * op, size_t max_tg_mem);
 -bool ggml_metal_op_mul_mat_use_mm   (const struct ggml_tensor * op, bool has_simdgroup_mm);
 -bool ggml_metal_op_mul_mat_id_use_mm(const struct ggml_tensor * op, bool has_simdgroup_mm);
 +
@@ -95,11 +80,15 @@ index e6a28d032..11f378446 100644
 +    return has_simdgroup_mm && op->src[0]->ne[0] >= 64 && op->src[2]->ne[1] >= 32;
 +}
  
- #ifdef __cplusplus
- }
- #endif
+ bool ggml_metal_op_mul_mat_use_mma    (const struct ggml_tensor * op);
+ bool ggml_metal_op_mul_mat_may_use_mma(const struct ggml_tensor * op); // graph structure only
+ 
+ // the few-row MMA kernel for a src0 type and rt src1 tiles: per 32-weight block (q4_0, q8_0 with one tile), q5_K, or the generic 64-weight chunk kernel
+ enum ggml_metal_mma_kind { GGML_METAL_MMA_KIND_BLK, GGML_METAL_MMA_KIND_Q5_K, GGML_METAL_MMA_KIND_GEN };
+ enum ggml_metal_mma_kind ggml_metal_mul_mv_mma_kind(enum ggml_type type, int rt);
+ 
 diff --git a/ggml/src/ggml-metal/ggml-metal-context.m b/ggml/src/ggml-metal/ggml-metal-context.m
-index bac07fb44..3648d2643 100644
+index 3e208d8..0d5c1f5 100644
 --- a/ggml/src/ggml-metal/ggml-metal-context.m
 +++ b/ggml/src/ggml-metal/ggml-metal-context.m
 @@ -461,22 +461,29 @@ ggml_metal_t ggml_metal_init(ggml_metal_device_t dev, bool prefetch) {
@@ -641,10 +630,10 @@ index bac07fb44..3648d2643 100644
                destinationOffset:bid_dst.offs
                             size:ggml_nbytes(src)];
 diff --git a/ggml/src/ggml-metal/ggml-metal-device.cpp b/ggml/src/ggml-metal/ggml-metal-device.cpp
-index fef265eeb..c6ba245e6 100644
+index ae46df6..0f6d09e 100644
 --- a/ggml/src/ggml-metal/ggml-metal-device.cpp
 +++ b/ggml/src/ggml-metal/ggml-metal-device.cpp
-@@ -674,32 +674,34 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_ssm_conv_batched
+@@ -685,32 +685,34 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_ssm_conv_batched
  }
  
  ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_ssm_scan(ggml_metal_library_t lib, const ggml_tensor * op, bool tail)  {
@@ -683,7 +672,7 @@ index fef265eeb..c6ba245e6 100644
      char name[256];
  
 diff --git a/ggml/src/ggml-metal/ggml-metal-device.m b/ggml/src/ggml-metal/ggml-metal-device.m
-index d895cb10a..c277008a1 100644
+index 892c32f..f8690db 100644
 --- a/ggml/src/ggml-metal/ggml-metal-device.m
 +++ b/ggml/src/ggml-metal/ggml-metal-device.m
 @@ -1,24 +1,24 @@
@@ -712,7 +701,7 @@ index d895cb10a..c277008a1 100644
  #include <stdatomic.h>
  #include <unistd.h>
  
-@@ -907,35 +907,28 @@ void ggml_metal_encoder_debug_group_push(ggml_metal_encoder_t encoder, const cha
+@@ -923,35 +923,28 @@ void ggml_metal_encoder_debug_group_push(ggml_metal_encoder_t encoder, const cha
      }
  }
  
@@ -748,7 +737,7 @@ index d895cb10a..c277008a1 100644
  }
  
  void ggml_metal_encoder_memory_barrier(ggml_metal_encoder_t encoder) {
-@@ -1151,17 +1144,16 @@ static const struct {
+@@ -1167,17 +1160,16 @@ static const struct {
      DEV("M5",       GGML_METAL_DEVICE_M5),
      DEV("M5 Pro",   GGML_METAL_DEVICE_M5_PRO),
      DEV("M5 Max",   GGML_METAL_DEVICE_M5_MAX),
@@ -766,7 +755,7 @@ index d895cb10a..c277008a1 100644
      id<MTLDevice> def = MTLCreateSystemDefaultDevice();
      if (def == nil || !def.isLowPower) {
          return def;
-@@ -1181,16 +1173,17 @@ static id<MTLDevice> ggml_metal_device_default_discrete(void) {
+@@ -1197,16 +1189,17 @@ static id<MTLDevice> ggml_metal_device_default_discrete(void) {
          [def release];
          [all release];
          return best;
@@ -784,7 +773,7 @@ index d895cb10a..c277008a1 100644
          return [device newCommandQueueWithMaxCommandBufferCount:depth];
      }
  
-@@ -1643,43 +1636,43 @@ void ggml_metal_device_free(ggml_metal_device_t dev) {
+@@ -1657,43 +1650,43 @@ void ggml_metal_device_free(ggml_metal_device_t dev) {
          ggml_metal_fusion_info_free(dev->finfo);
  
          ggml_metal_rsets_free(dev->rsets);
@@ -850,7 +839,7 @@ index d895cb10a..c277008a1 100644
              [dev->mtl_device release];
              dev->mtl_device = nil;
          }
-@@ -2334,40 +2327,120 @@ bool ggml_metal_device_supports_op(ggml_metal_device_t dev, const struct ggml_te
+@@ -2340,40 +2333,120 @@ bool ggml_metal_device_supports_op(ggml_metal_device_t dev, const struct ggml_te
                  op->src[1]->ne[1] == 4 &&
                  op->src[2]->ne[0] == 4 &&
                  (op->src[3] == NULL || (op->src[3]->ne[0] == 4 && op->src[3]->ne[1] == 4)) &&
@@ -883,7 +872,7 @@ index d895cb10a..c277008a1 100644
              // the FWHT kernels read an F16 source directly; every other F16 src1 path
              // still goes through ggml_metal_supports_mul_mat_op
              if (op->src[0]->type == GGML_TYPE_F32 && op->src[1]->type == GGML_TYPE_F16 &&
-                 ggml_metal_op_mul_mat_use_fwht(op)) {
+                 ggml_metal_op_mul_mat_use_fwht(op, dev->props.max_theadgroup_memory_size)) {
                  return has_simdgroup_reduction;
              }
 -            return ggml_metal_supports_mul_mat_op(
@@ -983,10 +972,10 @@ index d895cb10a..c277008a1 100644
                      case GGML_TYPE_F32:
                          switch (op->type) {
 diff --git a/ggml/src/ggml-metal/ggml-metal-impl.h b/ggml/src/ggml-metal/ggml-metal-impl.h
-index 05dc54e94..ed84f2843 100644
+index 210a43f..ed8a450 100644
 --- a/ggml/src/ggml-metal/ggml-metal-impl.h
 +++ b/ggml/src/ggml-metal/ggml-metal-impl.h
-@@ -472,16 +472,55 @@ typedef struct {
+@@ -481,16 +481,55 @@ typedef struct {
      float    m1;
      int32_t  n_head_log2;
      float    logit_softcap;
@@ -1043,10 +1032,10 @@ index 05dc54e94..ed84f2843 100644
      uint64_t nb32;
      uint64_t nb33;
 diff --git a/ggml/src/ggml-metal/ggml-metal-ops.cpp b/ggml/src/ggml-metal/ggml-metal-ops.cpp
-index 8f5c9f96e..d059614b1 100644
+index 52ce229..be53e3b 100644
 --- a/ggml/src/ggml-metal/ggml-metal-ops.cpp
 +++ b/ggml/src/ggml-metal/ggml-metal-ops.cpp
-@@ -702,22 +702,53 @@ static int ggml_metal_op_encode_impl(ggml_metal_op_t ctx, int idx) {
+@@ -706,22 +706,53 @@ static int ggml_metal_op_encode_impl(ggml_metal_op_t ctx, int idx) {
          if (!ggml_metal_op_concurrency_add(ctx, ctx->node(idx + i))) {
              ggml_metal_op_concurrency_reset(ctx);
          }
@@ -1100,7 +1089,7 @@ index 8f5c9f96e..d059614b1 100644
      if (ctx->use_capture) {
          ggml_metal_encoder_debug_group_pop(ctx->enc);
      }
-@@ -1149,17 +1180,17 @@ int ggml_metal_op_sum(ggml_metal_op_t ctx, int idx) {
+@@ -1164,17 +1195,17 @@ int ggml_metal_op_sum(ggml_metal_op_t ctx, int idx) {
  
      const int nsg = (nth + nw - 1) / nw;
  
@@ -1119,7 +1108,7 @@ index 8f5c9f96e..d059614b1 100644
  
  int ggml_metal_op_sum_rows(ggml_metal_op_t ctx, int idx) {
      ggml_tensor * op = ctx->node(idx);
-@@ -3050,18 +3081,19 @@ int ggml_metal_op_mul_mat(ggml_metal_op_t ctx, int idx) {
+@@ -3260,18 +3291,19 @@ int ggml_metal_op_mul_mat(ggml_metal_op_t ctx, int idx) {
          };
  
          ggml_metal_encoder_set_pipeline(enc, pipeline);
@@ -1141,7 +1130,7 @@ index 8f5c9f96e..d059614b1 100644
          //    case GGML_TYPE_F32:  GGML_ASSERT(nb01 % 16 == 0); break;
          //    case GGML_TYPE_F16:  GGML_ASSERT(nb01 % 8  == 0); break;
          //    case GGML_TYPE_BF16: GGML_ASSERT(nb01 % 8  == 0); break;
-@@ -3247,18 +3279,221 @@ int ggml_metal_op_mul_mat_id(ggml_metal_op_t ctx, int idx) {
+@@ -3380,18 +3412,221 @@ int ggml_metal_op_mul_mat_id(ggml_metal_op_t ctx, int idx) {
  
      ggml_metal_buffer_id bid_src0 = ggml_metal_get_buffer_id(op->src[0]);
      ggml_metal_buffer_id bid_src1 = ggml_metal_get_buffer_id(op->src[1]);
@@ -1364,7 +1353,7 @@ index 8f5c9f96e..d059614b1 100644
          //    case GGML_TYPE_BF16: GGML_ASSERT(nb01 % 8  == 0); break;
          //    default: break;
          //}
-@@ -3927,17 +4162,17 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
+@@ -4101,17 +4336,17 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
      // is gated by wave64_decode (simdgroup_reduction is forced off there).
      const bool fa_amd_width_ok = props_dev->simd_width == 32
          ? props_dev->has_simdgroup_reduction
@@ -1384,10 +1373,10 @@ index 8f5c9f96e..d059614b1 100644
              /*.ne11          =*/ ne11,
              /*.ne_12_2       =*/ ne12,
 diff --git a/ggml/src/ggml-metal/kernels/fa.metal b/ggml/src/ggml-metal/kernels/fa.metal
-index f7aff1081..79eca9a75 100644
+index d126e51..ab95d54 100644
 --- a/ggml/src/ggml-metal/kernels/fa.metal
 +++ b/ggml/src/ggml-metal/kernels/fa.metal
-@@ -2486,17 +2486,17 @@ template [[host_name("kernel_lightning_indexer_q8_0")]] kernel kernel_lightning_
+@@ -6,17 +6,17 @@
  // dequantize_*_t4 helpers; standard kernels cover their native dimensions and
  // TurboQuant kernels cover padded head dimensions 128/256/384/512/640.
  template<
@@ -1406,7 +1395,7 @@ index f7aff1081..79eca9a75 100644
          device const char * pad   [[buffer(6)]],
          device       char * dst   [[buffer(7)]],
          uint3  tgpig [[threadgroup_position_in_grid]],
-@@ -2903,17 +2903,17 @@ FA_AMD_TURBO_W64("kturbo4_vq4_0", block_turbo4_0, 32, dequantize_turbo4_0_t4, bl
+@@ -423,17 +423,17 @@ FA_AMD_TURBO_W64("kturbo4_vq4_0", block_turbo4_0, 32, dequantize_turbo4_0_t4, bl
  // share K/V tiles staged in threadgroup memory, so the cache is streamed from
  // device memory once per NQ queries instead of once per query.
  template<
@@ -1425,7 +1414,7 @@ index f7aff1081..79eca9a75 100644
          device const char * pad   [[buffer(6)]],
          device       char * dst   [[buffer(7)]],
          uint3  tgpig [[threadgroup_position_in_grid]],
-@@ -3212,17 +3212,17 @@ FA_AMD_TILE_TURBO_W64("kturbo4_vq4_0", block_turbo4_0, 32, dequantize_turbo4_0_t
+@@ -732,17 +732,17 @@ FA_AMD_TILE_TURBO_W64("kturbo4_vq4_0", block_turbo4_0, 32, dequantize_turbo4_0_t
  // Lanes split into groups of 16 so every softmax reduction stays inside one
  // simdgroup on wave32 and wave64 alike. Row strides are padded off the 32-bank
  // period to keep the 16 concurrent rows on 16 different banks.
@@ -1445,7 +1434,7 @@ index f7aff1081..79eca9a75 100644
          device       char * dst   [[buffer(7)]],
          uint3  tgpig [[threadgroup_position_in_grid]],
 diff --git a/ggml/src/ggml-metal/kernels/fa_w64.metal b/ggml/src/ggml-metal/kernels/fa_w64.metal
-index a7bc5d29a..444776226 100644
+index a7bc5d2..4447762 100644
 --- a/ggml/src/ggml-metal/kernels/fa_w64.metal
 +++ b/ggml/src/ggml-metal/kernels/fa_w64.metal
 @@ -8,17 +8,17 @@
@@ -1468,7 +1457,7 @@ index a7bc5d29a..444776226 100644
          device       char * dst   [[buffer(7)]],
          uint3  tgpig [[threadgroup_position_in_grid]],
 diff --git a/ggml/src/ggml-metal/kernels/tosh_moe.metal b/ggml/src/ggml-metal/kernels/tosh_moe.metal
-index 3af62d3bf..97c8427e2 100644
+index 3af62d3..97c8427 100644
 --- a/ggml/src/ggml-metal/kernels/tosh_moe.metal
 +++ b/ggml/src/ggml-metal/kernels/tosh_moe.metal
 @@ -212,27 +212,63 @@ kernel void tosh_moe_stage(
@@ -1535,30 +1524,11 @@ index 3af62d3bf..97c8427e2 100644
 +        }
 +    }
 +}
-diff --git a/src/llama-arch.cpp b/src/llama-arch.cpp
-index 03b7951c3..25693527b 100644
---- a/src/llama-arch.cpp
-+++ b/src/llama-arch.cpp
-@@ -1153,14 +1153,13 @@ bool llm_arch_supports_sm_tensor(const llm_arch & arch) {
-         case LLM_ARCH_MINIMAX_01:
-         case LLM_ARCH_MINIMAX_M2:
-         case LLM_ARCH_MINIMAX_M3:
-         case LLM_ARCH_MISTRAL4:
-         case LLM_ARCH_KIMI_LINEAR:
-         case LLM_ARCH_BAILINGMOE3:
-         case LLM_ARCH_KIMI_K3:
-         case LLM_ARCH_QWEN3TTS:
--        case LLM_ARCH_QWEN4EXP:   // TODO: fix test-llama-archs
-             return false;
-         default:
-             return true;
-     }
- }
 diff --git a/src/llama-graph.cpp b/src/llama-graph.cpp
-index ed5b2b9b6..45fe62370 100644
+index 24695a3..586957f 100644
 --- a/src/llama-graph.cpp
 +++ b/src/llama-graph.cpp
-@@ -3192,17 +3192,19 @@ ggml_tensor * llm_graph_context::build_attn(
+@@ -3293,17 +3293,19 @@ ggml_tensor * llm_graph_context::build_attn(
  
          ggml_build_forward_expand(gf, mctx_cur->cpy_k(ctx0, k_cur, k_idxs, il));
      }
@@ -1579,7 +1549,7 @@ index ed5b2b9b6..45fe62370 100644
          if (arch == LLM_ARCH_GLM4 || arch == LLM_ARCH_GLM4_MOE) {
              // GLM4 and GLM4_MOE seem to have numerical issues with half-precision accumulators
              cur = build_lora_mm(wo, cur);
-@@ -3277,17 +3279,19 @@ ggml_tensor * llm_graph_context::build_attn(
+@@ -3378,17 +3380,19 @@ ggml_tensor * llm_graph_context::build_attn(
      // [1, n_kv, n_batch, n_stream] -> [n_kv, n_batch, 1, n_stream]
      kq_mask_top_k = ggml_view_4d(ctx0, kq_mask_top_k, kq_mask_top_k->ne[1], kq_mask_top_k->ne[2], 1, kq_mask_top_k->ne[3], kq_mask_top_k->nb[2], kq_mask_top_k->nb[3], kq_mask_top_k->nb[3], 0);
  
@@ -1601,10 +1571,10 @@ index ed5b2b9b6..45fe62370 100644
      }
  
 diff --git a/src/llama-model.cpp b/src/llama-model.cpp
-index cd029ff6f..da3ef5d22 100644
+index f3f3ac1..0ab1bf5 100644
 --- a/src/llama-model.cpp
 +++ b/src/llama-model.cpp
-@@ -1779,22 +1779,29 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
+@@ -1859,22 +1859,29 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
                  throw std::runtime_error(format("%s: no CPU backend found", __func__));
              }
          }
@@ -1636,10 +1606,10 @@ index cd029ff6f..da3ef5d22 100644
                  void * addr = nullptr;
                  size_t first, last; // NOLINT
 diff --git a/tools/llama-bench/llama-bench.cpp b/tools/llama-bench/llama-bench.cpp
-index fa5aaf30a..8b3da7f21 100644
+index adf9b3a..db441c6 100644
 --- a/tools/llama-bench/llama-bench.cpp
 +++ b/tools/llama-bench/llama-bench.cpp
-@@ -1609,34 +1609,35 @@ struct test {
+@@ -1630,34 +1630,35 @@ struct test {
          return backends.empty() ? "CPU" : join(backends, ",");
      }
  
@@ -1654,7 +1624,7 @@ index fa5aaf30a..8b3da7f21 100644
              "main_gpu",       "no_kv_offload",  "flash_attn",    "devices",        "tensor_split",
              "tensor_buft_overrides",            "load_mode",     "lazy_mode",
              "embeddings",
-             "no_op_offload",  "no_host",        "fit_target",    "fit_min_ctx",
+             "no_op_offload",  "no_host",        "repack",        "fit_target",    "fit_min_ctx",
              "n_prompt",       "n_gen",          "n_depth",
              "test_time",      "avg_ns",         "stddev_ns",     "avg_ts",         "stddev_ts"
          };
@@ -1673,7 +1643,7 @@ index fa5aaf30a..8b3da7f21 100644
              return INT;
          }
          if (field == "f16_kv" || field == "no_kv_offload" || field == "cpu_strict" ||
-             field == "embeddings" || field == "no_host") {
+             field == "embeddings" || field == "no_host" || field == "repack") {
              return BOOL;
          }
          if (field == "avg_ts" || field == "stddev_ts") {

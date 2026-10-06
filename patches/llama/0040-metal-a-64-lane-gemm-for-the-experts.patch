@@ -1,8 +1,8 @@
 diff --git a/ggml/src/ggml-metal/ggml-metal-device.cpp b/ggml/src/ggml-metal/ggml-metal-device.cpp
-index 7f31804e7..8120d0a51 100644
+index 3aa9260..cbabf04 100644
 --- a/ggml/src/ggml-metal/ggml-metal-device.cpp
 +++ b/ggml/src/ggml-metal/ggml-metal-device.cpp
-@@ -1680,17 +1680,22 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mm_id(ggml_m
+@@ -1810,17 +1810,22 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mm_id(ggml_m
              case GGML_TYPE_IQ3_XXS: break;
              default: wide = false; break;
          }
@@ -27,7 +27,7 @@ index 7f31804e7..8120d0a51 100644
          ggml_metal_cv_set_bool(cv, bc_inp,        FC_MUL_MM + 0);
          ggml_metal_cv_set_bool(cv, use_mm_manual, FC_MUL_MM + 6);
 diff --git a/ggml/src/ggml-metal/kernels/mul_mm_w64.metal b/ggml/src/ggml-metal/kernels/mul_mm_w64.metal
-index 936fb737e..f666bcaaa 100644
+index 936fb73..f666bca 100644
 --- a/ggml/src/ggml-metal/kernels/mul_mm_w64.metal
 +++ b/ggml/src/ggml-metal/kernels/mul_mm_w64.metal
 @@ -308,16 +308,300 @@ kernel void kernel_mul_mm_w64(

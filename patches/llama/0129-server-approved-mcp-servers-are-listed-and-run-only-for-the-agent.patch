@@ -1,7 +1,11 @@
 diff --git a/common/arg.cpp b/common/arg.cpp
+index 949e6fa..b17243f 100644
 --- a/common/arg.cpp
 +++ b/common/arg.cpp
-@@ -3494,10 +3494,17 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
+@@ -3505,16 +3505,23 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
+     ).set_examples({LLAMA_EXAMPLE_SERVER}).set_env("LLAMA_ARG_MCP_AGENT"));
+     add_opt(common_arg(
+         {"--mcp-agent-explicit"},
          "experimental: with --mcp-agent, answer only requests that carry X-Tosh-Agent: on or come from a page in a browser; the rest stay raw inference (default: disabled)",
          [](common_params & params) {
              params.mcp_agent_explicit = true;
@@ -19,10 +23,17 @@ diff --git a/common/arg.cpp b/common/arg.cpp
          {"-no-ag", "--no-agent"},
          "whether to enable CORS proxy and all built-in tools - do not enable in untrusted environments (default: disabled)\n"
          "note: for security reasons, this will limit --cors-origins to localhost by default",
+         [](common_params & params, bool value) {
+             if (value) {
+                 params.server_tools = {"all"};
 diff --git a/common/common.h b/common/common.h
+index 72b08cd..409a80f 100644
 --- a/common/common.h
 +++ b/common/common.h
-@@ -684,10 +684,11 @@ struct common_params {
+@@ -687,16 +687,17 @@ struct common_params {
+     std::vector<std::string> server_tools;
+     std::string server_tools_runtime;
+ 
      // MCP server configs (Cursor-compatible JSON)
      std::string mcp_servers_config;   // path to JSON file with MCP server definitions
      std::string mcp_servers_json;     // inline JSON with MCP server definitions
@@ -34,10 +45,17 @@ diff --git a/common/common.h b/common/common.h
      std::string models_dir    = "";     // directory containing models for the router server
      std::string models_preset = "";     // directory containing model presets for the router server
      int models_max = 4;                 // maximum number of models to load simultaneously
+     bool models_autoload = true;        // automatically load models when requested via the router server
+     std::string models_preset_hf = "";  // show a warning about remote presets on router loaded (if not empty)
+ 
 diff --git a/tools/server/server-tools.cpp b/tools/server/server-tools.cpp
+index e56747d..ba392f6 100644
 --- a/tools/server/server-tools.cpp
 +++ b/tools/server/server-tools.cpp
-@@ -1995,11 +1995,15 @@ static std::unique_ptr<server_tools_runtime> make_tools_runtime(const std::strin
+@@ -1992,17 +1992,21 @@ static std::unique_ptr<server_tools_runtime> make_tools_runtime(const std::strin
+     }
+     make_tools_io({{"runtime", spec}}); // nothing to own, just reject a bad spec now
+     return std::make_unique<server_tools_static_runtime>(spec);
  }
  
  void server_tools::setup(const std::vector<std::string> & enabled_tools,
@@ -54,7 +72,13 @@ diff --git a/tools/server/server-tools.cpp b/tools/server/server-tools.cpp
      }
  
      if (!enabled_tools.empty()) {
-@@ -2068,17 +2072,30 @@ void server_tools::setup(const std::vector<std::string> & enabled_tools,
+         if (!common_subproc::is_supported()) {
+             throw std::runtime_error("subprocess is not enabled on this build");
+         }
+@@ -2065,37 +2069,50 @@ void server_tools::setup(const std::vector<std::string> & enabled_tools,
+ 
+     // A page in a browser runs its own agent loop on these tools, without the checks the Tosh agent
+     // puts around the MCP ones (math among them). It gets the built-in tools only; programs that are not
      // browsers keep the whole list. Browsers mark every request with Sec-Fetch-Site or Origin.
      auto from_browser = [](const server_http_req & req) {
          return !get_header(req.headers, "sec-fetch-site").empty() || !get_header(req.headers, "origin").empty();
@@ -87,7 +111,9 @@ diff --git a/tools/server/server-tools.cpp b/tools/server/server-tools.cpp
                  result.push_back(t->to_json());
              }
              res->data = safe_json_to_str(result);
-@@ -2088,11 +2105,11 @@ void server_tools::setup(const std::vector<std::string> & enabled_tools,
+         } catch (const std::exception & e) {
+             SRV_ERR("got exception: %s\n", e.what());
+             res->status = 500;
              res->data   = safe_json_to_str(format_error_response(e.what(), ERROR_TYPE_SERVER));
          }
          return res;
@@ -100,7 +126,13 @@ diff --git a/tools/server/server-tools.cpp b/tools/server/server-tools.cpp
              json body = json::parse(req.body);
              std::string tool_name = body.at("tool").get<std::string>();
              json params = body.value("params", json::object());
-@@ -2127,10 +2144,14 @@ void server_tools::setup(const std::vector<std::string> & enabled_tools,
+             bool stream = body.value("stream", false);
+ 
+             // accept x-tool-cwd header to override of the process
+@@ -2124,16 +2141,20 @@ void server_tools::setup(const std::vector<std::string> & enabled_tools,
+                 params.erase("resp_type");
+             }
+             auto resp_type = get_header(req.headers, "x-resp-type");
              if (!resp_type.empty()) {
                  params["resp_type"] = resp_type;
              }
@@ -115,10 +147,16 @@ diff --git a/tools/server/server-tools.cpp b/tools/server/server-tools.cpp
                  res->data   = safe_json_to_str(format_error_response(
                      "MCP tools are not run for pages in a browser; use the Tosh agent", ERROR_TYPE_PERMISSION));
                  return res;
+             }
+ 
+             if (stream) {
 diff --git a/tools/server/server-tools.h b/tools/server/server-tools.h
+index 17a1bf7..8e43dc0 100644
 --- a/tools/server/server-tools.h
 +++ b/tools/server/server-tools.h
-@@ -3,10 +3,12 @@
+@@ -1,15 +1,17 @@
+ #pragma once
+ 
  #include "server-common.h"
  #include "server-http.h"
  #include "server-queue.h"
@@ -131,7 +169,13 @@ diff --git a/tools/server/server-tools.h b/tools/server/server-tools.h
  #include <memory>
  
  struct server_tool {
-@@ -41,14 +43,20 @@ struct server_tools {
+     std::string name;
+     std::string display_name;
+     bool permission_write = false;
+@@ -38,19 +40,25 @@ struct server_tools {
+ 
+     // for streaming
+     server_response queue_res;
      std::atomic<int> res_id{0};
  
      // set when --tools-runtime is configured; routes every tool call through an isolate
@@ -153,10 +197,16 @@ diff --git a/tools/server/server-tools.h b/tools/server/server-tools.h
      server_http_context::handler_t handle_post;
  
      server_tools();
+     ~server_tools();
+ };
 diff --git a/tools/server/server.cpp b/tools/server/server.cpp
+index f566fc9..d4032bf 100644
 --- a/tools/server/server.cpp
 +++ b/tools/server/server.cpp
-@@ -16,10 +16,11 @@
+@@ -13,16 +13,17 @@
+ #include "log.h"
+ 
+ #include <algorithm>
  #include <atomic>
  #include <clocale>
  #include <condition_variable>
@@ -168,7 +218,13 @@ diff --git a/tools/server/server.cpp b/tools/server/server.cpp
  #include <thread> // for std::thread::hardware_concurrency
  
  #if defined(_WIN32)
-@@ -157,14 +158,25 @@ static server_http_res_ptr tosh_agent_refuse(const std::string & message) {
+ #include <windows.h>
+ #endif
+ 
+@@ -155,20 +156,31 @@ struct tosh_agent_res : server_http_res {
+ 
+ static server_http_res_ptr tosh_agent_refuse(const std::string & message) {
+     auto res = std::make_unique<server_http_res>();
      res->status = 400;
      res->data = json{{"error", {{"message", message}, {"type", "invalid_request_error"}}}}.dump();
      return res;
@@ -196,7 +252,13 @@ diff --git a/tools/server/server.cpp b/tools/server/server.cpp
              return raw(req);
          }
          const bool asked = mode == "on";
-@@ -190,11 +202,12 @@ static server_http_context::handler_t tosh_agent_handler(server_http_context::ha
+         json body;
+         try {
+             body = json::parse(req.body);
+@@ -188,17 +200,18 @@ static server_http_context::handler_t tosh_agent_handler(server_http_context::ha
+             return raw(req);
+         }
+         std::string host = params.hostnames.empty() ? "127.0.0.1" : params.hostnames.front();
          if (host.empty() || host == "0.0.0.0" || host == "::") {
              host = "127.0.0.1";
          }
@@ -210,7 +272,13 @@ diff --git a/tools/server/server.cpp b/tools/server/server.cpp
              int status = 502;
              json answer = tosh_agent_answer(mcp_mgr.call_tool(params.mcp_agent, "run", args, req.should_stop), status);
              res->status = status;
-@@ -468,12 +481,14 @@ int llama_server(common_params & params, int argc, char ** argv) {
+             res->data = answer.dump();
+             return res;
+         }
+@@ -477,18 +490,20 @@ int llama_server(common_params & params, int argc, char ** argv, server_child &
+     ctx_http.get ("/metrics",                  ex_wrapper(routes.get_metrics));
+     ctx_http.get ("/props",                    ex_wrapper(routes.get_props));
+     ctx_http.post("/props",                    ex_wrapper(routes.post_props));
      ctx_http.get ("/models",                   ex_wrapper(routes.get_models));
      ctx_http.get ("/v1/models",                ex_wrapper(routes.get_models));
      ctx_http.post("/completion",               ex_wrapper(routes.post_completions)); // legacy
@@ -226,7 +294,13 @@ diff --git a/tools/server/server.cpp b/tools/server/server.cpp
      ctx_http.post("/v1/chat/completions/control", ex_wrapper(routes.post_control));
      ctx_http.post("/v1/responses",             ex_wrapper(routes.post_responses_oai));
      ctx_http.post("/responses",                ex_wrapper(routes.post_responses_oai));
-@@ -564,11 +579,17 @@ int llama_server(common_params & params, int argc, char ** argv) {
+     ctx_http.post("/v1/audio/transcriptions",  ex_wrapper(routes.post_transcriptions_oai));
+     ctx_http.post("/audio/transcriptions",     ex_wrapper(routes.post_transcriptions_oai));
+     ctx_http.post("/v1/messages",              ex_wrapper(routes.post_anthropic_messages)); // anthropic messages API
+@@ -574,17 +589,23 @@ int llama_server(common_params & params, int argc, char ** argv, server_child &
+         mcp_mgr.start(params);
+     } catch (const std::exception & e) {
+         SRV_ERR("MCP starting failed: %s\n", e.what());
          return 1;
      }
  
@@ -245,3 +319,6 @@ diff --git a/tools/server/server.cpp b/tools/server/server.cpp
              return 1;
          }
          ctx_http.get ("/tools",           ex_wrapper(tools.handle_get));
+         ctx_http.post("/tools",           ex_wrapper(tools.handle_post));
+         if (!params.server_tools.empty()) {
+             warn_names.push_back("server tools (experimental)");

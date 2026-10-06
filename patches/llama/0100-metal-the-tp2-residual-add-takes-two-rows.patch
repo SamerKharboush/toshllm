@@ -1,8 +1,9 @@
 diff --git a/ggml/src/ggml-metal/ggml-metal-context.m b/ggml/src/ggml-metal/ggml-metal-context.m
-index 622c1c76f..8f31e45d0 100644
+index 6585c52..bbe1f1c 100644
 --- a/ggml/src/ggml-metal/ggml-metal-context.m
 +++ b/ggml/src/ggml-metal/ggml-metal-context.m
-@@ -2213,15 +2213,15 @@ static bool ggml_metal_add_inplace_buffer(ggml_metal_t ctx, id<MTLCommandBuffer>
+@@ -2212,17 +2212,17 @@ static bool ggml_metal_add_inplace_buffer(ggml_metal_t ctx, id<MTLCommandBuffer>
+     }
  
      ggml_metal_encoder_end_encoding(enc);
      ggml_metal_encoder_free(enc);
@@ -19,7 +20,9 @@ index 622c1c76f..8f31e45d0 100644
  static bool ggml_metal_fb_residual(void) {
      static int v = -1;
      if (v < 0) { const char * s = TOSH_ENV("TOSH_MGPU_FB_RESIDUAL"); v = (s && s[0] == '0') ? 0 : 1; }
-@@ -2268,15 +2268,15 @@ bool ggml_metal_fb_residual_take(ggml_metal_device_t dev, const struct ggml_tens
+     return v == 1;
+@@ -2267,17 +2267,17 @@ bool ggml_metal_fb_residual_take(ggml_metal_device_t dev, const struct ggml_tens
+     }
      peer->metal = st->buf;
      peer->offs  = st->off;
      st->state = 3;
@@ -36,7 +39,9 @@ index 622c1c76f..8f31e45d0 100644
      struct ggml_metal_fb_residual_state * st = ggml_metal_fb_residual() ? ggml_metal_fb_residual_get(ctx->dev) : NULL;
      if (st == NULL || st->state != 1) {
          return;
-@@ -3442,15 +3442,15 @@ bool ggml_metal_exchange_reduce(ggml_metal_t ctx_self, ggml_metal_t ctx_peer,
+     }
+@@ -3441,17 +3441,17 @@ bool ggml_metal_exchange_reduce(ggml_metal_t ctx_self, ggml_metal_t ctx_peer,
+     // its own events and counter: the copies number per link and this path numbers by round,
      // and one event cannot carry both without a value landing below the last one signalled
      const uint64_t seq_prev = link_out->seq_x;
      const uint64_t seq_out  = seq;
@@ -53,3 +58,4 @@ index 622c1c76f..8f31e45d0 100644
      if (fb_res) {
          link_out->x_slot[res_slot] = seq;
      } else {
+         link_out->x_slot[0] = seq;

@@ -1,8 +1,8 @@
 diff --git a/ggml/src/ggml-metal/ggml-metal-device.cpp b/ggml/src/ggml-metal/ggml-metal-device.cpp
-index b56d88bd0..688d9ca9c 100644
+index ed3a6a6..09b4003 100644
 --- a/ggml/src/ggml-metal/ggml-metal-device.cpp
 +++ b/ggml/src/ggml-metal/ggml-metal-device.cpp
-@@ -1560,16 +1560,20 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mv(ggml_meta
+@@ -1690,16 +1690,20 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mv(ggml_meta
  
      // A stride that is a multiple of four lets the quant arrays be read a word at a time.
      // The two widths are decided apart: 64 lanes have no last-level cache to hide the extra
@@ -23,7 +23,7 @@ index b56d88bd0..688d9ca9c 100644
  
          if (st != nullptr && strcmp(st, ggml_type_name(tsrc0)) == 0) {
              const char * snr = getenv("TOSH_SWEEP_NR0");
-@@ -1598,33 +1602,34 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mv(ggml_meta
+@@ -1728,33 +1732,34 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mv(ggml_meta
  
      char sfx[64];
      if (w64) {
@@ -59,7 +59,7 @@ index b56d88bd0..688d9ca9c 100644
  
      res.nr0  = nr0;
      res.nr1  = nr1;
-@@ -2018,30 +2023,33 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mv_id(ggml_m
+@@ -2148,30 +2153,33 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mv_id(ggml_m
                        getenv("TOSH_MV_ROW4_DISABLE") == nullptr;
  
      // The expert kernels share the implementations of the dense path, so they can read the
@@ -95,10 +95,10 @@ index b56d88bd0..688d9ca9c 100644
      res.nr0  = nr0;
      res.nr1  = nr1;
 diff --git a/ggml/src/ggml-metal/ggml-metal-device.h b/ggml/src/ggml-metal/ggml-metal-device.h
-index a39a5484f..c2d5fe086 100644
+index 031c327..686e3d7 100644
 --- a/ggml/src/ggml-metal/ggml-metal-device.h
 +++ b/ggml/src/ggml-metal/ggml-metal-device.h
-@@ -300,16 +300,20 @@ struct ggml_metal_device_props {
+@@ -310,16 +310,20 @@ struct ggml_metal_device_props {
      // kernels on the GPU for GCN/Vega instead of falling back to the CPU.
      bool wave64_decode;
  
@@ -120,10 +120,10 @@ index a39a5484f..c2d5fe086 100644
      // rest of the model stays in VRAM
      bool use_host_buffers;
 diff --git a/ggml/src/ggml-metal/ggml-metal-device.m b/ggml/src/ggml-metal/ggml-metal-device.m
-index bedc1c92f..a4dfc0822 100644
+index 50c4e21..caf2821 100644
 --- a/ggml/src/ggml-metal/ggml-metal-device.m
 +++ b/ggml/src/ggml-metal/ggml-metal-device.m
-@@ -1347,16 +1347,66 @@ ggml_metal_device_t ggml_metal_device_init(int device, int n_devices) {
+@@ -1363,16 +1363,66 @@ ggml_metal_device_t ggml_metal_device_init(int device, int n_devices) {
                      getenv("GGML_METAL_WAVE64_UNSAFE") == NULL;
                  if (is_wave64) {
                      fprintf(stderr, "ggml_metal: wave64 mode (SIMD width %d): GPU prefill matmul, "
@@ -191,7 +191,7 @@ index bedc1c92f..a4dfc0822 100644
                      fprintf(stderr, "ggml_metal: wave64 decode ON: quantized/f16/bf16 mat-vec on GPU "
                                      "(see the allowlist in ggml_metal_library_get_pipeline_mul_mv)\n");
 diff --git a/ggml/src/ggml-metal/kernels/mul_mv.metal b/ggml/src/ggml-metal/kernels/mul_mv.metal
-index dbd28b4fa..70adf06bc 100644
+index dbd28b4..70adf06 100644
 --- a/ggml/src/ggml-metal/kernels/mul_mv.metal
 +++ b/ggml/src/ggml-metal/kernels/mul_mv.metal
 @@ -1,11 +1,33 @@
@@ -456,7 +456,7 @@ index dbd28b4fa..70adf06bc 100644
                      w2 = (uint) s2[0] | ((uint) s2[1] << 16);
                      wh = (uint) sh[0] | ((uint) sh[1] << 16);
 diff --git a/ggml/src/ggml-metal/kernels/mul_mv_w64.metal b/ggml/src/ggml-metal/kernels/mul_mv_w64.metal
-index 9def02e1e..ab342c912 100644
+index 9def02e..ab342c9 100644
 --- a/ggml/src/ggml-metal/kernels/mul_mv_w64.metal
 +++ b/ggml/src/ggml-metal/kernels/mul_mv_w64.metal
 @@ -1,15 +1,37 @@

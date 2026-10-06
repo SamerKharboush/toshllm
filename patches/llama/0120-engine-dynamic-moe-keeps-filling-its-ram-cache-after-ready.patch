@@ -1,8 +1,11 @@
 diff --git a/tosh-moe/tosh-hostcache.cpp b/tosh-moe/tosh-hostcache.cpp
-index 054c2df64..04070fbbf 100644
+index 054c2df..bbbd9d5 100644
 --- a/tosh-moe/tosh-hostcache.cpp
 +++ b/tosh-moe/tosh-hostcache.cpp
-@@ -416,12 +416,12 @@ bool tosh_hostcache_start(int n_layer, int n_expert) {
+@@ -413,31 +413,31 @@ bool tosh_hostcache_start(int n_layer, int n_expert) {
+     } else {
+         lock_pools();
+     }
      prewarm(n_io);
      return g.error.empty();
  }
@@ -17,7 +20,8 @@ index 054c2df64..04070fbbf 100644
      if (v == nullptr) return;
      const size_t budget = strcmp(v, "max") == 0 ? g.locked_bytes : (size_t) (atof(v)*1048576.0);
      if (budget == 0) return;
-@@ -430,11 +430,11 @@ static void start_warmup_fill() {
+     const int n_th = std::max(1, getenv("TOSH_DMOE_HOST_FILL_IO") ? atoi(getenv("TOSH_DMOE_HOST_FILL_IO")) : 16);
+     auto next = std::make_shared<std::atomic<int>>(0);
      auto left = std::make_shared<std::atomic<int>>(n_th);
      for (int t = 0; t < n_th; ++t) {
          std::thread([budget, next, left] {
@@ -30,3 +34,6 @@ index 054c2df64..04070fbbf 100644
                  {
                      std::lock_guard<std::mutex> lock(g.m);
                      if (g.pool_of_layer[il] < 0 || g.slot_of[key] >= 0) continue;
+                     if (g.fill_bytes >= budget) break;
+                     auto & pl = g.pools[g.pool_of_layer[il]];
+                     if (pl.free_slots.empty()) { g.fill_skipped++; continue; }   // never evicts

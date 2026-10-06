@@ -1,8 +1,8 @@
 diff --git a/ggml/src/ggml-metal/ggml-metal-device.cpp b/ggml/src/ggml-metal/ggml-metal-device.cpp
-index f27e6f95f..6088ac849 100644
+index 3ccce18..f748f6e 100644
 --- a/ggml/src/ggml-metal/ggml-metal-device.cpp
 +++ b/ggml/src/ggml-metal/ggml-metal-device.cpp
-@@ -1867,17 +1867,21 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mm_id(ggml_m
+@@ -1997,17 +1997,21 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mm_id(ggml_m
  
      const ggml_type tsrc0 = op->src[0]->type;
      const ggml_type tsrc1 = op->src[1]->type;
@@ -25,7 +25,7 @@ index f27e6f95f..6088ac849 100644
      // per expert, +2.3% at 45)
      static const int wide_floor = []() {
          const char * s = TOSH_ENV("TOSH_MMID_WIDE_FLOOR");
-@@ -1916,19 +1920,16 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mm_id(ggml_m
+@@ -2046,19 +2050,16 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mm_id(ggml_m
              case GGML_TYPE_IQ1_M:
              case GGML_TYPE_IQ2_XXS:
              case GGML_TYPE_IQ2_XS:

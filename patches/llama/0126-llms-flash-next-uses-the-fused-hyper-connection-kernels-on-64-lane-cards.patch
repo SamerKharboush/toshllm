@@ -1,8 +1,11 @@
 diff --git a/ggml/src/ggml-metal/ggml-metal-device.cpp b/ggml/src/ggml-metal/ggml-metal-device.cpp
-index bca75d76b..2f2f250a1 100644
+index 166b3fc..8afed42 100644
 --- a/ggml/src/ggml-metal/ggml-metal-device.cpp
 +++ b/ggml/src/ggml-metal/ggml-metal-device.cpp
-@@ -546,21 +546,31 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_lightning_indexe
+@@ -554,27 +554,37 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_lightning_indexe
+ 
+     return res;
+ }
  
  ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_dsv4_hc(ggml_metal_library_t lib, const ggml_tensor * op) {
      char name[256];
@@ -36,11 +39,17 @@ index bca75d76b..2f2f250a1 100644
          default:
              GGML_ABORT("fatal error");
      }
+ 
+     ggml_metal_pipeline_with_params res = ggml_metal_library_get_pipeline(lib, name);
+     if (!res.pipeline) {
 diff --git a/ggml/src/ggml-metal/ggml-metal-device.m b/ggml/src/ggml-metal/ggml-metal-device.m
-index a4b6f1937..b37b6c638 100644
+index 152c25d..4e29f0f 100644
 --- a/ggml/src/ggml-metal/ggml-metal-device.m
 +++ b/ggml/src/ggml-metal/ggml-metal-device.m
-@@ -2873,18 +2873,19 @@ bool ggml_metal_device_supports_op(ggml_metal_device_t dev, const struct ggml_te
+@@ -2876,24 +2876,25 @@ bool ggml_metal_device_supports_op(ggml_metal_device_t dev, const struct ggml_te
+                 op->type         == GGML_TYPE_F32 &&
+                 op->src[0]->ne[0] == 24 &&
+                 op->src[1]->ne[0] >= 3 &&
                  op->src[2]->ne[0] == 24 &&
                  ggml_is_contiguous_rows(op->src[0]) &&
                  ggml_is_contiguous_rows(op->src[1]) &&
@@ -62,11 +71,17 @@ index a4b6f1937..b37b6c638 100644
                  op->src[2]->type == GGML_TYPE_F32 &&
                  (op->src[3] == NULL || op->src[3]->type == GGML_TYPE_F32) &&
                  op->type         == GGML_TYPE_F32 &&
+                 op->src[1]->ne[1] == 4 &&
+                 op->src[2]->ne[0] == 4 &&
+                 (op->src[3] == NULL || (op->src[3]->ne[0] == 4 && op->src[3]->ne[1] == 4)) &&
 diff --git a/ggml/src/ggml-metal/kernels/misc.metal b/ggml/src/ggml-metal/kernels/misc.metal
-index 80dfc2aaf..562e60eee 100644
+index afbf86b..7a480ed 100644
 --- a/ggml/src/ggml-metal/kernels/misc.metal
 +++ b/ggml/src/ggml-metal/kernels/misc.metal
-@@ -820,10 +820,91 @@ kernel void kernel_dsv4_hc_post_nocomb_f32(
+@@ -930,16 +930,97 @@ kernel void kernel_dsv4_hc_post_nocomb_f32(
+     const float xv = *(device const float *) (x + i0*args.nb_x0 + it*args.nb_x1);
+     device const char * rb = residual + i0*args.nb_r0 + it*args.nb_r2;
+     FOR_UNROLL (ushort idst = 0; idst < hc; ++idst) {
          const float rv = *(device const float *) (rb + idst*args.nb_r1);
          *(device float *) (dst + i0*args.nb_d0 + idst*args.nb_d1 + it*args.nb_d2) = xv*post_reg[idst] + rv;
      }
@@ -158,3 +173,6 @@ index 80dfc2aaf..562e60eee 100644
          device const char * x,
          device const char * residual,
          device const char * post,
+         device const char * comb,
+         device       char * dst,
+         uint3   tgpig[[threadgroup_position_in_grid]],

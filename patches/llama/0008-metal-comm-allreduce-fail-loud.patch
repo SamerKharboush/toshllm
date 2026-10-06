@@ -1,8 +1,8 @@
 diff --git a/ggml/src/ggml-metal/ggml-metal.cpp b/ggml/src/ggml-metal/ggml-metal.cpp
-index 60178f062..59cb7b03e 100644
+index 0cd9908..c511642 100644
 --- a/ggml/src/ggml-metal/ggml-metal.cpp
 +++ b/ggml/src/ggml-metal/ggml-metal.cpp
-@@ -1150,59 +1150,76 @@ static bool ggml_backend_metal_comm_allreduce_tensor(void * comm_ctx_v, ggml_ten
+@@ -1156,59 +1156,76 @@ static bool ggml_backend_metal_comm_allreduce_tensor(void * comm_ctx_v, ggml_ten
  
      // Bailing out is only safe while no device has reduced anything: past that the generic
      // path would add the partial sums a second time.

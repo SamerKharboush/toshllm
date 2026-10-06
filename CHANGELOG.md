@@ -5,6 +5,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Changed
+
+- **LLMs: the engine moves to llama.cpp v0.6.0.** It brings upstream's fixes for Qwen3.8-Flash-Next and its own MTP head for that model, fixes for speculative decoding and the recurrent state of hybrid models, and faster model loading. Generation and reading a prompt match the previous engine on dense models and on Dynamic MoE.
+
+### Improved
+
+- **LLMs: Qwen3.8-Flash-Next runs its attention indexer on AMD GPUs.** It ran on the CPU because its kernel needs matrix units AMD cards do not have. On one card of a Radeon Pro Vega II Duo, generation goes from about 15 to 20 tokens a second with a 6K prompt.
+
 ### Fixed
 
 - **LLMs: the FirePro D500 and D700 of a Mac Pro 6,1 can keep the AMD attention kernels when generating.** Those cards give a kernel 32 KB of local memory and the AMD one asked for about 34 KB, so it fell back to the generic kernels, which there are slower than turning flash attention off. A version with half the work groups now fits, and a kernel the driver refuses is no longer rebuilt on every token. Reported in [#12](https://github.com/engeldlgado/toshllm/issues/12).

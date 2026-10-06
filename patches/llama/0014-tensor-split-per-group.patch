@@ -1,8 +1,8 @@
 diff --git a/src/llama-model.cpp b/src/llama-model.cpp
-index 6274fc5cd..cd029ff6f 100644
+index e1717dc..f3f3ac1 100644
 --- a/src/llama-model.cpp
 +++ b/src/llama-model.cpp
-@@ -824,17 +824,18 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
+@@ -842,17 +842,18 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
      tensor_config tc = get_tensor_config();
      split_state.axis = tc.axis;
      if (split_state.axis >= 0 && split_state.axis < GGML_MAX_DIMS) {
@@ -22,7 +22,7 @@ index 6274fc5cd..cd029ff6f 100644
          const std::vector<int64_t> granularity = get_split_granularity(blck_size, tc.il, segments);
          for (size_t is = 0; is < segments.size(); is++) {
              const int64_t  ne_s = segments[is].first;
-@@ -1509,17 +1510,23 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
+@@ -1579,17 +1580,23 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
              // have any to report. in this case, we will use the host memory as a fallback
              // fixes: https://github.com/ggml-org/llama.cpp/issues/18577
              if (free == 0 && total == 0) {
@@ -48,10 +48,10 @@ index 6274fc5cd..cd029ff6f 100644
          splits[i] = split_sum;
      }
 diff --git a/src/llama-model.h b/src/llama-model.h
-index 984b2cf38..7f6de0b1b 100644
+index 2243377..c0764ca 100644
 --- a/src/llama-model.h
 +++ b/src/llama-model.h
-@@ -599,16 +599,19 @@ struct llama_layer {
+@@ -610,16 +610,19 @@ struct llama_layer {
  struct llama_device {
      bool is_meta;
  
@@ -68,14 +68,14 @@ index 984b2cf38..7f6de0b1b 100644
  
  struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const struct ggml_tensor * tensor, void * userdata);
  
- struct llama_model {
-     llm_type type = LLM_TYPE_UNKNOWN;
-     llm_arch arch = LLM_ARCH_UNKNOWN;
-@@ -710,16 +713,22 @@ struct llama_model {
-     std::vector<std::pair<std::string, struct ggml_tensor *>> tensors_by_name;
- 
-     // for keeping track of associated LoRA adapters
+ struct llama_prec_policy {
+     // the key is the weight tensor `res->src[0]`, stores the recommended accumulation type of the op (unused for now)
+     // TODO: migrate ad-hoc ggml_prec_set_acc() calls to this container + update apply() to use it
+@@ -741,16 +744,22 @@ struct llama_model {
      std::unordered_set<llama_adapter_lora *> loras;
+ 
+     // which tensors can be prefetched - driven by TENSOR_READ_LAZY
+     std::unordered_set<const ggml_tensor *> can_prefetch;
  
      // statically allocated context for assigning
      struct llama_meta_device_get_split_state_userdata get_split_state_ud;
@@ -95,7 +95,7 @@ index 984b2cf38..7f6de0b1b 100644
      std::string arch_name() const;
      std::string type_name() const;
 diff --git a/src/llama.cpp b/src/llama.cpp
-index da2ef8f2f..395e5b8dc 100644
+index 671776e..e490d6b 100644
 --- a/src/llama.cpp
 +++ b/src/llama.cpp
 @@ -194,22 +194,27 @@ static bool llama_prepare_model_devices(const llama_model_params & params, llama

@@ -1,5 +1,5 @@
 diff --git a/ggml/src/ggml-metal/ggml-metal-context.m b/ggml/src/ggml-metal/ggml-metal-context.m
-index 45289079e..3622fe6cb 100644
+index da57f73..af605e8 100644
 --- a/ggml/src/ggml-metal/ggml-metal-context.m
 +++ b/ggml/src/ggml-metal/ggml-metal-context.m
 @@ -619,16 +619,17 @@ static bool ggml_metal_ctime(void) {

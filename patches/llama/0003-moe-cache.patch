@@ -1,6 +1,6 @@
 diff --git a/ggml/src/ggml-turbo-quant.c b/ggml/src/ggml-turbo-quant.c
 new file mode 100644
-index 000000000..c10b750d1
+index 0000000..c10b750
 --- /dev/null
 +++ b/ggml/src/ggml-turbo-quant.c
 @@ -0,0 +1,1030 @@
@@ -1036,7 +1036,7 @@ index 000000000..c10b750d1
 +}
 diff --git a/tests/test-turbo-quant.c b/tests/test-turbo-quant.c
 new file mode 100644
-index 000000000..789bdfb6d
+index 0000000..789bdfb
 --- /dev/null
 +++ b/tests/test-turbo-quant.c
 @@ -0,0 +1,125 @@
@@ -1167,7 +1167,7 @@ index 000000000..789bdfb6d
 +}
 diff --git a/tosh-moe/tosh-moe-cache.cpp b/tosh-moe/tosh-moe-cache.cpp
 new file mode 100644
-index 000000000..c2a583a93
+index 0000000..c2a583a
 --- /dev/null
 +++ b/tosh-moe/tosh-moe-cache.cpp
 @@ -0,0 +1,579 @@
@@ -1752,7 +1752,7 @@ index 000000000..c2a583a93
 +}
 diff --git a/tosh-moe/tosh-moe-fill.cpp b/tosh-moe/tosh-moe-fill.cpp
 new file mode 100644
-index 000000000..235508a7c
+index 0000000..235508a
 --- /dev/null
 +++ b/tosh-moe/tosh-moe-fill.cpp
 @@ -0,0 +1,164 @@
@@ -1922,7 +1922,7 @@ index 000000000..235508a7c
 +}
 diff --git a/tosh-moe/tosh-moe-lru.metal b/tosh-moe/tosh-moe-lru.metal
 new file mode 100644
-index 000000000..3af62d3bf
+index 0000000..3af62d3
 --- /dev/null
 +++ b/tosh-moe/tosh-moe-lru.metal
 @@ -0,0 +1,238 @@
@@ -2166,7 +2166,7 @@ index 000000000..3af62d3bf
 +}
 diff --git a/tosh-moe/tosh-moe.h b/tosh-moe/tosh-moe.h
 new file mode 100644
-index 000000000..3e62af81b
+index 0000000..3e62af8
 --- /dev/null
 +++ b/tosh-moe/tosh-moe.h
 @@ -0,0 +1,152 @@

@@ -1,8 +1,11 @@
 diff --git a/common/tosh-plan.cpp b/common/tosh-plan.cpp
-index 0c7022c4f..a93bedbe7 100644
+index 0c7022c..a93bedb 100644
 --- a/common/tosh-plan.cpp
 +++ b/common/tosh-plan.cpp
-@@ -15,10 +15,11 @@
+@@ -12,16 +12,17 @@
+ #endif
+ 
+ #include <algorithm>
  #include <climits>
  #include <cmath>
  #include <cstdio>
@@ -14,7 +17,13 @@ index 0c7022c4f..a93bedbe7 100644
  
  #ifdef __APPLE__
  #include <chrono>
-@@ -823,15 +824,32 @@ bool tosh_plan_apply(common_params & params, tosh_plan * out) {
+ #include <thread>
+ #include <mach/mach.h>
+ #include <sys/sysctl.h>
+@@ -820,21 +821,38 @@ bool tosh_plan_apply(common_params & params, tosh_plan * out) {
+ 
+     const tosh_plan_candidate * sel = nullptr;
+     // VRAM kept free after every known allocation, for the desktop and other apps; the plan
      // already counts weights, KV, compute, prefill slots and the driver margin
      // an MTP head adds its own context and buffers after the plan; past the reserve the driver pages
      // GPU memory into wired RAM, which slows every token and can use up the host
@@ -52,7 +61,13 @@ index 0c7022c4f..a93bedbe7 100644
          const tosh_plan_candidate * q8  = kvs.size() > 1 ? find("full_gpu", kvs[1], 0) : nullptr;
          if (force.empty() || force == "full") {
              if (f16 && f16->valid) { sel = f16; p.reason = "the model and the requested context fit with the reserve"; }
-@@ -854,11 +872,12 @@ bool tosh_plan_apply(common_params & params, tosh_plan * out) {
+             else if (q8 && q8->valid) { sel = q8; p.reason = "q8_0 cache makes the full model fit with the reserve"; }
+         }
+         if (sel == nullptr && !no_dmoe && (force.empty() || force == "dmoe")) {
+@@ -851,17 +869,18 @@ bool tosh_plan_apply(common_params & params, tosh_plan * out) {
+         }
+         if (sel == nullptr && (force.empty() || force == "legacy")) {
+             const tosh_plan_candidate * l16 = find("legacy_offload", kvs[0], 0);
              const tosh_plan_candidate * l8  = kvs.size() > 1 ? find("legacy_offload", kvs[1], 0) : nullptr;
              if (l16 && l16->valid) sel = l16; else if (l8 && l8->valid) sel = l8;
              if (sel) p.reason = "mixed execution is not available here; expert layers go to the host";
@@ -66,7 +81,13 @@ index 0c7022c4f..a93bedbe7 100644
      }
  
      if (sel == nullptr) {
-@@ -1000,17 +1019,25 @@ bool tosh_plan_apply(common_params & params, tosh_plan * out) {
+         p.state  = TOSH_PLAN_UNSUPPORTED;
+         p.mode   = "none";
+         p.code   = "PLAN_UNSUPPORTED";
+@@ -997,23 +1016,31 @@ bool tosh_plan_apply(common_params & params, tosh_plan * out) {
+         if (changed) {
+             LOG_WRN("%s: memory changed while planning (reclaimable %.1f -> %.1f GiB), planning again\n",
+                     __func__, hi0.reclaimable_mib/1024, hi1.reclaimable_mib/1024);
              sel = decide(hi1);
              p.warnings.push_back("REPLANNED_AFTER_MEMORY_CHANGE");
          }
@@ -92,11 +113,17 @@ index 0c7022c4f..a93bedbe7 100644
      params.cache_type_k = p.kv;
      params.cache_type_v = p.kv;
      params.n_ctx = p.n_ctx;
+     params.n_ubatch = p.ubatch;
+     params.n_batch  = std::max(params.n_batch, p.ubatch);
+     if (params.cache_ram_mib != 0) params.cache_ram_mib = (int32_t) p.prompt_cache_mib;
 diff --git a/common/tosh-plan.h b/common/tosh-plan.h
-index 8a248b679..430f53fa4 100644
+index 8a248b6..430f53f 100644
 --- a/common/tosh-plan.h
 +++ b/common/tosh-plan.h
-@@ -97,10 +97,11 @@ struct tosh_plan {
+@@ -94,16 +94,17 @@ struct tosh_plan {
+     std::string mlock;              // required, not_required, not_lockable
+     std::string dispersion;         // normal, high
+     // TOSH_AUTO_HOST_POLICY=runtime (experimental): host memory budget from the machine's state now
      std::string host_policy;        // static, runtime
      std::string host_pressure;      // NORMAL, ELEVATED, CRITICAL
      std::string full_host_code;     // FULL_HOST_SAFE or why the whole bank is not taken
@@ -108,3 +135,6 @@ index 8a248b679..430f53fa4 100644
      double      wired_mib         = 0;
      double      compressed_mib    = 0;
      double      swap_used_mib     = 0;
+     double      self_rss_mib      = 0;
+     double      static_reserve_mib = 0;
+     double      headroom_mib      = 0;

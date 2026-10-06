@@ -1,8 +1,13 @@
 diff --git a/ggml/src/ggml-metal/ggml-metal-ops.cpp b/ggml/src/ggml-metal/ggml-metal-ops.cpp
-index 508d09cc0..63646ed57 100644
+index e3bfe0b..9f09815 100644
 --- a/ggml/src/ggml-metal/ggml-metal-ops.cpp
 +++ b/ggml/src/ggml-metal/ggml-metal-ops.cpp
-@@ -42,6 +42,8 @@ static inline int tosh_moe_off_active(int, int, int)       { return 0; }
+@@ -37,16 +37,18 @@ static inline int tosh_moe_off_active(int, int, int)       { return 0; }
+ #include <mutex>
+ #include <cassert>
+ #include <algorithm>
+ #include <cstdlib>
+ #include <cstring>
  #include <limits>
  #include <cmath>
  #include <unordered_map>
@@ -11,7 +16,17 @@ index 508d09cc0..63646ed57 100644
  
  // Encoding runs on one thread per card, and the staged MoE path writes these
  // while other cards read them.
-@@ -4661,6 +4663,30 @@ static int64_t ggml_metal_fa_wg_dk64_min_kv_w64(int64_t n_head, int64_t n_head_k
+ static std::mutex g_tosh_moe_mutex;
+ static std::unordered_map<const ggml_tensor *, ggml_metal_buffer_id> g_tosh_moe_staged_ids;
+ 
+ // threadgroups needed to fill the GPU
+ // TODO: dedup
+@@ -4783,16 +4785,40 @@ static int64_t ggml_metal_fa_wg_dk64_min_kv_w64(int64_t n_head, int64_t n_head_k
+     for (const auto & m : measured) {
+         if (m.n_head == n_head && m.n_head_kv == n_head_kv) {
+             return m.min_kv;
+         }
+     }
      return 0;
  }
  
@@ -42,7 +57,17 @@ index 508d09cc0..63646ed57 100644
  // Suffix for the AMD vec FA pipeline name, or nullptr for types we don't instantiate.
  static const char * ggml_metal_fa_amd_type_suffix(enum ggml_type t) {
      switch (t) {
-@@ -5209,16 +5235,12 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
+         case GGML_TYPE_F16:  return "f16";
+         case GGML_TYPE_Q8_0: return "q8_0";
+         case GGML_TYPE_Q4_0: return "q4_0";
+         case GGML_TYPE_TURBO2_0: return "turbo2";
+         case GGML_TYPE_TURBO3_0: return "turbo3";
+@@ -5372,26 +5398,22 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
+             // picked here instead. Same group of sixteen; the fallback is the 32-lane kernel.
+             if (fa_pf_asym && props_dev->simd_width == 64 &&
+                 TOSH_ENV("TOSH_FA_PF_W64_DISABLE") == nullptr) {
+                 char w64_name[96];
+                 // sixteen reproduces the 32-lane kernel exactly, so it is the control; the
                  // sweep that closed the symmetric heads there never covered an asymmetric one
                  const char * slg = TOSH_ENV("TOSH_FA_PF_LG");
                  snprintf(w64_name, sizeof(w64_name), "%s_w64_lg%d", fa_pf_pipeline, slg ? atoi(slg) : 16);
@@ -61,7 +86,17 @@ index 508d09cc0..63646ed57 100644
  
              // Which twin a head actually lands on cannot be read from the timings: a switch that
              // never reaches the kernel gives the same number on both sides.
-@@ -5267,10 +5289,7 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
+             if (TOSH_ENV("TOSH_FA_PF_DEBUG") != nullptr) {
+                 fprintf(stderr, "FA_PF dk=%d dv=%d bq=%d -> %s%s\n",
+                         (int) ne00, (int) ne20, fa_pf_bq, fa_pf_pipeline,
+                         pipeline.pipeline ? "" : "  (NO EXISTE, cae al tile)");
+             }
+@@ -5430,20 +5452,17 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
+                          ggml_metal_fa_amd_type_suffix(op->src[1]->type), ggml_metal_fa_amd_type_suffix(op->src[2]->type),
+                          props_dev->simd_width == 64 ? "_w64" : "");
+             } else {
+                 snprintf(fa_tile_pipeline, sizeof(fa_tile_pipeline), "kernel_flash_attn_ext_tile_amd_dk%d_k%s_v%s%s", (int) ne00,
+                          ggml_metal_fa_amd_type_suffix(op->src[1]->type), ggml_metal_fa_amd_type_suffix(op->src[2]->type),
                           props_dev->simd_width == 64 ? "_w64" : "");
              }
  
@@ -73,7 +108,17 @@ index 508d09cc0..63646ed57 100644
  
              // a missed instantiation leaves a null pipeline; fall through to the vec route
              if (pipeline.pipeline) {
-@@ -5399,10 +5418,18 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
+                 ggml_metal_encoder_set_pipeline(enc, pipeline);
+                 ggml_metal_encoder_set_bytes   (enc, &args, sizeof(args), 0);
+                 ggml_metal_encoder_set_buffer  (enc, bid_src0, 1);
+                 ggml_metal_encoder_set_buffer  (enc, bid_src1, 2);
+                 ggml_metal_encoder_set_buffer  (enc, bid_src2, 3);
+@@ -5562,20 +5581,28 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
+             // whole simdgroups only: a partial one loses its slice of the count
+             const int nwi = props_dev->simd_width;
+             nthi = std::max(nwi, (nthi/nwi)*nwi);
+ 
+             ggml_metal_encoder_dispatch_threadgroups(enc, ne31, ne32, ne33, nthi, 1, 1);
              ggml_metal_op_concurrency_reset(ctx);
          }
  
@@ -96,11 +141,21 @@ index 508d09cc0..63646ed57 100644
          }
  
          // dispatching more threads than the pipeline admits hangs the GPU, and how many
+         // it admits depends on the K type's dequant; fall through rather than risk it
+         if (!pipeline.pipeline) {
+             // a missed instantiation leaves a null pipeline; fall through rather than crash
+             GGML_LOG_WARN("%s: %s is not instantiated; using the generic kernels\n",
+                           __func__, fa_amd_nwg > 1 ? fa_amd_wg_pipeline : fa_amd_pipeline);
 diff --git a/ggml/src/ggml-metal/kernels/fa.metal b/ggml/src/ggml-metal/kernels/fa.metal
-index 694de5b86..b8af5ed87 100644
+index 11c7efe..5f571ac 100644
 --- a/ggml/src/ggml-metal/kernels/fa.metal
 +++ b/ggml/src/ggml-metal/kernels/fa.metal
-@@ -2823,6 +2823,30 @@ template [[host_name("kernel_flash_attn_ext_vec_amd_dk" #dk "_" nm "_w64_wg32")]
+@@ -329,16 +329,40 @@ template [[host_name("kernel_flash_attn_ext_vec_amd_dk" #dk "_" nm "_w64_wg32")]
+     FA_AMD_INST_W64_S(128,  8,  8, nm, kt, nkk, dkf, vt, nkv, dvf) \
+     FA_AMD_INST_W64_S(256,  8, 16, nm, kt, nkk, dkf, vt, nkv, dvf) \
+     FA_AMD_INST_W64_S(512,  8, 32, nm, kt, nkk, dkf, vt, nkv, dvf) \
+     FA_AMD_INST_W64_WG( 64, 16,  8, nm, kt, nkk, dkf, vt, nkv, dvf) \
+     FA_AMD_INST_W64_WG(128,  8,  8, nm, kt, nkk, dkf, vt, nkv, dvf)
  FA_AMD_PAIR_W64("kf16_vf16",   half4,      1, dequantize_f16_t4,  half4,      1, dequantize_f16_t4)
  FA_AMD_PAIR_W64("kq8_0_vq8_0", block_q8_0, 8, dequantize_q8_0_t4_h2, block_q8_0, 8, dequantize_q8_0_t4_h2)
  
@@ -131,3 +186,8 @@ index 694de5b86..b8af5ed87 100644
  // DK=72 (vision towers: qwen3vl_merger and SigLIP are 1152/16). f16 only: 72 is
  // not a multiple of the 32-element quant block, so quantized K/V cannot occur.
  // DV4=18 is not a power of two, so the auto subw would break the shuffle reduction;
+ // pin subw=16 and let the ch < DV4 guards cover the top two chunks.
+ FA_AMD_INST_S   (72, 32, 16, "kf16_vf16", half4, 1, dequantize_f16_t4, half4, 1, dequantize_f16_t4)
+ FA_AMD_INST_W64_S(72, 16, 16, "kf16_vf16", half4, 1, dequantize_f16_t4, half4, 1, dequantize_f16_t4)
+ // UNet diffusion heads (SD 1.5 runs 40 at full resolution, then 80 and 160). Same
+ // reasoning as dk72: DV4 is not a power of two, so subw is pinned and the guards

@@ -1,8 +1,11 @@
 diff --git a/ggml/src/ggml-backend.cpp b/ggml/src/ggml-backend.cpp
-index 19371bd2d..9e4d3fa37 100644
+index 6da0e40..3eb937d 100644
 --- a/ggml/src/ggml-backend.cpp
 +++ b/ggml/src/ggml-backend.cpp
-@@ -12,17 +12,24 @@
+@@ -9,23 +9,30 @@
+ #endif
+ 
+ #include "ggml-backend.h"
  #include "ggml-backend-impl.h"
  #include "ggml-alloc.h"
  #include "ggml-impl.h"
@@ -27,7 +30,13 @@ index 19371bd2d..9e4d3fa37 100644
  #include <assert.h>
  #include <limits.h>
  #include <stdarg.h>
-@@ -2000,10 +2007,26 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <string.h>
+@@ -2153,16 +2160,32 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
+                                 GGML_ASSERT(id >= 0 && id < n_expert);
+                                 ggml_bitset_set(used_ids.data(), id);
+                             }
                          }
  
                          prev_ids_tensor = ids_tensor;
@@ -54,11 +63,17 @@ index 19371bd2d..9e4d3fa37 100644
                          const size_t expert_offset = first_id * expert_size;
                          const size_t expert_size_copy =  (last_id - first_id + 1) * expert_size;
                          const size_t padding = std::min<size_t>(expert_size, 512);
+                         const size_t padding_end = last_id < n_expert - 1 ? padding : 0;
+ 
+                         ggml_backend_tensor_set_async(split_backend,
 diff --git a/ggml/src/ggml-metal/ggml-metal-context.m b/ggml/src/ggml-metal/ggml-metal-context.m
-index 081508717..eb12a0451 100644
+index 9f3d0f3..2bfe4d9 100644
 --- a/ggml/src/ggml-metal/ggml-metal-context.m
 +++ b/ggml/src/ggml-metal/ggml-metal-context.m
-@@ -1592,10 +1592,25 @@ static bool ggml_metal_dmoe_bank_upload(ggml_metal_t ctx, struct ggml_tensor * t
+@@ -1589,16 +1589,31 @@ static bool ggml_metal_dmoe_bank_upload(ggml_metal_t ctx, struct ggml_tensor * t
+     static bool registered = false;
+     if (!registered) {
+         registered = true;
          atexit(ggml_metal_dmoe_pf_report);
      }
      if (plan.rows != NULL && ggml_metal_dmoe_compact_upload(ctx, &plan, bid_dst, bid_arena, data)) {
@@ -84,11 +99,17 @@ index 081508717..eb12a0451 100644
      size_t offs_src = 0;
      id<MTLBuffer> buf_src = ggml_metal_device_wrap_host(ctx->dev, data, size, &offs_src);
      if (buf_src == nil) {
+         stage = ctx->prefetch_stage_cur;
+         ctx->prefetch_stage_cur = (ctx->prefetch_stage_cur + 1) % ctx->prefetch_stage_count;
+         if (ctx->prefetch_stage_cmds[stage]) {
 diff --git a/src/llama-tosh-dmoe.cpp b/src/llama-tosh-dmoe.cpp
-index 83c3eefa5..a9e545b84 100644
+index 83c3eef..a9e545b 100644
 --- a/src/llama-tosh-dmoe.cpp
 +++ b/src/llama-tosh-dmoe.cpp
-@@ -290,13 +290,14 @@ struct executor {
+@@ -287,19 +287,20 @@ struct executor {
+         }
+         pinned.clear();
+         for (const miss & m : misses) pinned.push_back(m.e);
          pinned_il = il;
          if (!tosh_hostcache_acquire(il, pinned.data(), (int) pinned.size(), kind)) {
              tosh_dmoe_fail(tosh_hostcache_error());
@@ -104,7 +125,13 @@ index 83c3eefa5..a9e545b84 100644
          return true;
      }
  
-@@ -769,18 +770,18 @@ struct policy {
+     void unpin_misses() {
+         if (!pinned.empty()) {
+             tosh_hostcache_release(pinned_il, pinned.data(), (int) pinned.size());
+@@ -766,24 +767,24 @@ struct policy {
+         const host_bank & b = (*banks)[il];
+         const int e = slots[(size_t) il*Q + s].e;
+         bool ok = true;
          const int32_t eid = e;
          const bool hc = tosh_hostcache_on();
          if (hc && !tosh_hostcache_acquire(il, &eid, 1, TOSH_HC_VERIFY)) {
@@ -125,7 +152,13 @@ index 83c3eefa5..a9e545b84 100644
          return ok;
      }
  
-@@ -1054,13 +1055,15 @@ struct policy {
+     void cycle() {
+         const clk::time_point t0 = clk::now();
+         const uint64_t sync = tosh_dmoe_completed_value();
+@@ -1051,19 +1052,21 @@ struct policy {
+                 const host_bank & b = (*banks)[il];
+                 tosh_dmoe_copy copies[3];
+                 int n_copies = 0;
                  const int32_t eid = e;
                  const bool hc = tosh_hostcache_on();
                  if (hc && !tosh_hostcache_acquire(il, &eid, 1, TOSH_HC_PROMOTE)) {
@@ -142,7 +175,13 @@ index 83c3eefa5..a9e545b84 100644
                  sl.e = e; sl.gen++; sl.issued = clk::now();
                  const clk::time_point tu = clk::now();
                  sl.ticket = up->upload(up->ctx, copies, n_copies);
-@@ -1464,38 +1467,34 @@ static void dmoe_lock_bank(const std::vector<llama_layer> & layers) {
+                 if (hc) tosh_hostcache_release(il, &eid, 1);
+                 us_upload_call += std::chrono::duration<double, std::micro>(clk::now() - tu).count();
+                 if (sl.ticket == 0) {
+@@ -1461,44 +1464,40 @@ static void dmoe_lock_bank(const std::vector<llama_layer> & layers) {
+ 
+ // EXPERIMENTAL: the bank tensors were left unread; the cache reads experts from the file. The
+ // untouched bank pages are made inaccessible so a reader that bypasses the cache fails loudly.
  static void dmoe_start_hostcache(const std::vector<llama_layer> & layers, const llama_hparams & hparams) {
      static bool started = false;
      if (started) {
@@ -187,11 +226,17 @@ index 83c3eefa5..a9e545b84 100644
              const uintptr_t b = ((uintptr_t) t->data + ggml_nbytes(t)) & ~(uintptr_t) (page - 1);
              if (b > a) mprotect((void *) a, b - a, PROT_NONE);
          }
+     }
+     atexit(tosh_hostcache_report);
+     started = true;
 diff --git a/tosh-moe/tosh-hostcache.cpp b/tosh-moe/tosh-hostcache.cpp
-index 4fdb4ce2e..f207be13e 100644
+index 4fdb4ce..f207be1 100644
 --- a/tosh-moe/tosh-hostcache.cpp
 +++ b/tosh-moe/tosh-hostcache.cpp
-@@ -199,11 +199,12 @@ bool tosh_hostcache_on(void) {
+@@ -196,17 +196,18 @@ extern "C" {
+ bool tosh_hostcache_on(void) {
+     static const bool on = getenv("TOSH_DMOE_HOST_CACHE_MIB") != nullptr;
+     return on;
  }
  
  bool tosh_hostcache_is_bank_name(const char * name) {
@@ -205,7 +250,13 @@ index 4fdb4ce2e..f207be13e 100644
  void tosh_hostcache_note_file_tensor(const void * data, size_t nbytes, int fd, uint64_t file_off) {
      std::lock_guard<std::mutex> lock(g.m);
      g.noted[data] = { nbytes, file_off };
-@@ -260,14 +261,19 @@ bool tosh_hostcache_start(int n_layer, int n_expert) {
+     if (g.path.empty()) {
+         char buf[MAXPATHLEN];
+         if (fcntl(fd, F_GETPATH, buf) == 0) g.path = buf;
+@@ -257,20 +258,25 @@ bool tosh_hostcache_start(int n_layer, int n_expert) {
+         if (layer_bytes[il] == 0) continue;
+         bank_bytes += layer_bytes[il]*(size_t) n_expert;
+         int pi = -1;
          for (int k = 0; k < (int) g.pools.size(); ++k) if (g.pools[k].slot_bytes == layer_bytes[il]) pi = k;
          if (pi < 0) { pi = (int) g.pools.size(); g.pools.emplace_back(); g.pools.back().slot_bytes = layer_bytes[il]; }
          g.pool_of_layer[il] = pi;
@@ -226,7 +277,13 @@ index 4fdb4ce2e..f207be13e 100644
          g.n_slots += pl.n;
          pl.bytes = (size_t) pl.n*pl.slot_bytes;
          void * p = mmap(nullptr, std::max<size_t>(pl.bytes, 1), PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
-@@ -354,10 +360,11 @@ static void prewarm(int n_io) {
+         if (p == MAP_FAILED) { g.error = "cannot allocate the expert cache"; return false; }
+         if (mlock(p, pl.bytes) != 0) {
+             g.error = std::string("DMOE_HOST_BANK_NOT_LOCKABLE: mlock of the expert cache failed: ") + strerror(errno);
+@@ -351,16 +357,17 @@ static void prewarm(int n_io) {
+     struct job { int il, part, e0; std::vector<int> s; };
+     std::vector<job> jobs;
+     if (by_offset) {
          std::vector<int> order = slots;
          std::sort(order.begin(), order.end(), [](int a, int b) { return g.key_of[a] < g.key_of[b]; });
          for (int part = 0; part < 3; ++part) {
@@ -238,7 +295,13 @@ index 4fdb4ce2e..f207be13e 100644
                  // a run stays inside one layer's tensor
                  while (k < order.size() && g.key_of[order[k]] == k0 + (int) (k - i) && g.key_of[order[k]] / g.n_expert == j.il &&
                         j.s.size() < 64) j.s.push_back(order[k++]);
-@@ -371,11 +378,13 @@ static void prewarm(int n_io) {
+                 jobs.push_back(std::move(j));
+                 i = k;
+             }
+@@ -368,17 +375,19 @@ static void prewarm(int n_io) {
+         std::sort(jobs.begin(), jobs.end(), [](const job & a, const job & b) {
+             const uint64_t oa = g.parts[a.il*3 + a.part].file_off + (uint64_t) a.e0*g.parts[a.il*3 + a.part].bytes;
+             const uint64_t ob = g.parts[b.il*3 + b.part].file_off + (uint64_t) b.e0*g.parts[b.il*3 + b.part].bytes;
              return oa < ob;
          });
      } else {
@@ -253,3 +316,6 @@ index 4fdb4ce2e..f207be13e 100644
      std::atomic<size_t> next{0};
      std::atomic<uint64_t> n_reads{0};
      std::vector<std::thread> th;
+     for (int t = 0; t < n_io; ++t) {
+         th.emplace_back([&] {
+             for (size_t i; (i = next++) < jobs.size();) {

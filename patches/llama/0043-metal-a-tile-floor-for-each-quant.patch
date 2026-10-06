@@ -1,8 +1,8 @@
 diff --git a/ggml/src/ggml-metal/ggml-metal-device.cpp b/ggml/src/ggml-metal/ggml-metal-device.cpp
-index cb0ef215c..38ba4ec56 100644
+index 81fd27f..0ce9801 100644
 --- a/ggml/src/ggml-metal/ggml-metal-device.cpp
 +++ b/ggml/src/ggml-metal/ggml-metal-device.cpp
-@@ -968,27 +968,63 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mm(ggml_meta
+@@ -1098,27 +1098,63 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mm(ggml_meta
      }
      const bool narrow = use_mm_manual && !has_tensor && tsrc1 == GGML_TYPE_F32 &&
                          (op->ne[1] <= 32 || tail_32);
@@ -68,7 +68,7 @@ index cb0ef215c..38ba4ec56 100644
          // it needs 64 accumulators, so only where the dequant leaves the registers
          switch (tsrc0) {
              case GGML_TYPE_F16:
-@@ -1010,18 +1046,22 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mm(ggml_meta
+@@ -1140,18 +1176,22 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mm(ggml_meta
              case GGML_TYPE_IQ4_XS:
              case GGML_TYPE_IQ3_S:
              case GGML_TYPE_IQ2_S:

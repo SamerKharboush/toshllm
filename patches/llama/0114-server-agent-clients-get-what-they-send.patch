@@ -1,8 +1,11 @@
 diff --git a/common/chat.cpp b/common/chat.cpp
-index ed1942e15..bc1115ba1 100644
+index 3502b96..3f3ca3e 100644
 --- a/common/chat.cpp
 +++ b/common/chat.cpp
-@@ -1027,10 +1027,24 @@ static void system_message_not_supported(json & messages) {
+@@ -1024,16 +1024,30 @@ static void system_message_not_supported(json & messages) {
+             messages.erase(0);
+         } else {
+             LOG_WRN("Removing system prompt due to template not supporting system role\n");
              messages.erase(0);
          }
      }
@@ -27,7 +30,13 @@ index ed1942e15..bc1115ba1 100644
      for (auto & message : messages) {
          if (message.contains("tool_calls") && !message.contains("content")) {
              message["content"] = "";
-@@ -1277,10 +1291,14 @@ static common_chat_params common_chat_templates_apply_jinja(const struct common_
+         }
+     }
+ }
+@@ -1280,16 +1294,20 @@ static common_chat_params common_chat_templates_apply_jinja(const struct common_
+         // map developer to system for all models except for GPT-OSS
+         workaround::map_developer_role_to_system(params.messages);
+     }
  
      if (!tmpl.original_caps().supports_system_role) {
          workaround::system_message_not_supported(params.messages);
@@ -42,11 +51,17 @@ index ed1942e15..bc1115ba1 100644
          // to still be non-null, this puts an empty string everywhere where the
          // content field is null
          workaround::requires_non_null_content(params.messages);
+     }
+ 
+     if (tmpl.original_caps().supports_object_arguments) {
 diff --git a/common/jinja/caps.cpp b/common/jinja/caps.cpp
-index c5962ab77..5a2f438c6 100644
+index c5962ab..5a2f438 100644
 --- a/common/jinja/caps.cpp
 +++ b/common/jinja/caps.cpp
-@@ -90,10 +90,11 @@ std::map<std::string, bool> caps::to_map() const {
+@@ -87,16 +87,17 @@ static void caps_print_stats(value & v, const std::string & path) {
+ std::map<std::string, bool> caps::to_map() const {
+     return {
+         {"supports_string_content", supports_string_content},
          {"supports_typed_content", supports_typed_content},
          {"supports_tools", supports_tools},
          {"supports_tool_calls", supports_tool_calls},
@@ -58,7 +73,13 @@ index c5962ab77..5a2f438c6 100644
          {"supports_object_arguments", supports_object_arguments},
      };
  }
-@@ -210,10 +211,36 @@ caps caps_get(jinja::program & prog) {
+ 
+ std::string caps::to_string() const {
+     std::ostringstream ss;
+@@ -207,16 +208,42 @@ caps caps_get(jinja::program & prog) {
+             auto & content = messages->at(0)->at("content");
+             caps_print_stats(content, "messages[0].content");
+             if (!content->stats.used) {
                  result.supports_system_role = false;
              }
          }
@@ -95,11 +116,17 @@ index c5962ab77..5a2f438c6 100644
      // case: tools support: single call with object arguments
      caps_try_execute(
          prog,
+         [&]() {
+             // messages
+             return json::array({
 diff --git a/common/jinja/caps.h b/common/jinja/caps.h
-index b81dd95f2..a611042bf 100644
+index b81dd95..a611042 100644
 --- a/common/jinja/caps.h
 +++ b/common/jinja/caps.h
-@@ -9,10 +9,12 @@ namespace jinja {
+@@ -6,16 +6,18 @@
+ #include <map>
+ 
+ namespace jinja {
  
  struct caps {
      bool supports_tools = true;
@@ -112,11 +139,17 @@ index b81dd95f2..a611042bf 100644
      // supports preserve reasoning trace in the full history, not just the last assistant message
      bool supports_preserve_reasoning = false;
  
+     // supports reasoning effort levels
+     bool supports_reasoning_effort = false;
+ 
 diff --git a/tools/server/server-common.cpp b/tools/server/server-common.cpp
-index 2ff790a5d..da0d7e42b 100644
+index 4b73aa9..c1b517a 100644
 --- a/tools/server/server-common.cpp
 +++ b/tools/server/server-common.cpp
-@@ -1346,10 +1346,17 @@ json oaicompat_chat_params_parse(
+@@ -1408,16 +1408,23 @@ json oaicompat_chat_params_parse(
+         inputs.enable_thinking = false;
+     } else if (!enable_thinking_kwarg.empty() && enable_thinking_kwarg[0] == '"') {
+         throw std::invalid_argument("invalid type for \"enable_thinking\" (expected boolean, got string)");
      }
  
      // Parse the OAI "reasoning_effort" field; "none" disables reasoning.
@@ -134,11 +167,17 @@ index 2ff790a5d..da0d7e42b 100644
              inputs.chat_template_kwargs.erase("reasoning_effort");
          } else if (!reasoning_effort.empty()) {
              inputs.chat_template_kwargs["reasoning_effort"] = json(reasoning_effort).dump();
+         }
+     }
+ 
 diff --git a/tools/server/server-context.cpp b/tools/server/server-context.cpp
-index 274af9b05..c1562861a 100644
+index d1af984..b17f77c 100644
 --- a/tools/server/server-context.cpp
 +++ b/tools/server/server-context.cpp
-@@ -4379,30 +4379,46 @@ std::unique_ptr<server_res_generator> server_routes::handle_completions_impl(
+@@ -4727,36 +4727,52 @@ std::unique_ptr<server_res_generator> server_routes::handle_completions_impl(
+                 // multi-results, non-OAI compat
+                 res->ok(arr);
+             }
          }
      } else {
          // in streaming mode, the first error must be treated as non-stream response
@@ -190,3 +229,6 @@ index 274af9b05..c1562861a 100644
              res->data = format_anthropic_sse(first_result_json);
          } else if (res_type == TASK_RESPONSE_TYPE_OAI_RESP) {
              res->data = format_oai_resp_sse(first_result_json);
+         } else {
+             res->data = format_oai_sse(first_result_json);
+         }

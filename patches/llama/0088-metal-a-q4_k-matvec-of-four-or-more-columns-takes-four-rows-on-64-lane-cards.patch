@@ -1,8 +1,8 @@
 diff --git a/ggml/src/ggml-metal/ggml-metal-ops.cpp b/ggml/src/ggml-metal/ggml-metal-ops.cpp
-index 6db894c8b..976541751 100644
+index d4f8b4c..3dff5db 100644
 --- a/ggml/src/ggml-metal/ggml-metal-ops.cpp
 +++ b/ggml/src/ggml-metal/ggml-metal-ops.cpp
-@@ -3503,17 +3503,23 @@ int ggml_metal_op_mul_mat(ggml_metal_op_t ctx, int idx) {
+@@ -3709,17 +3709,23 @@ int ggml_metal_op_mul_mat(ggml_metal_op_t ctx, int idx) {
              const char * s = TOSH_ENV("TOSH_EXT_NR0_MINROWS");
              // off by default: the win depends on the weight's shape and one measured model
              // still regresses at four columns, so it stays opt-in until that is understood

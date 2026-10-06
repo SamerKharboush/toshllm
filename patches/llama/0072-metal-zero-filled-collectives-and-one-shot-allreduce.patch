@@ -1,8 +1,8 @@
 diff --git a/ggml/src/ggml-backend-meta.cpp b/ggml/src/ggml-backend-meta.cpp
-index da733d9e8..1fb695fc4 100644
+index 27379b4..3b9f8c3 100644
 --- a/ggml/src/ggml-backend-meta.cpp
 +++ b/ggml/src/ggml-backend-meta.cpp
-@@ -2835,16 +2835,34 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend,
+@@ -2842,16 +2842,34 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend,
                      auto & bcj = backend_ctx->backend_configs[j];
                      ggml_cgraph * cgraph_ij = bcj.cgraphs[i].cgraph_main;
                      nodes.push_back(cgraph_ij->nodes[cgraph_ij->n_nodes-1]);
@@ -38,7 +38,7 @@ index da733d9e8..1fb695fc4 100644
      }
      return GGML_STATUS_SUCCESS;
 diff --git a/ggml/src/ggml-metal/ggml-metal-context.h b/ggml/src/ggml-metal/ggml-metal-context.h
-index fef606412..119e8b65b 100644
+index fef6064..119e8b6 100644
 --- a/ggml/src/ggml-metal/ggml-metal-context.h
 +++ b/ggml/src/ggml-metal/ggml-metal-context.h
 @@ -42,16 +42,33 @@ bool ggml_metal_add_inplace_async    (ggml_metal_t ctx, struct ggml_tensor * acc
@@ -76,7 +76,7 @@ index fef606412..119e8b65b 100644
  ggml_metal_event_t ggml_metal_get_ev_cpy(ggml_metal_t ctx);
  
 diff --git a/ggml/src/ggml-metal/ggml-metal-context.m b/ggml/src/ggml-metal/ggml-metal-context.m
-index 3622fe6cb..cd9dfa040 100644
+index af605e8..904f582 100644
 --- a/ggml/src/ggml-metal/ggml-metal-context.m
 +++ b/ggml/src/ggml-metal/ggml-metal-context.m
 @@ -290,16 +290,21 @@ struct ggml_metal {
@@ -508,7 +508,7 @@ index 3622fe6cb..cd9dfa040 100644
              if (ggml_metal_bp_satisfied()) {
                  [cmd_buf encodeWaitForEvent:tosh_wait_dummy(ctx_self) value:1];
 diff --git a/ggml/src/ggml-metal/ggml-metal.cpp b/ggml/src/ggml-metal/ggml-metal.cpp
-index c90cb36e3..348a24c1e 100644
+index 595e148..b107600 100644
 --- a/ggml/src/ggml-metal/ggml-metal.cpp
 +++ b/ggml/src/ggml-metal/ggml-metal.cpp
 @@ -12,16 +12,20 @@
@@ -532,7 +532,7 @@ index c90cb36e3..348a24c1e 100644
  // note: can be overridden with GGML_METAL_DEVICES env to simulate virtual devices
  static int g_devices = 1;
  
-@@ -1088,48 +1092,64 @@ static bool ggml_backend_metal_comm_allreduce_noop(void) {
+@@ -1094,48 +1098,64 @@ static bool ggml_backend_metal_comm_allreduce_noop(void) {
          if (v) {
              fprintf(stderr, "ggml_metal: WARNING TOSH_MGPU_ALLREDUCE_NOOP=1, the reduction is "
                              "skipped and the output is meaningless. Benchmark only.\n");
@@ -599,7 +599,7 @@ index c90cb36e3..348a24c1e 100644
  
      for (size_t k = 0; k < n_backends*n_steps; k++) {
          if (comm_ctx->tmp_size[k] < size) {
-@@ -1156,32 +1176,59 @@ static bool ggml_backend_metal_comm_allreduce_tensor(void * comm_ctx_v, ggml_ten
+@@ -1162,32 +1182,59 @@ static bool ggml_backend_metal_comm_allreduce_tensor(void * comm_ctx_v, ggml_ten
          tmp[i].src[0]    = nullptr;
          tmp[i].src[1]    = nullptr;
      };
@@ -659,7 +659,7 @@ index c90cb36e3..348a24c1e 100644
          const bool ok = ggml_backend_metal_cpy_tensor_async_ex(comm_ctx->backends[j_src], comm_ctx->backends[j_dst],
                                                                tensors[j_src], &tmp[j_dst], prefer_events, hold);
          if (!ok && reduced) {
-@@ -1224,39 +1271,81 @@ static bool ggml_backend_metal_comm_allreduce_tensor(void * comm_ctx_v, ggml_ten
+@@ -1230,39 +1277,81 @@ static bool ggml_backend_metal_comm_allreduce_tensor(void * comm_ctx_v, ggml_ten
      // so the copies all go out before any of the adds.
      static int fused = -1;
      if (fused < 0) {

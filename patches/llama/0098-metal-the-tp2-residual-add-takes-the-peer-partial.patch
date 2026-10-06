@@ -1,8 +1,8 @@
 diff --git a/ggml/src/ggml-metal/ggml-metal-context.m b/ggml/src/ggml-metal/ggml-metal-context.m
-index fa6b501d0..1ff194052 100644
+index dea0f63..8c44a1d 100644
 --- a/ggml/src/ggml-metal/ggml-metal-context.m
 +++ b/ggml/src/ggml-metal/ggml-metal-context.m
-@@ -1,7 +1,8 @@
+@@ -1,8 +1,9 @@
 +#include <os/lock.h>
  #import "ggml-metal-context.h"
  
@@ -11,7 +11,9 @@ index fa6b501d0..1ff194052 100644
  
  #import "ggml-metal-impl.h"
  #import "ggml-metal-common.h"
-@@ -2210,14 +2211,121 @@ static bool ggml_metal_add_inplace_buffer(ggml_metal_t ctx, id<MTLCommandBuffer>
+ #import "ggml-metal-ops.h"
+@@ -2209,16 +2210,123 @@ static bool ggml_metal_add_inplace_buffer(ggml_metal_t ctx, id<MTLCommandBuffer>
+     }
  
      ggml_metal_encoder_end_encoding(enc);
      ggml_metal_encoder_free(enc);
@@ -133,7 +135,9 @@ index fa6b501d0..1ff194052 100644
  // --- f16 transport for the prefill allreduce -------------------------------------------------
  // The copy butterfly moves f32 partials across the peer bridge and at prefill payloads the
  // fabric, not the wait, is the limit. Convert locally to f16 (half the bytes in flight), move
-@@ -3319,26 +3427,35 @@ bool ggml_metal_exchange_reduce(ggml_metal_t ctx_self, ggml_metal_t ctx_peer,
+ // those across, and fold them into the f32 accumulator with an upcast add.
+@@ -3318,28 +3426,37 @@ bool ggml_metal_exchange_reduce(ggml_metal_t ctx_self, ggml_metal_t ctx_peer,
+     // its own events and counter: the copies number per link and this path numbers by round,
      // and one event cannot carry both without a value landing below the last one signalled
      const uint64_t seq_prev = link_out->seq_x;
      const uint64_t seq_out  = seq;
@@ -173,7 +177,9 @@ index fa6b501d0..1ff194052 100644
          uint64_t cbase = 0;
          const bool cbar = ggml_metal_ctime_barrier();
          if (cts != nil) {
-@@ -3355,15 +3472,15 @@ bool ggml_metal_exchange_reduce(ggml_metal_t ctx_self, ggml_metal_t ctx_peer,
+             cbase = (atomic_fetch_add(&ctx_self->ct_idx, 1) % TOSH_CT_SLOTS)*TOSH_CT_PER;
+@@ -3354,17 +3471,17 @@ bool ggml_metal_exchange_reduce(ggml_metal_t ctx_self, ggml_metal_t ctx_peer,
+             ggml_metal_kargs_cpy args = {
                  /*.nk0  =*/ n,
                  /*.ne00 =*/ t_self->ne[0], /*.ne01 =*/ t_self->ne[1], /*.ne02 =*/ t_self->ne[2], /*.ne03 =*/ t_self->ne[3],
                  /*.nb00 =*/ t_self->nb[0], /*.nb01 =*/ t_self->nb[1], /*.nb02 =*/ t_self->nb[2], /*.nb03 =*/ t_self->nb[3],
@@ -190,7 +196,9 @@ index fa6b501d0..1ff194052 100644
              ggml_metal_encoder_set_buffer  (ec, bid_blk,  2);
              ggml_metal_encoder_dispatch_threadgroups(ec, (n + nth - 1)/nth, 1, 1, nth, 1, 1);
              ggml_metal_encoder_end_encoding(ec);
-@@ -3385,18 +3502,29 @@ bool ggml_metal_exchange_reduce(ggml_metal_t ctx_self, ggml_metal_t ctx_peer,
+             ggml_metal_encoder_free(ec);
+@@ -3384,20 +3501,31 @@ bool ggml_metal_exchange_reduce(ggml_metal_t ctx_self, ggml_metal_t ctx_peer,
+         if (ggml_metal_wait_satisfied()) {
              [cmd_buf encodeWaitForEvent:tosh_wait_dummy(ctx_self) value:1];
          } else {
              [cmd_buf encodeWaitForEvent:link_in->ev_x_ready value:seq_in];
@@ -224,7 +232,9 @@ index fa6b501d0..1ff194052 100644
                            toBuffer:bid_tmp.metal destinationOffset:bid_tmp.offs size:size];
              if (cts != nil) { [enc_in sampleCountersInBuffer:cts atSampleIndex:cbase + 3 withBarrier:cbar]; }
              [enc_in endEncoding];
-@@ -4282,14 +4410,15 @@ enum ggml_status ggml_metal_graph_compute(ggml_metal_t ctx, struct ggml_cgraph *
+             if (tosh_mgpu_trace()) atomic_fetch_add(&g_tr_signals, 1);
+@@ -4282,16 +4410,17 @@ enum ggml_status ggml_metal_graph_compute(ggml_metal_t ctx, struct ggml_cgraph *
+                 [ctx->cmd_bufs[n_cb].obj release];
              }
              ctx->cmd_bufs[n_cb].obj = cmd_buf;
  
@@ -240,7 +250,9 @@ index fa6b501d0..1ff194052 100644
          ctx->cmd_buf_last = ctx->cmd_bufs[n_cb].obj;
  
          // the main thread already encoded every node: the remaining command buffers would be
-@@ -4549,14 +4678,17 @@ void ggml_metal_set_n_cb(ggml_metal_t ctx, int n_cb) {
+         // created, dispatched and committed empty. Tensor split hits this on every subgraph.
+@@ -4549,16 +4678,19 @@ void ggml_metal_set_n_cb(ggml_metal_t ctx, int n_cb) {
+             if (res == 0) {
                  break;
              }
  
@@ -258,11 +270,13 @@ index fa6b501d0..1ff194052 100644
          }
          if (cbp_on) {
              const uint64_t cbp_t2 = clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
+             atomic_fetch_add_explicit(&g_cbp_ops_ns,    cbp_t1 - cbp_t0, memory_order_relaxed);
 diff --git a/ggml/src/ggml-metal/ggml-metal-device.h b/ggml/src/ggml-metal/ggml-metal-device.h
-index 3e7651433..3d17ed9a6 100644
+index 5e903ea..4cc9cf5 100644
 --- a/ggml/src/ggml-metal/ggml-metal-device.h
 +++ b/ggml/src/ggml-metal/ggml-metal-device.h
-@@ -79,14 +79,19 @@ ggml_metal_encoder_t ggml_metal_encoder_init(ggml_metal_cmd_buf_t cmd_buf_raw, b
+@@ -78,16 +78,21 @@ typedef struct ggml_metal_encoder * ggml_metal_encoder_t;
+ ggml_metal_encoder_t ggml_metal_encoder_init(ggml_metal_cmd_buf_t cmd_buf_raw, bool concurrent);
  void ggml_metal_encoder_free(ggml_metal_encoder_t encoder);
  
  void ggml_metal_encoder_debug_group_push(ggml_metal_encoder_t encoder, const char * name);
@@ -282,11 +296,12 @@ index 3e7651433..3d17ed9a6 100644
  
  void ggml_metal_encoder_dispatch_threadgroups(ggml_metal_encoder_t encoder, int tg0, int tg1, int tg2, int tptg0, int tptg1, int tptg2);
  
+ void ggml_metal_encoder_memory_barrier(ggml_metal_encoder_t encoder);
 diff --git a/ggml/src/ggml-metal/ggml-metal-device.m b/ggml/src/ggml-metal/ggml-metal-device.m
-index 0fc883648..65a627060 100644
+index 070e5c4..e7b70c6 100644
 --- a/ggml/src/ggml-metal/ggml-metal-device.m
 +++ b/ggml/src/ggml-metal/ggml-metal-device.m
-@@ -1,7 +1,8 @@
+@@ -1,8 +1,9 @@
 +#include <os/lock.h>
  #import "ggml-metal-device.h"
  #import "ggml-metal-fusion.h"
@@ -295,7 +310,9 @@ index 0fc883648..65a627060 100644
  
  #import "ggml-impl.h"
  #import "ggml-backend-impl.h"
-@@ -876,14 +877,55 @@ struct ggml_metal_pipeline_with_params ggml_metal_library_compile_pipeline(ggml_
+ #import "ggml-metal-impl.h"
+@@ -891,16 +892,57 @@ struct ggml_metal_pipeline_with_params ggml_metal_library_compile_pipeline(ggml_
+ //
  // MTLComputeCommandEncoder wrapper
  //
  
@@ -351,12 +368,14 @@ index 0fc883648..65a627060 100644
  
      if (concurrent) {
          res->obj = [cmd_buf computeCommandEncoderWithDispatchType: MTLDispatchTypeConcurrent];
+     } else {
 diff --git a/ggml/src/ggml-metal/ggml-metal-ops.cpp b/ggml/src/ggml-metal/ggml-metal-ops.cpp
-index 0e30dd320..e70f7dcb5 100644
+index 31a348a..1b83a65 100644
 --- a/ggml/src/ggml-metal/ggml-metal-ops.cpp
 +++ b/ggml/src/ggml-metal/ggml-metal-ops.cpp
-@@ -5646,14 +5646,30 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
- #undef FATTN_SMEM
+@@ -5894,16 +5894,32 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
+             }
+         }
      }
  
      return 1;
@@ -382,7 +401,8 @@ index 0e30dd320..e70f7dcb5 100644
      int n_fuse = 1;
      const ggml_metal_fusion * fusion = nullptr;
  
-     if (ctx->use_fusion()) {
+     const bool use_fusion = ctx->use_fusion();
+ 
+     if (use_fusion) {
          int n = 1;
          fusion = ctx->can_fuse(idx, GGML_METAL_FUSION_FULL, &n);
-         n_fuse = n;

@@ -1,8 +1,11 @@
 diff --git a/common/tosh-plan.cpp b/common/tosh-plan.cpp
-index 9859530ed..a9b6be767 100644
+index 9859530..a9b6be7 100644
 --- a/common/tosh-plan.cpp
 +++ b/common/tosh-plan.cpp
-@@ -57,10 +57,12 @@ struct moe_info {
+@@ -54,16 +54,18 @@ struct moe_info {
+     double max_tensor_mib = 0;  // one layer's largest expert tensor: a prefill slot
+     double embd_mib  = 0;       // token embeddings, kept in host memory
+     double total_mib = 0;       // every tensor, across all shards
      // the RAM cache keeps one pool per expert size and each must hold a whole layer
      double warm_floor_mib = 0;
      // sliding-window cache of one sequence per cache element size: what a context checkpoint holds
@@ -15,7 +18,13 @@ index 9859530ed..a9b6be767 100644
  };
  
  struct host_mem {
-@@ -129,10 +131,21 @@ moe_info read_moe_info(const char * path) {
+     double ram_mib        = 0;
+     double wired_mib      = 0;
+     double wire_limit_mib = 0;
+@@ -126,16 +128,27 @@ moe_info read_moe_info(const char * path) {
+             if (hid >= 0 && gguf_get_kv_type(g, hid) == GGUF_TYPE_ARRAY && il < (int) gguf_get_arr_n(g, hid)) {
+                 heads = ((const int32_t *) gguf_get_arr_data(g, hid))[il];
+             } else if (hid >= 0 && gguf_get_kv_type(g, hid) == GGUF_TYPE_UINT32) {
                  heads = (int) gguf_get_val_u32(g, hid);
              }
              mi.swa_elems += (double) heads*(kl + vl);
@@ -37,7 +46,13 @@ index 9859530ed..a9b6be767 100644
  
      std::vector<std::string> paths = { path };
      if (mi.n_split > 1) {
-@@ -934,12 +947,17 @@ bool tosh_plan_apply(common_params & params, tosh_plan * out) {
+         char prefix[PATH_MAX] = {}, shard[PATH_MAX] = {};
+         if (llama_split_prefix(prefix, sizeof(prefix), path, 0, mi.n_split) == 0) {
+             mi.error = string_format("SPLIT_GGUF_METADATA_ERROR: %s is not the first of %d shards", path, mi.n_split);
+@@ -931,18 +944,23 @@ bool tosh_plan_apply(common_params & params, tosh_plan * out) {
+     if (p.plan_mode == TOSH_PLAN_MODE_FULL_HOST_DMOE || p.plan_mode == TOSH_PLAN_MODE_BOUNDED_DMOE) {
+         p.coverage_state = p.coverage >= BOUNDED_GOOD_COVERAGE ? "GOOD" : p.coverage >= BOUNDED_MIN_COVERAGE ? "CONSTRAINED" : "REJECT";
+         if (p.coverage_state == "CONSTRAINED") p.warnings.push_back("COVERAGE_CONSTRAINED");
      }
      if (sel && sel->mode != "full_gpu" && p.projected_rss_mib == 0) p.projected_rss_mib = hi.self_rss_mib + p.host_required_mib;
      // the server keeps context checkpoints and a prompt cache in RAM; they take what the plan leaves,
@@ -57,11 +72,17 @@ index 9859530ed..a9b6be767 100644
          left -= p.n_ctx_checkpoints*p.checkpoint_mib;
          p.projected_rss_mib += p.n_ctx_checkpoints*p.checkpoint_mib;
      } else {
+         p.n_ctx_checkpoints = params.n_ctx_checkpoints;
+     }
+     if (sel && params.cache_ram_mib != 0) {
 diff --git a/ggml/src/ggml-metal/ggml-metal-device.m b/ggml/src/ggml-metal/ggml-metal-device.m
-index eef855916..d6c11e464 100644
+index 5e29fdc..bd24684 100644
 --- a/ggml/src/ggml-metal/ggml-metal-device.m
 +++ b/ggml/src/ggml-metal/ggml-metal-device.m
-@@ -1177,15 +1177,15 @@ struct ggml_metal_device {
+@@ -1190,21 +1190,21 @@ struct ggml_metal_device {
+     // which on AMD accumulates across long runs until transfers crawl
+     id<MTLBuffer> stage_buf;
+     NSRecursiveLock * stage_lock;   // recursive: a read batch holds it across stage_get calls
      // upload ring: the blit shares the compute queue, so the only wait is slot reuse
      id<MTLBuffer>        stage_set_bufs[4];
      id<MTLCommandBuffer> stage_set_cmds[4];
@@ -79,7 +100,13 @@ index eef855916..d6c11e464 100644
      // cached no-copy wraps of host memory regions used as blit sources, so
      // repeated uploads of the same weights don't churn kernel resources
      struct {
-@@ -3797,15 +3797,12 @@ static void ggml_metal_device_stage_batch_flush(ggml_metal_device_t dev) {
+         const void *  base;
+         size_t        size;
+         id<MTLBuffer> buf;
+@@ -3800,55 +3800,40 @@ static void ggml_metal_device_stage_batch_flush(ggml_metal_device_t dev) {
+     [dev->stage_batch_enc endEncoding];
+     [dev->stage_batch_cmd commit];
+     [dev->stage_batch_cmd waitUntilCompleted];
      for (int i = 0; i < dev->stage_batch_n; i++) {
          memcpy(dev->stage_batch_items[i].dst,
                 (char *) dev->stage_buf.contents + dev->stage_batch_items[i].off,
@@ -97,7 +124,8 @@ index eef855916..d6c11e464 100644
      dev->stage_batch_enc  = nil;
      dev->stage_batch_cmd  = nil;
  }
-@@ -3814,32 +3811,20 @@ void ggml_metal_device_read_batch_begin(ggml_metal_device_t dev) {
+ 
+ void ggml_metal_device_read_batch_begin(ggml_metal_device_t dev) {
      // shared-buffer devices never take the stage path; skip the empty batch
      if (dev->props.use_shared_buffers) {
          return;
@@ -134,7 +162,13 @@ index eef855916..d6c11e464 100644
  
  static void ggml_metal_device_stage_batch_flush(ggml_metal_device_t dev);
  
-@@ -3860,23 +3845,24 @@ bool ggml_metal_device_stage_get(ggml_metal_device_t dev, struct ggml_metal_buff
+ // a read batch drains every few MiB: larger batches wait less on a desktop host but copy out
+ // of the staging buffer slower on a Xeon W one, and 4 MiB was the size that won on both
+ static size_t ggml_metal_stage_batch_cap(void) {
+@@ -3863,29 +3848,30 @@ bool ggml_metal_device_stage_get(ggml_metal_device_t dev, struct ggml_metal_buff
+         return false;
+     }
+ 
      const uint64_t t0 = tosh_prof_on() ? clock_gettime_nsec_np(CLOCK_UPTIME_RAW) : 0;
  
      [dev->stage_lock lock];
@@ -163,11 +197,17 @@ index eef855916..d6c11e464 100644
                                  sourceOffset:bid_src.offs
                                      toBuffer:dev->stage_buf
                             destinationOffset:dev->stage_batch_used
+                                         size:size];
+         dev->stage_batch_items[dev->stage_batch_n++] =
+             (typeof(dev->stage_batch_items[0])) { data, dev->stage_batch_used, size };
 diff --git a/include/llama.h b/include/llama.h
-index c3bbf06d5..29e4be9ae 100644
+index 19a5043..2dc7f0d 100644
 --- a/include/llama.h
 +++ b/include/llama.h
-@@ -924,10 +924,13 @@ extern "C" {
+@@ -926,16 +926,19 @@ extern "C" {
+ 
+ // work only with partial states, such as SWA KV cache or recurrent cache (e.g. Mamba)
+ #define LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY 1
  
  // Keeps the tensor data on device buffers (i.e. not accessible in host memory, but faster save/load).
  // Getting the state for a seq_id with this flag invalidates all prior states gotten for that seq_id with this flag.
@@ -181,11 +221,17 @@ index c3bbf06d5..29e4be9ae 100644
      LLAMA_API size_t llama_state_seq_get_size_ext(
              struct llama_context * ctx,
                      llama_seq_id   seq_id,
+            llama_state_seq_flags   flags);
+ 
+     LLAMA_API size_t llama_state_seq_get_data_ext(
 diff --git a/src/llama-memory-recurrent.cpp b/src/llama-memory-recurrent.cpp
-index 57919accf..b4e825a56 100644
+index 53130e8..187bff8 100644
 --- a/src/llama-memory-recurrent.cpp
 +++ b/src/llama-memory-recurrent.cpp
-@@ -762,11 +762,10 @@ size_t llama_memory_recurrent::size_p_bytes() const {
+@@ -777,17 +777,16 @@ size_t llama_memory_recurrent::size_p_bytes() const {
+             size_p_bytes += ggml_nbytes(p);
+         }
+     }
  
      return size_p_bytes;
  }
@@ -197,7 +243,13 @@ index 57919accf..b4e825a56 100644
      std::vector<std::pair<uint32_t, uint32_t>> cell_ranges_data; // logical source row ranges
      uint32_t cell_count = 0;
  
-@@ -839,11 +838,11 @@ void llama_memory_recurrent::state_write(llama_io_write_i & io, llama_seq_id seq
+     // Count the number of cells with the specified seq_id
+     // Find all the ranges of cells with this seq id (or all, when -1)
+     uint32_t cell_range_begin = size;
+@@ -854,17 +853,17 @@ void llama_memory_recurrent::state_write(llama_io_write_i & io, llama_seq_id seq
+     for (const auto & range : cell_ranges_data) {
+         cell_count_check += range.second - range.first;
+     }
      GGML_ASSERT(cell_count == cell_count_check);
  
      io.write(&cell_count, sizeof(cell_count));
@@ -210,7 +262,13 @@ index 57919accf..b4e825a56 100644
  void llama_memory_recurrent::state_read(llama_io_read_i & io, llama_seq_id seq_id, llama_state_seq_flags flags) {
      GGML_UNUSED(flags);
  
-@@ -892,11 +891,43 @@ void llama_memory_recurrent::state_write_meta(llama_io_write_i & io, const std::
+     uint32_t cell_count;
+     io.read(&cell_count, sizeof(cell_count));
+ 
+@@ -907,43 +906,82 @@ void llama_memory_recurrent::state_write_meta(llama_io_write_i & io, const std::
+                 for (auto seq_id : cell.seq_id) {
+                     io.write(&seq_id, sizeof(seq_id));
+                 }
              }
          }
      }
@@ -255,7 +313,8 @@ index 57919accf..b4e825a56 100644
  
      io.write(&s_trans, sizeof(s_trans));
      io.write(&n_layer, sizeof(n_layer));
-@@ -905,24 +936,31 @@ void llama_memory_recurrent::state_write_data(llama_io_write_i & io, const std::
+ 
+     // Iterate and write all the R tensors first, each row is a cell
      // Get whole range at a time
      for (uint32_t il = 0; il < n_layer; ++il) {
          // skip null layers (read_data will handle this by checking "r_l" and "s_l" for null)
@@ -290,7 +349,13 @@ index 57919accf..b4e825a56 100644
          // the PLE conv history is a second recurrent row, so it has to travel with the first
          if (p_l[il] != nullptr) {
              const uint64_t p_size_row = ggml_row_size(p_l[il]->type, hparams.ple_conv_state());
-@@ -938,24 +976,31 @@ void llama_memory_recurrent::state_write_data(llama_io_write_i & io, const std::
+             io.write(&p_size_row, sizeof(p_size_row));
+ 
+             for (const auto & range : cell_ranges) {
+@@ -953,30 +991,37 @@ void llama_memory_recurrent::state_write_data(llama_io_write_i & io, const std::
+         }
+     }
+ 
      if (!s_trans) {
          for (uint32_t il = 0; il < n_layer; ++il) {
              // skip null layers (read_data will handle this by checking "r_l" and "s_l" for null)
@@ -325,7 +390,13 @@ index 57919accf..b4e825a56 100644
      } else {
          // When S tensor is transposed, we also need the element size and get the element ranges from each row
          const uint32_t mem_size = size;
-@@ -1111,27 +1156,33 @@ bool llama_memory_recurrent::state_read_data(llama_io_read_i & io, uint32_t cell
+         for (uint32_t il = 0; il < n_layer; ++il) {
+             // skip null layers (read_data will handle this by checking "r_l" and "s_l" for null)
+             if (s_l[il] == nullptr) continue;
+@@ -1131,33 +1176,39 @@ bool llama_memory_recurrent::state_read_data(llama_io_read_i & io, uint32_t cell
+     for (uint32_t il = 0; il < n_layer; ++il) {
+         // skip null layers
+         if (r_l[il] == nullptr) continue;
  
          // Read type of key
          int32_t r_type_i_ref;
@@ -363,7 +434,13 @@ index 57919accf..b4e825a56 100644
          if (p_l[il] != nullptr) {
              uint64_t p_size_row_ref;
              io.read(&p_size_row_ref, sizeof(p_size_row_ref));
-@@ -1154,28 +1205,34 @@ bool llama_memory_recurrent::state_read_data(llama_io_read_i & io, uint32_t cell
+             const size_t p_size_row = ggml_row_size(p_l[il]->type, hparams.ple_conv_state());
+             if (p_size_row != p_size_row_ref) {
+                 LLAMA_LOG_ERROR("%s: mismatched ple row size (%zu != %zu, layer %d)\n", __func__, p_size_row, (size_t) p_size_row_ref, il);
+@@ -1174,34 +1225,40 @@ bool llama_memory_recurrent::state_read_data(llama_io_read_i & io, uint32_t cell
+         for (uint32_t il = 0; il < n_layer; ++il) {
+             // skip null layers
+             if (s_l[il] == nullptr) continue;
  
              // Read type of value
              int32_t s_type_i_ref;
@@ -402,11 +479,17 @@ index 57919accf..b4e825a56 100644
      } else {
          // For each layer, read the values for each cell (transposed)
          for (uint32_t il = 0; il < n_layer; ++il) {
+             // skip null layers
+             if (s_l[il] == nullptr) continue;
+ 
 diff --git a/src/llama-memory-recurrent.h b/src/llama-memory-recurrent.h
-index 4abb3f5cf..18e4a42e6 100644
+index 08489a4..d9a91c1 100644
 --- a/src/llama-memory-recurrent.h
 +++ b/src/llama-memory-recurrent.h
-@@ -128,11 +128,11 @@ private:
+@@ -128,17 +128,17 @@ private:
+ 
+     size_t total_size() const;
+ 
      size_t size_r_bytes() const;
      size_t size_s_bytes() const;
      size_t size_p_bytes() const;
@@ -417,13 +500,19 @@ index 4abb3f5cf..18e4a42e6 100644
  
      bool state_read_meta(llama_io_read_i & io, uint32_t cell_count, llama_seq_id dest_seq_id = -1);
      bool state_read_data(llama_io_read_i & io, uint32_t cell_count);
+ 
+     void state_clear(llama_seq_id seq_id, uint32_t cell_head, uint32_t cell_count);
  };
  
+ class llama_memory_recurrent_context : public llama_memory_context_i {
 diff --git a/tools/server/server-context.cpp b/tools/server/server-context.cpp
-index c1562861a..5b0815e51 100644
+index b17f77c..9390160 100644
 --- a/tools/server/server-context.cpp
 +++ b/tools/server/server-context.cpp
-@@ -299,12 +299,12 @@ struct server_slot {
+@@ -305,32 +305,32 @@ struct server_slot {
+ 
+     server_prompt prompt;
+ 
      bool prompt_save(server_prompt_cache & prompt_cache) const {
          if (prompt.tokens.size() == 0) {
              return false;
@@ -438,7 +527,7 @@ index c1562861a..5b0815e51 100644
  
          SRV_TRC(" - saving prompt with length %d, total state size = %.3f MiB (draft: %.3f MiB)\n",
                  (int) prompt.tokens.size(), cur_size / (1024.0 * 1024.0), cur_size_dft / (1024.0 * 1024.0));
-@@ -312,13 +312,13 @@ struct server_slot {
+ 
          auto * cur = prompt_cache.alloc(prompt, cur_size_tgt, cur_size_dft);
          if (cur == nullptr) {
              return false;
@@ -454,7 +543,13 @@ index c1562861a..5b0815e51 100644
          return true;
      }
  
-@@ -2358,12 +2358,12 @@ private:
+     bool prompt_load(server_prompt_cache & prompt_cache, const server_tokens & tokens) {
+         bool res = prompt_cache.load(prompt, tokens, ctx_tgt, ctx_dft, id);
+         if (!res) {
+@@ -2559,18 +2559,18 @@ private:
+ 
+         cur.id_task = id_task;
+ 
          // [TAG_CHECKPOINTS_FIX_POS_MIN]
          // TODO: here we incorrectly deterimne that the saved checkpoint data covers the [pos_min, pos_max] range
          //       this is not true for SWA models: https://github.com/ggml-org/llama.cpp/pull/24411#issuecomment-4677983225
@@ -469,3 +564,6 @@ index c1562861a..5b0815e51 100644
  
          SLT_TRC(slot,
                  "created context checkpoint %d of %d (pos_min = %d, pos_max = %d, n_tokens = %" PRId64 ", size = %.3f MiB)\n",
+                 (int) slot.prompt.checkpoints.size(), params_base.n_ctx_checkpoints, cur.pos_min,
+                 cur.pos_max, cur.n_tokens, (float) cur.size() / 1024 / 1024);
+     }

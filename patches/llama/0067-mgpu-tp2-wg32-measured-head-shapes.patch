@@ -1,8 +1,8 @@
 diff --git a/ggml/src/ggml-metal/ggml-metal-ops.cpp b/ggml/src/ggml-metal/ggml-metal-ops.cpp
-index ef93c0e7c..00ba810b0 100644
+index 7b4d8f3..1e5d720 100644
 --- a/ggml/src/ggml-metal/ggml-metal-ops.cpp
 +++ b/ggml/src/ggml-metal/ggml-metal-ops.cpp
-@@ -3768,16 +3768,35 @@ int ggml_metal_op_add_id(ggml_metal_op_t ctx, int idx) {
+@@ -3901,16 +3901,35 @@ int ggml_metal_op_add_id(ggml_metal_op_t ctx, int idx) {
  
      const int nth = std::min(ggml_metal_pipeline_max_theads_per_threadgroup(pipeline), ne00);
  
@@ -38,7 +38,7 @@ index ef93c0e7c..00ba810b0 100644
          case GGML_TYPE_Q4_0: return "q4_0";
          case GGML_TYPE_TURBO2_0: return "turbo2";
          case GGML_TYPE_TURBO3_0: return "turbo3";
-@@ -4444,19 +4463,18 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
+@@ -4618,19 +4637,18 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
          // on both widths, so each keeps its own.
          static const int64_t wg_dk128_env = []() {
              const char * s = getenv("TOSH_FA_WG_DK128_MIN_KV");

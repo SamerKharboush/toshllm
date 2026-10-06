@@ -1,8 +1,9 @@
 diff --git a/ggml/src/ggml-metal/ggml-metal-context.m b/ggml/src/ggml-metal/ggml-metal-context.m
-index 1ff194052..622c1c76f 100644
+index 8c44a1d..6585c52 100644
 --- a/ggml/src/ggml-metal/ggml-metal-context.m
 +++ b/ggml/src/ggml-metal/ggml-metal-context.m
-@@ -628,14 +628,15 @@ static bool ggml_metal_ctime(void) {
+@@ -627,16 +627,17 @@ static bool ggml_metal_ctime(void) {
+ 
  static bool ggml_metal_ctime_barrier(void) {
      static int v = -1;
      if (v < 0) { const char * s = TOSH_ENV("TOSH_MGPU_CTIME_BARRIER"); v = (s && s[0] == '1') ? 1 : 0; }
@@ -18,7 +19,9 @@ index 1ff194052..622c1c76f 100644
  static int tosh_ct_bucket(double us) {
      return us < 1 ? 0 : us < 5 ? 1 : us < 10 ? 2 : us < 20 ? 3 :
             us < 50 ? 4 : us < 100 ? 5 : us < 200 ? 6 : 7;
-@@ -834,14 +835,15 @@ static void tosh_mgpu_trace_report(void) {
+ }
+@@ -833,16 +834,17 @@ static void tosh_mgpu_trace_report(void) {
+             for (int k = 0; k < 3; k++) {
                  fprintf(stderr, "    %s us ", rn[k]);
                  for (int i = 0; i < 8; i++) { fprintf(stderr, "%s %.1f%%  ", lbl[i], 100.0*atomic_load(&hh[k][i])/nn); }
                  fprintf(stderr, "\n");
@@ -34,7 +37,9 @@ index 1ff194052..622c1c76f 100644
      fprintf(stderr, "  encode CPU            %.1f ms\n", atomic_load(&g_tr_encode_ns)/1e6);
      fprintf(stderr, "  collective GPU        %.1f ms\n", atomic_load(&g_tr_gpu_ns)/1e6);
      fprintf(stderr, "  commit to GPU start   %.1f ms\n", atomic_load(&g_tr_sched_ns)/1e6);
-@@ -2225,14 +2227,15 @@ static bool ggml_metal_fb_residual(void) {
+     // decode-only, per card per token
+@@ -2224,16 +2226,17 @@ static bool ggml_metal_fb_residual(void) {
+     static int v = -1;
      if (v < 0) { const char * s = TOSH_ENV("TOSH_MGPU_FB_RESIDUAL"); v = (s && s[0] == '0') ? 0 : 1; }
      return v == 1;
  }
@@ -50,7 +55,9 @@ index 1ff194052..622c1c76f 100644
      int                        state;   // 0 idle, 1 pending, 2 armed for the residual add, 3 folded
  };
  
-@@ -2255,52 +2258,64 @@ static struct ggml_metal_fb_residual_state * ggml_metal_fb_residual_get(ggml_met
+ static struct ggml_metal_fb_residual_state g_fb_res[8];
+@@ -2254,54 +2257,66 @@ static struct ggml_metal_fb_residual_state * ggml_metal_fb_residual_get(ggml_met
+     return res;
  }
  
  bool ggml_metal_fb_residual_take(ggml_metal_device_t dev, const struct ggml_tensor * t, struct ggml_metal_buffer_id * peer) {
@@ -118,3 +125,4 @@ index 1ff194052..622c1c76f 100644
      const bool added = ggml_metal_add_inplace_buffer(ctx, cmd_buf, (struct ggml_tensor *) t, st->buf, st->off);
      GGML_ASSERT(added);
      if (tosh_mgpu_trace()) atomic_fetch_add(&g_tr_signals, 1);
+     [cmd_buf encodeSignalEvent:st->ev_done value:st->seq];

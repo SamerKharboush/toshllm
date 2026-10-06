@@ -1,5 +1,5 @@
 diff --git a/ggml/src/ggml-metal/ggml-metal-context.m b/ggml/src/ggml-metal/ggml-metal-context.m
-index 3648d2643..d410f00a4 100644
+index 0d5c1f5..621e92b 100644
 --- a/ggml/src/ggml-metal/ggml-metal-context.m
 +++ b/ggml/src/ggml-metal/ggml-metal-context.m
 @@ -272,17 +272,19 @@ struct ggml_metal {

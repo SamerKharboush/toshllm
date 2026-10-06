@@ -1,5 +1,5 @@
 diff --git a/ggml/include/ggml.h b/ggml/include/ggml.h
-index 224bdef92..658e94f3e 100644
+index 224bdef..658e94f 100644
 --- a/ggml/include/ggml.h
 +++ b/ggml/include/ggml.h
 @@ -425,17 +425,22 @@ extern "C" {
@@ -72,7 +72,7 @@ index 224bdef92..658e94f3e 100644
      // res:     [n_kv,       n_batch,    1,       ne3 ]
      //
 diff --git a/ggml/src/CMakeLists.txt b/ggml/src/CMakeLists.txt
-index 947732000..0abe83b75 100644
+index 9477320..0abe83b 100644
 --- a/ggml/src/CMakeLists.txt
 +++ b/ggml/src/CMakeLists.txt
 @@ -184,16 +184,20 @@ if (WIN32)
@@ -123,10 +123,10 @@ index 947732000..0abe83b75 100644
  
  target_include_directories(ggml-base PRIVATE . ${CMAKE_CURRENT_BINARY_DIR})
 diff --git a/ggml/src/ggml-backend-impl.h b/ggml/src/ggml-backend-impl.h
-index ef05905cf..743070ea7 100644
+index dc7367d..fd521af 100644
 --- a/ggml/src/ggml-backend-impl.h
 +++ b/ggml/src/ggml-backend-impl.h
-@@ -148,16 +148,22 @@ extern "C" {
+@@ -149,16 +149,22 @@ extern "C" {
          // (optional) event synchronization
          // record an event on this stream
          void (*event_record)(ggml_backend_t backend, ggml_backend_event_t event);
@@ -150,10 +150,10 @@ index ef05905cf..743070ea7 100644
          void * context;
      };
 diff --git a/ggml/src/ggml-backend-meta.cpp b/ggml/src/ggml-backend-meta.cpp
-index 7c1c0b864..5ea0dc359 100644
+index 0394433..9f0fd7e 100644
 --- a/ggml/src/ggml-backend-meta.cpp
 +++ b/ggml/src/ggml-backend-meta.cpp
-@@ -1027,16 +1027,21 @@ static struct ggml_backend_meta_split_state ggml_backend_meta_get_split_state(
+@@ -1031,16 +1031,21 @@ static struct ggml_backend_meta_split_state ggml_backend_meta_get_split_state(
              case GGML_OP_GATED_LINEAR_ATTN:
              case GGML_OP_RWKV_WKV7:
              case GGML_OP_SOLVE_TRI: {
@@ -175,7 +175,7 @@ index 7c1c0b864..5ea0dc359 100644
              case GGML_OP_DSV4_HC_POST: {
                  split_state = handle_generic(src_ss, /*scalar_only =*/ true);
              } break;
-@@ -1253,17 +1258,21 @@ static enum ggml_status ggml_backend_meta_buffer_init_tensor_impl(ggml_backend_m
+@@ -1257,17 +1262,21 @@ static enum ggml_status ggml_backend_meta_buffer_init_tensor_impl(ggml_backend_m
              t_ij->data = (char *) t_ij->view_src->data + t_ij->view_offs;
              // views inherit the source slice's concrete sub-buffer (issue 22197)
              if (tensor->view_src != nullptr && ggml_backend_buffer_is_meta(tensor->view_src->buffer)
@@ -199,10 +199,10 @@ index 7c1c0b864..5ea0dc359 100644
          if (init_buf) {
              // the backend that owns the buffer will set .extra
 diff --git a/ggml/src/ggml-backend.cpp b/ggml/src/ggml-backend.cpp
-index 20bf96501..d6b3705ed 100644
+index 5bdade6..e576ec9 100644
 --- a/ggml/src/ggml-backend.cpp
 +++ b/ggml/src/ggml-backend.cpp
-@@ -767,16 +767,20 @@ static bool ggml_is_view_op(enum ggml_op op) {
+@@ -907,16 +907,20 @@ static bool ggml_is_view_op(enum ggml_op op) {
  #ifndef GGML_SCHED_MAX_SPLIT_INPUTS
  #define GGML_SCHED_MAX_SPLIT_INPUTS 30
  #endif
@@ -223,7 +223,7 @@ index 20bf96501..d6b3705ed 100644
      int n_inputs;
      int inputs_capacity;
      // graph view of this split
-@@ -826,16 +830,29 @@ struct ggml_backend_sched {
+@@ -966,16 +970,29 @@ struct ggml_backend_sched {
      ggml_backend_sched_eval_callback callback_eval;
      void * callback_eval_user_data;
  
@@ -253,7 +253,7 @@ index 20bf96501..d6b3705ed 100644
      int debug_graph_size;
      int debug_prev_graph_size;
  };
-@@ -1638,31 +1655,163 @@ static bool ggml_backend_sched_alloc_splits(ggml_backend_sched_t sched) {
+@@ -1794,31 +1811,163 @@ static bool ggml_backend_sched_alloc_splits(ggml_backend_sched_t sched) {
              GGML_LOG_ERROR("%s: failed to allocate graph\n", __func__);
              return false;
          }
@@ -417,7 +417,7 @@ index 20bf96501..d6b3705ed 100644
              } else {
                  ggml_backend_synchronize(sched->backends[prev_backend_id]);
              }
-@@ -1678,16 +1827,51 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
+@@ -1834,16 +1983,51 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
                  // inputs from the user must be copied immediately to prevent the user overwriting the data before the copy is done
                  if (sched->events[split_backend_id][sched->cur_copy] != NULL) {
                      ggml_backend_event_synchronize(sched->events[split_backend_id][sched->cur_copy]);
@@ -469,7 +469,7 @@ index 20bf96501..d6b3705ed 100644
                  }
  
                  // when offloading MoE weights, we can reduce the amount of data copied by copying only the experts that are used
-@@ -1790,18 +1974,29 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
+@@ -1946,18 +2130,29 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
                              ggml_backend_synchronize(split_backend);
                          }
                          ggml_backend_tensor_copy(input, input_cpy);
@@ -499,7 +499,7 @@ index 20bf96501..d6b3705ed 100644
              for (int j0 = 0; j0 < split->graph.n_nodes; j0++) {
                  struct ggml_tensor * t = split->graph.nodes[j0];
  
-@@ -1907,30 +2102,49 @@ ggml_backend_sched_t ggml_backend_sched_new(
+@@ -2063,30 +2258,49 @@ ggml_backend_sched_t ggml_backend_sched_new(
                  sched->events[b][c] = ggml_backend_event_new(backends[b]->device);
              }
          }
@@ -549,7 +549,7 @@ index 20bf96501..d6b3705ed 100644
      }
      free(sched->splits);
      free(sched->graph_inputs);
-@@ -2029,16 +2243,19 @@ enum ggml_status ggml_backend_sched_graph_compute_async(ggml_backend_sched_t sch
+@@ -2185,16 +2399,19 @@ enum ggml_status ggml_backend_sched_graph_compute_async(ggml_backend_sched_t sch
      return ggml_backend_sched_compute_splits(sched);
  }
  
@@ -570,7 +570,7 @@ index 20bf96501..d6b3705ed 100644
  }
  
 diff --git a/ggml/src/ggml-common.h b/ggml/src/ggml-common.h
-index 1dbbe326d..e9c0754eb 100644
+index 1dbbe32..e9c0754 100644
 --- a/ggml/src/ggml-common.h
 +++ b/ggml/src/ggml-common.h
 @@ -282,16 +282,105 @@ static_assert(sizeof(block_tq1_0) == sizeof(ggml_half) + QK_K / 64 + (QK_K - 4 *
@@ -680,15 +680,15 @@ index 1dbbe326d..e9c0754eb 100644
  // 16 blocks of 16 elements each
  // Effectively 2.625 bits per weight
 diff --git a/ggml/src/ggml-cpu/ggml-cpu.c b/ggml/src/ggml-cpu/ggml-cpu.c
-index 8bb0ff7bc..2c4a8bfed 100644
+index 7c274c0..e43b6e9 100644
 --- a/ggml/src/ggml-cpu/ggml-cpu.c
 +++ b/ggml/src/ggml-cpu/ggml-cpu.c
-@@ -3,16 +3,17 @@
+@@ -2,16 +2,17 @@
+ #define _USE_MATH_DEFINES // For M_PI on MSVC
  
  #include "ggml-backend-impl.h"
  #include "ggml-backend.h"
  #include "traits.h"
- #include "iqp.h"
  #include "ggml-cpu-impl.h"
  #include "ggml-impl.h"
  #include "quants.h"
@@ -700,7 +700,7 @@ index 8bb0ff7bc..2c4a8bfed 100644
  #include "ops.h"
  #include "ggml.h"
  #include "common.h"
- 
+ #include "tiled/tiled.h"
 @@ -207,16 +208,32 @@ typedef pthread_t ggml_thread_t;
  #define GGML_THREADPOOL_N_THREADS_BITS (16)
  
@@ -781,7 +781,7 @@ index 8bb0ff7bc..2c4a8bfed 100644
  
  //
  // Threading defs
-@@ -2088,16 +2135,20 @@ static void ggml_compute_forward(struct ggml_compute_params * params, struct ggm
+@@ -2084,16 +2131,20 @@ static void ggml_compute_forward(struct ggml_compute_params * params, struct ggm
          case GGML_OP_SOLVE_TRI:
              {
                  ggml_compute_forward_solve_tri(params, tensor);
@@ -802,7 +802,7 @@ index 8bb0ff7bc..2c4a8bfed 100644
              {
                  ggml_compute_forward_dsv4_hc_comb(params, tensor);
              } break;
-@@ -2284,16 +2335,17 @@ static int ggml_get_n_tasks(struct ggml_tensor * node, int n_threads) {
+@@ -2280,16 +2331,17 @@ static int ggml_get_n_tasks(struct ggml_tensor * node, int n_threads) {
          case GGML_OP_MEAN:
          case GGML_OP_ARGMAX:
              {
@@ -820,7 +820,7 @@ index 8bb0ff7bc..2c4a8bfed 100644
              } break;
          case GGML_OP_REPEAT:
          case GGML_OP_REPEAT_BACK:
-@@ -3032,16 +3084,20 @@ struct ggml_cplan ggml_graph_plan(
+@@ -3024,16 +3076,20 @@ struct ggml_cplan ggml_graph_plan(
                      } break;
                  case GGML_OP_GATED_DELTA_NET:
                      {
@@ -841,7 +841,7 @@ index 8bb0ff7bc..2c4a8bfed 100644
                      {
                          // temp buffer for dequantizing lightning indexer keys
                          const int64_t ne10 = node->src[1]->ne[0];
-@@ -3476,16 +3532,94 @@ enum ggml_status ggml_graph_compute(struct ggml_cgraph * cgraph, struct ggml_cpl
+@@ -3468,16 +3524,94 @@ enum ggml_status ggml_graph_compute(struct ggml_cgraph * cgraph, struct ggml_cpl
  enum ggml_status ggml_graph_compute_with_ctx(struct ggml_context * ctx, struct ggml_cgraph * cgraph, int n_threads) {
      struct ggml_cplan cplan = ggml_graph_plan(cgraph, n_threads, NULL);
  
@@ -937,7 +937,7 @@ index 8bb0ff7bc..2c4a8bfed 100644
  #if defined(__F16C__)
  #if defined(__AVX512F__)
 diff --git a/ggml/src/ggml-cpu/ggml-cpu.cpp b/ggml/src/ggml-cpu/ggml-cpu.cpp
-index 1df0f2bb9..463f1f855 100644
+index 81ff5d7..d98ffc9 100644
 --- a/ggml/src/ggml-cpu/ggml-cpu.cpp
 +++ b/ggml/src/ggml-cpu/ggml-cpu.cpp
 @@ -57,17 +57,19 @@ std::vector<ggml_backend_buffer_type_t> & ggml_backend_cpu_get_extra_buffer_type
@@ -962,7 +962,7 @@ index 1df0f2bb9..463f1f855 100644
  
      return bufts;
 diff --git a/ggml/src/ggml-cpu/ops.cpp b/ggml/src/ggml-cpu/ops.cpp
-index ba00a0a73..076614805 100644
+index 16a916d..b54d2e4 100644
 --- a/ggml/src/ggml-cpu/ops.cpp
 +++ b/ggml/src/ggml-cpu/ops.cpp
 @@ -7,16 +7,20 @@
@@ -986,7 +986,7 @@ index ba00a0a73..076614805 100644
  
      const ggml_tensor * src0 = dst->src[0];
  
-@@ -5246,16 +5250,21 @@ static void ggml_compute_forward_set_rows_impl(
+@@ -5471,16 +5475,21 @@ static void ggml_compute_forward_set_rows_impl(
      // row range for this thread
      const int64_t ir0 = dr*ith;
      const int64_t ir1 = std::min(ir0 + dr, nr);
@@ -1008,7 +1008,7 @@ index ba00a0a73..076614805 100644
                  const int64_t i10 = i;
  
                  const int64_t i1 = *(idx_t *) ((char *) src1->data + i10*nb10 + i11*nb11 + i12*nb12);
-@@ -11221,16 +11230,106 @@ static void ggml_compute_forward_dsv4_hc_comb_f32(
+@@ -11449,16 +11458,106 @@ static void ggml_compute_forward_dsv4_hc_comb_f32(
              for (int64_t idst = 0; idst < hc; ++idst) {
                  const int64_t idx = idst + hc*isrc;
                  *(float *) ((char *) dst->data + idst*nbd0 + isrc*nbd1 + it*nbd2) = comb[idx];
@@ -1116,7 +1116,7 @@ index ba00a0a73..076614805 100644
          case GGML_TYPE_F32:
              {
 diff --git a/ggml/src/ggml-cpu/ops.h b/ggml/src/ggml-cpu/ops.h
-index 2728b08b6..7d41b8b3a 100644
+index 2728b08..7d41b8b 100644
 --- a/ggml/src/ggml-cpu/ops.h
 +++ b/ggml/src/ggml-cpu/ops.h
 @@ -99,16 +99,17 @@ void ggml_compute_forward_unary(const struct ggml_compute_params * params, struc
@@ -1138,10 +1138,10 @@ index 2728b08b6..7d41b8b3a 100644
  void ggml_compute_forward_map_custom3(const struct ggml_compute_params * params, struct ggml_tensor * dst);
  void ggml_compute_forward_custom(const struct ggml_compute_params * params, struct ggml_tensor * dst);
 diff --git a/ggml/src/ggml-quants.c b/ggml/src/ggml-quants.c
-index 55db802c0..eb6d96ae0 100644
+index 7750a72..230e288 100644
 --- a/ggml/src/ggml-quants.c
 +++ b/ggml/src/ggml-quants.c
-@@ -5622,16 +5622,23 @@ bool ggml_validate_row_data(enum ggml_type type, const void * data, size_t nbyte
+@@ -5623,16 +5623,23 @@ bool ggml_validate_row_data(enum ggml_type type, const void * data, size_t nbyte
              } break;
  
          case GGML_TYPE_I8:
@@ -1166,7 +1166,7 @@ index 55db802c0..eb6d96ae0 100644
  
      return true;
 diff --git a/ggml/src/ggml-quants.h b/ggml/src/ggml-quants.h
-index 75188f1af..a13385c27 100644
+index 75188f1..a13385c 100644
 --- a/ggml/src/ggml-quants.h
 +++ b/ggml/src/ggml-quants.h
 @@ -97,16 +97,37 @@ GGML_API size_t quantize_q6_K(const float * GGML_RESTRICT src, void * GGML_RESTR
@@ -1208,7 +1208,7 @@ index 75188f1af..a13385c27 100644
  GGML_API void iq3xs_free_impl(int grid_size);
  
 diff --git a/ggml/src/ggml.c b/ggml/src/ggml.c
-index a286083b9..c31be27f4 100644
+index 9bcabdb..e46d8c8 100644
 --- a/ggml/src/ggml.c
 +++ b/ggml/src/ggml.c
 @@ -760,16 +760,56 @@ static const struct ggml_type_traits type_traits[GGML_TYPE_COUNT] = {
@@ -1342,7 +1342,7 @@ index a286083b9..c31be27f4 100644
      "SGN",
      "NEG",
      "STEP",
-@@ -6603,16 +6645,46 @@ struct ggml_tensor * ggml_dsv4_hc_post(
+@@ -6612,16 +6654,46 @@ struct ggml_tensor * ggml_dsv4_hc_post(
      result->src[0] = x;
      result->src[1] = residual;
      result->src[2] = post;
@@ -1389,7 +1389,7 @@ index a286083b9..c31be27f4 100644
      result.size = size;
      result.keys = GGML_MALLOC(sizeof(struct ggml_tensor *) * size);
      result.used = GGML_CALLOC(ggml_bitset_size(size), sizeof(ggml_bitset_t));
-@@ -8099,16 +8171,21 @@ size_t ggml_quantize_chunk(
+@@ -8109,16 +8181,21 @@ size_t ggml_quantize_chunk(
          case GGML_TYPE_IQ2_XS:  result = quantize_iq2_xs (src + start, (char *) dst + start_row * row_size, nrows, n_per_row, imatrix); break;
          case GGML_TYPE_IQ3_XXS: result = quantize_iq3_xxs(src + start, (char *) dst + start_row * row_size, nrows, n_per_row, imatrix); break;
          case GGML_TYPE_IQ3_S:   result = quantize_iq3_s  (src + start, (char *) dst + start_row * row_size, nrows, n_per_row, imatrix); break;

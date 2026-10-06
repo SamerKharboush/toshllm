@@ -1,8 +1,8 @@
 diff --git a/ggml/src/ggml-metal/ggml-metal-ops.cpp b/ggml/src/ggml-metal/ggml-metal-ops.cpp
-index 3716a66f6..ef93c0e7c 100644
+index fe34af0..7b4d8f3 100644
 --- a/ggml/src/ggml-metal/ggml-metal-ops.cpp
 +++ b/ggml/src/ggml-metal/ggml-metal-ops.cpp
-@@ -4444,18 +4444,19 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
+@@ -4618,18 +4618,19 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
          // on both widths, so each keeps its own.
          static const int64_t wg_dk128_env = []() {
              const char * s = getenv("TOSH_FA_WG_DK128_MIN_KV");

@@ -1,8 +1,11 @@
 diff --git a/common/common.h b/common/common.h
-index f818db66e..e3404d368 100644
+index 470eba2..909f7f9 100644
 --- a/common/common.h
 +++ b/common/common.h
-@@ -394,11 +394,15 @@ struct common_params_speculative {
+@@ -396,17 +396,21 @@ struct common_params_speculative {
+         return synth_len != -1.0 || !synth_rates.empty();
+     }
+ 
      uint32_t need_n_rs_seq() const {
          bool needs_rs_seq = std::any_of(types.begin(), types.end(), [&](auto t) {
              return t == COMMON_SPECULATIVE_TYPE_DRAFT_MTP || t == COMMON_SPECULATIVE_TYPE_DRAFT_EAGLE3 || t == COMMON_SPECULATIVE_TYPE_DRAFT_DFLASH || t == COMMON_SPECULATIVE_TYPE_DRAFT_DSPARK;
@@ -19,11 +22,17 @@ index f818db66e..e3404d368 100644
  
  struct common_params_diffusion {
      int32_t steps         = 128;
+     bool    visual_mode   = false;
+ 
+     float   eps           = 0;        // epsilon for timesteps
 diff --git a/common/speculative.cpp b/common/speculative.cpp
-index 4f5578ba5..4b79ca87a 100644
+index db101cb..2d8bc4d 100644
 --- a/common/speculative.cpp
 +++ b/common/speculative.cpp
-@@ -11,10 +11,11 @@
+@@ -8,16 +8,17 @@
+ #include "ngram-cache.h"
+ #include "ngram-map.h"
+ #include "ngram-mod.h"
  #include "sampling.h"
  
  #include "../src/llama-ext.h" // staging API: llama_set_embeddings_nextn / llama_get_embeddings_nextn_ith (used by MTP)
@@ -35,7 +44,13 @@ index 4f5578ba5..4b79ca87a 100644
  #include <cstring>
  #include <iomanip>
  #include <map>
-@@ -1374,17 +1375,257 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
+ #include <cinttypes>
+ 
+ #define SPC_DBG(fmt, ...) LOG_DBG("spec %12.*s: " fmt, 12, __func__, __VA_ARGS__)
+@@ -1431,23 +1432,263 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
+         static const float alpha = getenv("TOSH_DFLASH_EWMA") ? (float) atof(getenv("TOSH_DFLASH_EWMA")) : 0.5f;
+         const float acc = std::min(1.0f, (float) n_accepted / (float) n_last_draft[seq_id]);
+         const float a = acc > acc_ewma[seq_id] ? 0.2f : alpha;  // rise fast, fall at alpha
          acc_ewma[seq_id] = a * acc_ewma[seq_id] + (1.0f - a) * acc;
          n_last_draft[seq_id] = 0;
      }
@@ -290,10 +305,16 @@ index 4f5578ba5..4b79ca87a 100644
 +
      common_params_speculative_draft params; // reuses the draft-model params slot (ctx_tgt/ctx_dft)
  
-     llama_batch batch;
+     common_batch batch;
  
      std::vector<common_sampler_ptr> smpls;
-@@ -1504,10 +1745,17 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
+ 
+     std::vector<common_params_sampling> smpls_cfg;
+ 
+@@ -1553,16 +1794,23 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
+             this->params.n_max = std::min(this->params.n_max, n_mtp_layers);
+ 
+             chain_h.assign(n_seq, {});
              for (auto & c : chain_h) {
                  c.reserve((size_t) (this->params.n_max + 1) * n_embd);
              }
@@ -311,7 +332,13 @@ index 4f5578ba5..4b79ca87a 100644
  
          cold_rows.assign(n_seq, {});
          cold_h.assign(n_seq, {});
-@@ -1607,10 +1855,22 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
+ 
+         cold_defer = getenv("TOSH_MTP_COLD_DEFER_DISABLE") == nullptr;
+         // 0.65 sat above the acceptance real content reaches, so it backed off where drafting
+@@ -1652,16 +1900,28 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
+         const int32_t N = (int32_t) prompt.size();
+         if (N <= 0) {
+             return;
          }
  
          cold_rows[seq_id].clear();
@@ -334,7 +361,13 @@ index 4f5578ba5..4b79ca87a 100644
  
          if (pos_max < N - 1 && !is_mem_shared) {
              SPC_WRN("ctx_dft pos_max=%d < N-1=%d - "
-@@ -1810,10 +2070,48 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
+                     "process() hook may not have run on every prefill ubatch "
+                     "(need_embd / output flag on every prompt position?). "
+                     "Drafts may degrade.\n",
+@@ -1822,16 +2082,54 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
+ 
+         if ((int) acc_ewma.size() != (int) n_seq) {
+             acc_ewma.assign(n_seq, 1.0f);
              n_last_draft.assign(n_seq, 0);
              steps_cold.assign(n_seq, 0);
              probe_gap.assign(n_seq, probe_base);
@@ -383,7 +416,13 @@ index 4f5578ba5..4b79ca87a 100644
  
              if (!dp.drafting) {
                  continue;
-@@ -1966,18 +2264,48 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
+             }
+ 
+             // while backed off, probe every probe_gap steps and double the gap on a failed probe,
+@@ -1995,24 +2293,54 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
+             }
+ 
+             if (dp.result->size() < (size_t) params.n_min) {
                  dp.result->clear();
              }
              if (drafted_this_step[seq_id]) {
@@ -432,7 +471,13 @@ index 4f5578ba5..4b79ca87a 100644
              // acceptance still paid; 0.92 follows the last dozen drafts instead
              static const float alpha = getenv("TOSH_MTP_EWMA") ? (float) atof(getenv("TOSH_MTP_EWMA")) : 0.92f;
              const float acc = std::min(1.0f, (float) n_accepted / (float) n_last_draft[seq_id]);
-@@ -2566,13 +2894,17 @@ static uint32_t common_get_enabled_speculative_configs(const std::vector<common_
+             const float a = acc > acc_ewma[seq_id] ? 0.2f : alpha;  // rise fast, fall at alpha
+             acc_ewma[seq_id] = a * acc_ewma[seq_id] + (1.0f - a) * acc;
+             n_last_draft[seq_id] = 0;
+@@ -2595,19 +2923,23 @@ static uint32_t common_get_enabled_speculative_configs(const std::vector<common_
+     return result;
+ }
+ 
  int32_t common_speculative_n_max(const common_params_speculative * spec) {
      int32_t n_max = 0;
  
@@ -451,11 +496,14 @@ index 4f5578ba5..4b79ca87a 100644
                  n_max = std::max(n_max, std::max(0, spec->draft.n_max));
                  break;
              case COMMON_SPECULATIVE_TYPE_NGRAM_SIMPLE:
+                 n_max = std::max(n_max, (int32_t) spec->ngram_simple.size_m);
+                 break;
+             case COMMON_SPECULATIVE_TYPE_NGRAM_MAP_K:
 diff --git a/src/llama-graph.cpp b/src/llama-graph.cpp
-index c58aec586..285d29a41 100644
+index b7aee88..ee0ffbe 100644
 --- a/src/llama-graph.cpp
 +++ b/src/llama-graph.cpp
-@@ -1,6 +1,7 @@
+@@ -1,9 +1,10 @@
  #include "llama-graph.h"
 +#include "llama-vocab.h"
  
@@ -463,7 +511,13 @@ index c58aec586..285d29a41 100644
  #include "tosh-moe.h"
  #include "tosh-dmoe.h"
  static inline ggml_tensor * tosh_moe_bank_of(ggml_tensor * t) {
-@@ -1588,10 +1589,40 @@ ggml_tensor * llm_graph_context::build_hadamard_lookup(
+     return t ? (ggml_tensor *) tosh_moe_bank_ptr(t) : t;
+ }
+ #else
+@@ -1620,16 +1621,46 @@ ggml_tensor * llm_graph_context::build_hadamard_lookup(
+     // latent rows back to the primal basis: h = s * (H z)
+     rows = llama_mul_mat_hadamard(ctx0, rows, it->second.rot);
+     if (it->second.signs) {
          rows = ggml_mul(ctx0, rows, it->second.signs);
      }
      return rows;
@@ -504,11 +558,17 @@ index c58aec586..285d29a41 100644
            ggml_tensor * cur,
            ggml_tensor * w_s) const {
      ggml_tensor * res = ggml_mul_mat(ctx0, w, build_hadamard_input(w, cur));
+ 
+     if (prec_policy) {
+         prec_policy->apply(res);
 diff --git a/src/llama-graph.h b/src/llama-graph.h
-index 958034f97..b6217365f 100644
+index 1819073..6ec5c4c 100644
 --- a/src/llama-graph.h
 +++ b/src/llama-graph.h
-@@ -29,10 +29,11 @@ struct llama_hadamard_transform {
+@@ -26,16 +26,17 @@ struct llama_hadamard_transform {
+     // perm_rep > 1: the activation arrives as [hd, nk, rep] and the fold expects [hd, rep, nk]
+     int64_t perm_hd  = 0;
+     int64_t perm_nk  = 0;
      int64_t perm_rep = 0;
  };
  using llama_hadamard_rotations = std::unordered_map<const ggml_tensor *, llama_hadamard_transform>;
@@ -516,11 +576,17 @@ index 958034f97..b6217365f 100644
  struct llama_cparams;
 +struct llama_vocab;
  struct llama_layer;
+ struct llama_prec_policy;
  
  struct llama_memory_context_i;
  
  class llama_kv_cache_context;
-@@ -1088,10 +1089,18 @@ struct llm_graph_context {
+ class llama_kv_cache_dsa_context;
+ class llama_kv_cache_dsa_iswa_context;
+@@ -1095,16 +1096,24 @@ struct llm_graph_context {
+               const llama_hadamard_rotations * inverses = nullptr) const;
+ 
+     // do mat_mul, while optionally apply lora and per-tensor scale
      ggml_tensor * build_lora_mm(
                ggml_tensor * w,
                ggml_tensor * cur,
@@ -539,11 +605,17 @@ index 958034f97..b6217365f 100644
                ggml_tensor * w,   // ggml_tensor * as
                ggml_tensor * cur, // ggml_tensor * b
                ggml_tensor * ids,
+               ggml_tensor * w_s = nullptr) const;
+ 
+     ggml_tensor * build_norm(
 diff --git a/src/models/qwen35.cpp b/src/models/qwen35.cpp
-index c3fa335bd..9530d2144 100644
+index 9f4ddb5..7dbaa9b 100644
 --- a/src/models/qwen35.cpp
 +++ b/src/models/qwen35.cpp
-@@ -653,11 +653,11 @@ llama_model_qwen35::graph_mtp::graph_mtp(const llama_model & model, const llm_gr
+@@ -665,14 +665,14 @@ llama_model_qwen35::graph_mtp::graph_mtp(const llama_model & model, const llm_gr
+     res->t_h_nextn = cur;
+ 
+     cur = ggml_get_rows(ctx0, cur, inp_out_ids);
      cb(cur, "mtp_shared_head_norm", -1);
  
      ggml_tensor * head_w = layer.nextn.shared_head_head ? layer.nextn.shared_head_head : model.output;
@@ -557,10 +629,13 @@ index c3fa335bd..9530d2144 100644
      ggml_build_forward_expand(gf, cur);
  }
 diff --git a/src/models/qwen35moe.cpp b/src/models/qwen35moe.cpp
-index 9cf11c02c..1522e1d70 100644
+index d1dccf8..d85edbc 100644
 --- a/src/models/qwen35moe.cpp
 +++ b/src/models/qwen35moe.cpp
-@@ -750,11 +750,11 @@ llama_model_qwen35moe::graph_mtp::graph_mtp(const llama_model & model, const llm
+@@ -748,14 +748,14 @@ llama_model_qwen35moe::graph_mtp::graph_mtp(const llama_model & model, const llm
+     res->t_h_nextn= cur;
+ 
+     cur = ggml_get_rows(ctx0, cur, inp_out_ids);
      cb(cur, "mtp_shared_head_norm", -1);
  
      ggml_tensor * head_w = layer.nextn.shared_head_head ? layer.nextn.shared_head_head : model.output;

@@ -1,8 +1,8 @@
 diff --git a/ggml/src/ggml-metal/ggml-metal-device.cpp b/ggml/src/ggml-metal/ggml-metal-device.cpp
-index 84782433a..e0d2dd508 100644
+index ce64df2..c70f352 100644
 --- a/ggml/src/ggml-metal/ggml-metal-device.cpp
 +++ b/ggml/src/ggml-metal/ggml-metal-device.cpp
-@@ -1697,29 +1697,36 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mv_id(ggml_m
+@@ -1827,29 +1827,36 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mv_id(ggml_m
          if (helper) { nw = (int16_t) props_id->simd_width; smem = (size_t) nw*sizeof(float)*nr0; }
          else if (sr) { nw = (int16_t) props_id->simd_width; }
          else if (lut) { nw = (int16_t) props_id->simd_width; smem = (size_t) nw*sizeof(float); }

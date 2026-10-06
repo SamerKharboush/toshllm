@@ -1,8 +1,8 @@
 diff --git a/ggml/src/ggml-metal/kernels/fa.metal b/ggml/src/ggml-metal/kernels/fa.metal
-index e20761f21..f7aff1081 100644
+index af765d7..d126e51 100644
 --- a/ggml/src/ggml-metal/kernels/fa.metal
 +++ b/ggml/src/ggml-metal/kernels/fa.metal
-@@ -2713,25 +2713,30 @@ template [[host_name("kernel_flash_attn_ext_vec_amd_dk" #dk "_" nm "_wg32")]] ke
+@@ -233,25 +233,30 @@ template [[host_name("kernel_flash_attn_ext_vec_amd_dk" #dk "_" nm "_wg32")]] ke
      kernel_flash_attn_ext_vec_amd<dk, nsg, kt, nkk, dkf, vt, nkv, dvf, 32, 32, subw>;
  // dk64 narrows to subw=8 like dk128; clean pairs keep n64=32, q4_0 in K or V drops to 24.
  #define FA_AMD_PAIR_S(n64, s128, nm, kt, nkk, dkf, vt, nkv, dvf) \
@@ -35,7 +35,7 @@ index e20761f21..f7aff1081 100644
  // asymmetric standard pairs (any mix of f16 / q8_0 / q4_0 for K and V), so every
  // standard K/V combination runs on the GPU instead of falling back to the CPU.
  FA_AMD_PAIR_S(32, 8,  "kq8_0_vf16",        block_q8_0,     8,  dequantize_q8_0_t4,     half4,          1,  dequantize_f16_t4)
-@@ -2775,17 +2780,19 @@ template [[host_name("kernel_flash_attn_ext_vec_amd_dk" #dk "_" nm "_w64")]] ker
+@@ -295,17 +300,19 @@ template [[host_name("kernel_flash_attn_ext_vec_amd_dk" #dk "_" nm "_w64")]] ker
  template [[host_name("kernel_flash_attn_ext_vec_amd_dk" #dk "_" nm "_w64_wg32")]] kernel flash_attn_ext_vec_amd_t \
      kernel_flash_attn_ext_vec_amd<dk, nsg, kt, nkk, dkf, vt, nkv, dvf, 64, 32, subw>;
  #define FA_AMD_PAIR_W64(nm, kt, nkk, dkf, vt, nkv, dvf) \

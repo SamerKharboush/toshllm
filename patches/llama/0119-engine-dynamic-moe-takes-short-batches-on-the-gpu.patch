@@ -1,8 +1,11 @@
 diff --git a/ggml/src/ggml-metal/ggml-metal.cpp b/ggml/src/ggml-metal/ggml-metal.cpp
-index f41bf16eb..34a2d25f6 100644
+index 6db3aab..ec2ff5d 100644
 --- a/ggml/src/ggml-metal/ggml-metal.cpp
 +++ b/ggml/src/ggml-metal/ggml-metal.cpp
-@@ -852,13 +852,14 @@ static int64_t get_op_batch_size(const ggml_tensor * op) {
+@@ -855,19 +855,20 @@ static int64_t get_op_batch_size(const ggml_tensor * op) {
+     }
+ }
+ 
  static bool ggml_backend_metal_device_offload_op(ggml_backend_dev_t dev, const ggml_tensor * op) {
      ggml_metal_device_t ctx_dev = (ggml_metal_device_t)dev->context;
  
@@ -20,11 +23,17 @@ index f41bf16eb..34a2d25f6 100644
              op->op == GGML_OP_MUL_MAT_ID) &&
              get_op_batch_size(op) >= min_batch;
  }
+ 
+ static ggml_backend_event_t ggml_backend_metal_device_event_new(ggml_backend_dev_t dev) {
+     ggml_metal_device_t ctx_dev = (ggml_metal_device_t)dev->context;
 diff --git a/src/llama-tosh-dmoe.cpp b/src/llama-tosh-dmoe.cpp
-index f89c36daa..bcbabef62 100644
+index f89c36d..bcbabef 100644
 --- a/src/llama-tosh-dmoe.cpp
 +++ b/src/llama-tosh-dmoe.cpp
-@@ -1441,15 +1441,12 @@ int llama_tosh_dmoe_rare_tail() {
+@@ -1438,21 +1438,18 @@ int llama_tosh_dmoe_rare_rows() {
+ }
+ 
+ int llama_tosh_dmoe_rare_tail() {
      static const int n = getenv("TOSH_DMOE_RARE_TAIL") ? atoi(getenv("TOSH_DMOE_RARE_TAIL")) : 32;
      return std::max(n, 0);
  }
@@ -42,3 +51,6 @@ index f89c36daa..bcbabef62 100644
  bool llama_tosh_dmoe_observe_prefill() {
      static const bool on = getenv("TOSH_DMOE_OBSERVE_PREFILL") == nullptr || atoi(getenv("TOSH_DMOE_OBSERVE_PREFILL")) != 0;
      return on && g_policy != nullptr;
+ }
+ 
+ void llama_tosh_dmoe_shutdown() {

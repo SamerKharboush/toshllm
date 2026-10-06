@@ -1,5 +1,5 @@
 diff --git a/ggml/src/ggml-metal/ggml-metal-context.m b/ggml/src/ggml-metal/ggml-metal-context.m
-index 182caa063..a2728d31d 100644
+index a6a20cc..2672acd 100644
 --- a/ggml/src/ggml-metal/ggml-metal-context.m
 +++ b/ggml/src/ggml-metal/ggml-metal-context.m
 @@ -274,16 +274,23 @@ struct ggml_metal {
@@ -578,10 +578,10 @@ index 182caa063..a2728d31d 100644
          atomic_fetch_add(&g_tr_encode_ns, tosh_now_ns() - t_enter);
      }
 diff --git a/ggml/src/ggml-metal/ggml-metal.cpp b/ggml/src/ggml-metal/ggml-metal.cpp
-index b4f32af98..ddad25afd 100644
+index a31f895..d8f0ef5 100644
 --- a/ggml/src/ggml-metal/ggml-metal.cpp
 +++ b/ggml/src/ggml-metal/ggml-metal.cpp
-@@ -1210,20 +1210,22 @@ static bool ggml_backend_metal_comm_allreduce_tensor(void * comm_ctx_v, ggml_ten
+@@ -1216,20 +1216,22 @@ static bool ggml_backend_metal_comm_allreduce_tensor(void * comm_ctx_v, ggml_ten
      for (size_t offset = offset_max; offset >= 1; offset /= 2) {
          if (fused && prefer_events) {
              static uint64_t seq_round = 0;

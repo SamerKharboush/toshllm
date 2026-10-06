@@ -1,8 +1,8 @@
 diff --git a/ggml/src/ggml-backend-meta.cpp b/ggml/src/ggml-backend-meta.cpp
-index 76cbdfbde..4e4c57289 100644
+index bba99c4..c4c8677 100644
 --- a/ggml/src/ggml-backend-meta.cpp
 +++ b/ggml/src/ggml-backend-meta.cpp
-@@ -543,16 +543,39 @@ static struct ggml_backend_meta_split_state ggml_backend_meta_get_split_state(co
+@@ -547,16 +547,39 @@ static struct ggml_backend_meta_split_state ggml_backend_meta_get_split_state(co
  static struct ggml_backend_meta_split_state ggml_backend_meta_get_split_state(
          ggml_backend_meta_simple_tensor_container & stc, const struct ggml_tensor * tensor, bool assume_sync) {
      // FIXME Currently this function preserves/erases the information in n_segments and nr in an inconsistent way.
@@ -42,7 +42,7 @@ index 76cbdfbde..4e4c57289 100644
              int64_t sum_a = 0;
              for (size_t s = 0; s < a.n_segments; s++) {
                  sum_a += a.ne[s*n_bufs + j] * a.nr[s];
-@@ -606,16 +629,27 @@ static struct ggml_backend_meta_split_state ggml_backend_meta_get_split_state(
+@@ -610,16 +633,27 @@ static struct ggml_backend_meta_split_state ggml_backend_meta_get_split_state(
          if (src_ss[2].axis == GGML_BACKEND_SPLIT_AXIS_MIRRORED && (src_ss[0].axis == src_ss[1].axis ||
             (src_ss[0].axis == GGML_BACKEND_SPLIT_AXIS_MIRRORED && (src_ss[1].axis == GGML_BACKEND_SPLIT_AXIS_PARTIAL)))) {
              return src_ss[0]; // GGML_OP_ADD_ID
@@ -70,7 +70,7 @@ index 76cbdfbde..4e4c57289 100644
          }
          if (src_ss[1].axis == GGML_BACKEND_SPLIT_AXIS_MIRRORED && src_ss[0].axis >= 0 && src_ss[0].axis < GGML_MAX_DIMS) {
              GGML_ASSERT(concat_axis != src_ss[0].axis);
-@@ -642,16 +676,25 @@ static struct ggml_backend_meta_split_state ggml_backend_meta_get_split_state(
+@@ -646,16 +680,25 @@ static struct ggml_backend_meta_split_state ggml_backend_meta_get_split_state(
              return src_ss[1];
          }
          if (src_ss[0].axis == GGML_BACKEND_SPLIT_AXIS_0 && src_ss[1].axis == GGML_BACKEND_SPLIT_AXIS_0) {
@@ -96,7 +96,7 @@ index 76cbdfbde..4e4c57289 100644
                  src_ss[1].axis == GGML_BACKEND_SPLIT_AXIS_MIRRORED) {
              return src_ss[0];
          }
-@@ -1008,17 +1051,19 @@ static struct ggml_backend_meta_split_state ggml_backend_meta_get_split_state(
+@@ -1012,17 +1055,19 @@ static struct ggml_backend_meta_split_state ggml_backend_meta_get_split_state(
              case GGML_OP_SET_ROWS: {
                  split_state = handle_set_rows(src_ss);
              } break;

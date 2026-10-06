@@ -1,5 +1,5 @@
 diff --git a/ggml/src/ggml-metal/kernels/mul_mv.metal b/ggml/src/ggml-metal/kernels/mul_mv.metal
-index 94846e280..a1092fb9d 100644
+index 94846e2..a1092fb 100644
 --- a/ggml/src/ggml-metal/kernels/mul_mv.metal
 +++ b/ggml/src/ggml-metal/kernels/mul_mv.metal
 @@ -2675,20 +2675,25 @@ void kernel_mul_mv_iq1_m_f32_impl(

@@ -1,8 +1,8 @@
 diff --git a/ggml/src/ggml-metal/ggml-metal-device.cpp b/ggml/src/ggml-metal/ggml-metal-device.cpp
-index affa01c93..a6b44005f 100644
+index 3798db5..6976f99 100644
 --- a/ggml/src/ggml-metal/ggml-metal-device.cpp
 +++ b/ggml/src/ggml-metal/ggml-metal-device.cpp
-@@ -893,18 +893,20 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mv_ext(ggml_
+@@ -904,18 +904,20 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mv_ext(ggml_
          snprintf(tname, sizeof(tname), "%s_hdr", ggml_type_name(tsrc0));
      } else {
          snprintf(tname, sizeof(tname), "%s", ggml_metal_tname(lib, tsrc0));
@@ -25,7 +25,7 @@ index affa01c93..a6b44005f 100644
      snprintf(name, 256, "%s_nsg=%d_nxpsg=%d_ne12=%d_r2=%d_r3=%d", base, nsg, nxpsg, ne12, r2, r3);
  
 diff --git a/ggml/src/ggml-metal/kernels/dequantize.h b/ggml/src/ggml-metal/kernels/dequantize.h
-index c842230e8..905966ca0 100644
+index 3ba18f3..a888c47 100644
 --- a/ggml/src/ggml-metal/kernels/dequantize.h
 +++ b/ggml/src/ggml-metal/kernels/dequantize.h
 @@ -457,16 +457,29 @@ void dequantize_q8_0(device const block_q8_0 *xb, short il, thread type4x4 & reg
@@ -57,12 +57,12 @@ index c842230e8..905966ca0 100644
      const float d = e8m0_to_fp32(xb->e);
      const uint8_t shr = il >= 1 ? 4 : 0;
  
-     for (int i = 0; i < 4; ++i) {
+     float4x4 reg_f;
 diff --git a/ggml/src/ggml-metal/kernels/fa.metal b/ggml/src/ggml-metal/kernels/fa.metal
-index e91c5ce35..694de5b86 100644
+index 0342666..11c7efe 100644
 --- a/ggml/src/ggml-metal/kernels/fa.metal
 +++ b/ggml/src/ggml-metal/kernels/fa.metal
-@@ -2762,47 +2762,47 @@ template [[host_name("kernel_flash_attn_ext_vec_amd_dk" #dk "_" nm "_wg32")]] ke
+@@ -273,47 +273,47 @@ template [[host_name("kernel_flash_attn_ext_vec_amd_dk" #dk "_" nm "_wg32")]] ke
      FA_AMD_INST_S(128, 24, 16, nm, kt, nkk, dkf, vt, nkv, dvf) \
      FA_AMD_INST_S(256, 16, 16, nm, kt, nkk, dkf, vt, nkv, dvf) \
      FA_AMD_INST_S(512, 16, 32, nm, kt, nkk, dkf, vt, nkv, dvf) \
@@ -119,7 +119,7 @@ index e91c5ce35..694de5b86 100644
  template [[host_name("kernel_flash_attn_ext_vec_amd_dk" #dk "_" nm "_w64")]] kernel flash_attn_ext_vec_amd_t \
      kernel_flash_attn_ext_vec_amd<dk, nsg, kt, nkk, dkf, vt, nkv, dvf, 64>;
  #define FA_AMD_INST_W64_S(dk, nsg, subw, nm, kt, nkk, dkf, vt, nkv, dvf) \
-@@ -2816,17 +2816,17 @@ template [[host_name("kernel_flash_attn_ext_vec_amd_dk" #dk "_" nm "_w64_wg32")]
+@@ -327,17 +327,17 @@ template [[host_name("kernel_flash_attn_ext_vec_amd_dk" #dk "_" nm "_w64_wg32")]
      FA_AMD_INST_W64_WG(512, 8, 32, nm, kt, nkk, dkf, vt, nkv, dvf) \
      FA_AMD_INST_W64_S( 64, 16,  8, nm, kt, nkk, dkf, vt, nkv, dvf) \
      FA_AMD_INST_W64_S(128,  8,  8, nm, kt, nkk, dkf, vt, nkv, dvf) \
@@ -138,7 +138,7 @@ index e91c5ce35..694de5b86 100644
  FA_AMD_INST_S   (72, 32, 16, "kf16_vf16", half4, 1, dequantize_f16_t4, half4, 1, dequantize_f16_t4)
  FA_AMD_INST_W64_S(72, 16, 16, "kf16_vf16", half4, 1, dequantize_f16_t4, half4, 1, dequantize_f16_t4)
  // UNet diffusion heads (SD 1.5 runs 40 at full resolution, then 80 and 160). Same
-@@ -2834,52 +2834,52 @@ FA_AMD_INST_W64_S(72, 16, 16, "kf16_vf16", half4, 1, dequantize_f16_t4, half4, 1
+@@ -345,52 +345,52 @@ FA_AMD_INST_W64_S(72, 16, 16, "kf16_vf16", half4, 1, dequantize_f16_t4, half4, 1
  // cover the tail chunk. f16 only, since none of them is a whole quant block.
  FA_AMD_INST_S   ( 40, 32,  8, "kf16_vf16", half4, 1, dequantize_f16_t4, half4, 1, dequantize_f16_t4)
  FA_AMD_INST_W64_S( 40, 16,  8, "kf16_vf16", half4, 1, dequantize_f16_t4, half4, 1, dequantize_f16_t4)
@@ -201,7 +201,7 @@ index e91c5ce35..694de5b86 100644
  FA_AMD_TURBO("kq4_0_vturbo3", block_q4_0, 8, dequantize_q4_0_t4, block_turbo3_0, 32, dequantize_turbo3_0_t4)
  FA_AMD_TURBO("kq4_0_vturbo4", block_q4_0, 8, dequantize_q4_0_t4, block_turbo4_0, 32, dequantize_turbo4_0_t4)
  FA_AMD_TURBO("kturbo2_vq4_0", block_turbo2_0, 32, dequantize_turbo2_0_t4, block_q4_0, 8, dequantize_q4_0_t4)
-@@ -2890,33 +2890,33 @@ FA_AMD_TURBO("kturbo4_vq4_0", block_turbo4_0, 32, dequantize_turbo4_0_t4, block_
+@@ -401,33 +401,33 @@ FA_AMD_TURBO("kturbo4_vq4_0", block_turbo4_0, 32, dequantize_turbo4_0_t4, block_
  #define FA_AMD_TURBO_W64(nm, kt, nkk, dkf, vt, nkv, dvf) \
      FA_AMD_INST_W64_S(128, 8,  8, nm, kt, nkk, dkf, vt, nkv, dvf) \
      FA_AMD_INST_W64_WG(256, 8, 16, nm, kt, nkk, dkf, vt, nkv, dvf) \
@@ -241,7 +241,7 @@ index e91c5ce35..694de5b86 100644
  FA_AMD_TURBO_W64("kq4_0_vturbo3", block_q4_0, 8, dequantize_q4_0_t4, block_turbo3_0, 32, dequantize_turbo3_0_t4)
  FA_AMD_TURBO_W64("kq4_0_vturbo4", block_q4_0, 8, dequantize_q4_0_t4, block_turbo4_0, 32, dequantize_turbo4_0_t4)
  FA_AMD_TURBO_W64("kturbo2_vq4_0", block_turbo2_0, 32, dequantize_turbo2_0_t4, block_q4_0, 8, dequantize_q4_0_t4)
-@@ -3109,57 +3109,57 @@ template [[host_name("kernel_flash_attn_ext_tile_amd_dk" #dk "_" nm)]] kernel fl
+@@ -620,57 +620,57 @@ template [[host_name("kernel_flash_attn_ext_tile_amd_dk" #dk "_" nm)]] kernel fl
      kernel_flash_attn_ext_tile_amd<dk, 16, kt, nkk, dkf, vt, nkv, dvf>;
  #define FA_AMD_TILE_PAIR(nm, kt, nkk, dkf, vt, nkv, dvf) \
      FA_AMD_TILE_INST( 64, nm, kt, nkk, dkf, vt, nkv, dvf) \
@@ -312,7 +312,7 @@ index e91c5ce35..694de5b86 100644
  FA_AMD_TILE_TURBO("kq4_0_vturbo3", block_q4_0, 8, dequantize_q4_0_t4, block_turbo3_0, 32, dequantize_turbo3_0_t4)
  FA_AMD_TILE_TURBO("kq4_0_vturbo4", block_q4_0, 8, dequantize_q4_0_t4, block_turbo4_0, 32, dequantize_turbo4_0_t4)
  FA_AMD_TILE_TURBO("kturbo2_vq4_0", block_turbo2_0, 32, dequantize_turbo2_0_t4, block_q4_0, 8, dequantize_q4_0_t4)
-@@ -3171,62 +3171,62 @@ FA_AMD_TILE_TURBO("kturbo4_vq4_0", block_turbo4_0, 32, dequantize_turbo4_0_t4, b
+@@ -682,62 +682,62 @@ FA_AMD_TILE_TURBO("kturbo4_vq4_0", block_turbo4_0, 32, dequantize_turbo4_0_t4, b
  template [[host_name("kernel_flash_attn_ext_tile_amd_dk" #dk "_" nm "_w64")]] kernel flash_attn_ext_tile_amd_t \
      kernel_flash_attn_ext_tile_amd<dk, 8, kt, nkk, dkf, vt, nkv, dvf, 64>;
  #define FA_AMD_TILE_PAIR_W64(nm, kt, nkk, dkf, vt, nkv, dvf) \
@@ -388,7 +388,7 @@ index e91c5ce35..694de5b86 100644
  FA_AMD_TILE_TURBO_W64("kq4_0_vturbo3", block_q4_0, 8, dequantize_q4_0_t4, block_turbo3_0, 32, dequantize_turbo3_0_t4)
  FA_AMD_TILE_TURBO_W64("kq4_0_vturbo4", block_q4_0, 8, dequantize_q4_0_t4, block_turbo4_0, 32, dequantize_turbo4_0_t4)
  FA_AMD_TILE_TURBO_W64("kturbo2_vq4_0", block_turbo2_0, 32, dequantize_turbo2_0_t4, block_q4_0, 8, dequantize_q4_0_t4)
-@@ -3522,46 +3522,46 @@ template [[host_name("kernel_flash_attn_ext_pf_amd_dk" #dk "_" nm)]] kernel flas
+@@ -1033,46 +1033,46 @@ template [[host_name("kernel_flash_attn_ext_pf_amd_dk" #dk "_" nm)]] kernel flas
  template [[host_name("kernel_flash_attn_ext_pf_amd_dk" #dk "_dv" #dv "_" nm)]] kernel flash_attn_ext_pf_amd_t \
      kernel_flash_attn_ext_pf_amd<dk, dv, bq, bk, 256, kt, nkk, dkf, vt, nkv, dvf>;
  #define FA_AMD_PF_PAIR(nm, kt, nkk, dkf, vt, nkv, dvf) \
@@ -446,7 +446,7 @@ index e91c5ce35..694de5b86 100644
  FA_AMD_PF_TURBO("kq4_0_vturbo3", block_q4_0, 8, dequantize_q4_0_t4, block_turbo3_0, 32, dequantize_turbo3_0_t4)
  FA_AMD_PF_TURBO("kq4_0_vturbo4", block_q4_0, 8, dequantize_q4_0_t4, block_turbo4_0, 32, dequantize_turbo4_0_t4)
  FA_AMD_PF_TURBO("kturbo2_vq4_0", block_turbo2_0, 32, dequantize_turbo2_0_t4, block_q4_0, 8, dequantize_q4_0_t4)
-@@ -3575,22 +3575,22 @@ FA_AMD_PF_INST(72, 64, 64, "kf16_vf16", half4, 1, dequantize_f16_t4, half4, 1, d
+@@ -1086,22 +1086,22 @@ FA_AMD_PF_INST(72, 64, 64, "kf16_vf16", half4, 1, dequantize_f16_t4, half4, 1, d
  FA_AMD_PF_INST( 40, 64, 64, "kf16_vf16", half4, 1, dequantize_f16_t4, half4, 1, dequantize_f16_t4)
  FA_AMD_PF_INST( 80, 64, 64, "kf16_vf16", half4, 1, dequantize_f16_t4, half4, 1, dequantize_f16_t4)
  FA_AMD_PF_INST(160, 32, 64, "kf16_vf16", half4, 1, dequantize_f16_t4, half4, 1, dequantize_f16_t4)
@@ -473,7 +473,7 @@ index e91c5ce35..694de5b86 100644
  //       in the other (non-vec) kernel, we need s_t to also be float because we scale during the soft_max
  //
 diff --git a/ggml/src/ggml-metal/kernels/fa_w64.metal b/ggml/src/ggml-metal/kernels/fa_w64.metal
-index 444776226..e945e7e98 100644
+index 4447762..e945e7e 100644
 --- a/ggml/src/ggml-metal/kernels/fa_w64.metal
 +++ b/ggml/src/ggml-metal/kernels/fa_w64.metal
 @@ -316,48 +316,48 @@ template [[host_name("kernel_flash_attn_ext_pf_amd_dk" #dk "_" nm "_w64_lg" #lg
@@ -562,7 +562,7 @@ index 444776226..e945e7e98 100644
 -FA_AMD_PF_W64_INST_DV(320, 256, 16, 32, 16, "kq8_0_vq8_0", block_q8_0, 8, dequantize_q8_0_t4, block_q8_0, 8, dequantize_q8_0_t4)
 +FA_AMD_PF_W64_INST_DV(320, 256, 16, 32, 16, "kq8_0_vq8_0", block_q8_0, 8, dequantize_q8_0_t4_h2, block_q8_0, 8, dequantize_q8_0_t4_h2)
 diff --git a/ggml/src/ggml-metal/kernels/mul_mv.metal b/ggml/src/ggml-metal/kernels/mul_mv.metal
-index d75a560ba..78fc1c7f4 100644
+index d75a560..78fc1c7 100644
 --- a/ggml/src/ggml-metal/kernels/mul_mv.metal
 +++ b/ggml/src/ggml-metal/kernels/mul_mv.metal
 @@ -5073,16 +5073,20 @@ template [[host_name("kernel_mul_mv_ext_q5_0_f32_r1_5")]]   kernel mul_mv_ext_q4

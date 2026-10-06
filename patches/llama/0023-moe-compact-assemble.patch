@@ -1,5 +1,5 @@
 diff --git a/tosh-moe/tosh-moe-lru.metal b/tosh-moe/tosh-moe-lru.metal
-index 3af62d3bf..97c8427e2 100644
+index 3af62d3..97c8427 100644
 --- a/tosh-moe/tosh-moe-lru.metal
 +++ b/tosh-moe/tosh-moe-lru.metal
 @@ -212,27 +212,63 @@ kernel void tosh_moe_stage(
@@ -67,7 +67,7 @@ index 3af62d3bf..97c8427e2 100644
 +    }
 +}
 diff --git a/tosh-moe/tosh-moe.h b/tosh-moe/tosh-moe.h
-index 3e62af81b..6b6b1ad67 100644
+index 3e62af8..6b6b1ad 100644
 --- a/tosh-moe/tosh-moe.h
 +++ b/tosh-moe/tosh-moe.h
 @@ -65,27 +65,29 @@ const void * tosh_moe_host_buft(void);

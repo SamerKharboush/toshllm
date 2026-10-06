@@ -1,7 +1,11 @@
 diff --git a/ggml/src/ggml-metal/ggml-metal-device.m b/ggml/src/ggml-metal/ggml-metal-device.m
+index 4e29f0f..925f8f1 100644
 --- a/ggml/src/ggml-metal/ggml-metal-device.m
 +++ b/ggml/src/ggml-metal/ggml-metal-device.m
-@@ -1866,16 +1866,24 @@ ggml_metal_device_t ggml_metal_device_init(int device, int n_devices) {
+@@ -1879,22 +1879,30 @@ ggml_metal_device_t ggml_metal_device_init(int device, int n_devices) {
+                              strstr(name, "WX 9100")       != NULL ||
+                              strstr(name, "Instinct MI25") != NULL ||
+                              strstr(name, "Instinct MI50") != NULL ||
                               strstr(name, "Instinct MI60") != NULL);
                          snprintf(how, sizeof(how), "name (no architecture before macOS 14)");
                      }
@@ -27,3 +31,6 @@ diff --git a/ggml/src/ggml-metal/ggml-metal-device.m b/ggml/src/ggml-metal/ggml-
                                  dev->props.needs_aligned_loads ? "ON" : "off", how);
                      }
                  }
+ 
+                 // Auto-on for wave64: run the quantized/f16 mat-vec decode on the GPU
+                 // (large tg win, validated on GCN); escape hatch forces it off.

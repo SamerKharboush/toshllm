@@ -1,8 +1,8 @@
 diff --git a/ggml/src/ggml-metal/ggml-metal-device.cpp b/ggml/src/ggml-metal/ggml-metal-device.cpp
-index 0cc644c9d..32477974b 100644
+index e123613..3f26d01 100644
 --- a/ggml/src/ggml-metal/ggml-metal-device.cpp
 +++ b/ggml/src/ggml-metal/ggml-metal-device.cpp
-@@ -1090,33 +1090,39 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mm(ggml_meta
+@@ -1220,33 +1220,39 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mm(ggml_meta
      const int w64_floor = w64_floor_env ? w64_floor_env :
                            (tsrc0 == GGML_TYPE_IQ4_NL ? 384 : 0);
  
@@ -44,7 +44,7 @@ index 0cc644c9d..32477974b 100644
  
      if (has_tensor) {
          res.nr0 = NRA;
-@@ -1764,17 +1770,17 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mm_id(ggml_m
+@@ -1894,17 +1900,17 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mm_id(ggml_m
  
      ggml_metal_pipeline_with_params res = ggml_metal_library_get_pipeline(lib, name);
      if (!res.pipeline) {
@@ -64,10 +64,10 @@ index 0cc644c9d..32477974b 100644
      res.smem = 8192;
      res.nr0  = 64;
 diff --git a/ggml/src/ggml-metal/kernels/dequantize.h b/ggml/src/ggml-metal/kernels/dequantize.h
-index 45d09c38e..0367ea031 100644
+index e9bd84f..25165ba 100644
 --- a/ggml/src/ggml-metal/kernels/dequantize.h
 +++ b/ggml/src/ggml-metal/kernels/dequantize.h
-@@ -471,52 +471,55 @@ void dequantize_q3_K(device const block_q3_K *xb, short il, thread type4x4 & reg
+@@ -475,52 +475,55 @@ void dequantize_q3_K(device const block_q3_K *xb, short il, thread type4x4 & reg
          const ushort hi = hv[i];
          reg_f[i/2][2*(i%2) + 0] = dl  * (qv[i] & mask)  - (hi & m0 ? 0.f : ml);
          reg_f[i/2][2*(i%2) + 1] = dl2 * (qv[i] & mask1) - (hi & m1 ? 0.f : ml);
@@ -130,7 +130,7 @@ index 45d09c38e..0367ea031 100644
      const ushort mask0 = il < 2 ? 0x000F : 0x00F0;
      const ushort mask1 = mask0 << 8;
      const float dl2 = dl / 256.f;
-@@ -525,28 +528,33 @@ void dequantize_q4_K(device const block_q4_K * xb, short il, thread type4x4 & re
+@@ -529,28 +532,33 @@ void dequantize_q4_K(device const block_q4_K * xb, short il, thread type4x4 & re
      for (int i = 0; i < 8; ++i) {
          const ushort qsi = (i & 1) ? (ushort)(qsv[i/2] >> 16) : (ushort)(qsv[i/2] & 0xFFFF);
          reg[i/2][2*(i%2) + 0] = dl  * (qsi & mask0) - ml;
@@ -166,7 +166,7 @@ index 45d09c38e..0367ea031 100644
      const ushort mask0 = il < 2 ? 0x000F : 0x00F0;
      const ushort mask1 = mask0 << 8;
      const float dl2 = dl / 256.f;
-@@ -559,16 +567,35 @@ void dequantize_q5_K(device const block_q5_K *xb, short il, thread type4x4 & reg
+@@ -563,16 +571,35 @@ void dequantize_q5_K(device const block_q5_K *xb, short il, thread type4x4 & reg
          const ushort qhi = (i & 1) ? (ushort)(qhv[i/2] >> 16) : (ushort)(qhv[i/2] & 0xFFFF);
          reg_f[i/2][2*(i%2) + 0] = dl  * (qsi & mask0) + (qhi & ul0 ? dqh : 0.f) - ml;
          reg_f[i/2][2*(i%2) + 1] = dl2 * (qsi & mask1) + (qhi & ul1 ? dqh : 0.f) - ml;
@@ -203,7 +203,7 @@ index 45d09c38e..0367ea031 100644
  
      ql = ql + 32*(il/8) + 16*((il/2)&1) + 8*(il&1);
 diff --git a/ggml/src/ggml-metal/kernels/mul_mm.metal b/ggml/src/ggml-metal/kernels/mul_mm.metal
-index 1702418d7..bf8873bc6 100644
+index 62dafd0..92fd34f 100644
 --- a/ggml/src/ggml-metal/kernels/mul_mm.metal
 +++ b/ggml/src/ggml-metal/kernels/mul_mm.metal
 @@ -6,17 +6,18 @@ constant bool FC_mul_mm_bc_out [[function_constant(FC_MUL_MM + 1)]];
@@ -230,7 +230,7 @@ index 1702418d7..bf8873bc6 100644
                  // simdgroup path keeps the layout simdgroup_load expects
                  const short el = FC_mul_mm_manual ? (8*lx + ly) : (8*ly + lx);
  
-                 *(sa + 64*ib + el) = loop_k + 16*il + i < args.ne00 ? *((device T0 *) x + i) : 0;
+                 *(sa + 64*ib + el) = loop_k + 16*il + i < args.ne00 ? (S0) *((device T0 *) x + i) : 0;
              }
          } else {
              S0_4x4 temp_a;

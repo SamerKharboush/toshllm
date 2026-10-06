@@ -1,5 +1,5 @@
 diff --git a/src/llama-model-loader.cpp b/src/llama-model-loader.cpp
-index 266b11735..e4c5d793d 100644
+index 230ef59..346f5c4 100644
 --- a/src/llama-model-loader.cpp
 +++ b/src/llama-model-loader.cpp
 @@ -1382,16 +1382,30 @@ struct ggml_tensor * llama_model_loader::create_tensor(

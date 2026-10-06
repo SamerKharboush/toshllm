@@ -1,5 +1,5 @@
 diff --git a/ggml/src/ggml-metal/ggml-metal-context.m b/ggml/src/ggml-metal/ggml-metal-context.m
-index 3a77125fd..92846d11c 100644
+index 75ef516..0af19e1 100644
 --- a/ggml/src/ggml-metal/ggml-metal-context.m
 +++ b/ggml/src/ggml-metal/ggml-metal-context.m
 @@ -1009,16 +1009,24 @@ static enum ggml_status ggml_metal_graph_compute_moe_staged(ggml_metal_t ctx, st

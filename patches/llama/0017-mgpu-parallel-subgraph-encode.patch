@@ -1,5 +1,5 @@
 diff --git a/ggml/src/ggml-backend-meta.cpp b/ggml/src/ggml-backend-meta.cpp
-index 4e4c57289..910ca4d26 100644
+index c4c8677..e10bd9c 100644
 --- a/ggml/src/ggml-backend-meta.cpp
 +++ b/ggml/src/ggml-backend-meta.cpp
 @@ -1,15 +1,17 @@
@@ -20,7 +20,7 @@ index 4e4c57289..910ca4d26 100644
  #include <cstring>
  #include <map>
  #include <memory>
-@@ -2577,17 +2579,40 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend,
+@@ -2584,17 +2586,40 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend,
              ggml_tensor * node_dst = bcj_dst.cgraphs[i].cgraph_main->nodes[bcj_dst.cgraphs[i].cgraph_main->n_nodes - 1];
              ggml_backend_tensor_copy_async(bcj_src.backend, bcj_dst.backend, node_src, node_dst);
          }

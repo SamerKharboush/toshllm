@@ -1,26 +1,10 @@
-diff --git a/src/models/models.h b/src/models/models.h
-index 2643486cf..f835af1c4 100644
---- a/src/models/models.h
-+++ b/src/models/models.h
-@@ -2403,10 +2403,13 @@ struct llama_model_qwen4exp : public llama_model_base {
-     class llm_graph_input_qsa;
- 
-     void load_arch_hparams(llama_model_loader & ml) override;
-     void load_arch_tensors(llama_model_loader & ml) override;
- 
-+    // the PLE table stays in the file mapping instead of being loaded
-+    bool ple_lazy = false;
-+
-     struct graph : public llm_build_delta_net_base {
-         graph(const llama_model & model, const llm_graph_params & params);
-     protected:
-         struct no_build_t {};
-         graph(const llama_model & model, const llm_graph_params & params, no_build_t) :
 diff --git a/src/models/qwen4exp.cpp b/src/models/qwen4exp.cpp
-index ce94720d4..11e56b3b1 100644
+index 250eb74..db29cc9 100644
 --- a/src/models/qwen4exp.cpp
 +++ b/src/models/qwen4exp.cpp
-@@ -3,10 +3,16 @@
+@@ -1,15 +1,21 @@
+ #include "models.h"
+ #include "llama-impl.h"
  #include "llama-memory-hybrid-idx.h"
  #include "llama-memory-recurrent.h"
  
@@ -37,19 +21,13 @@ index ce94720d4..11e56b3b1 100644
  static void qwen4exp_require_nonzero(const llama_model_loader & ml, llm_kv kid, uint32_t value) {
      if (value == 0) {
          throw std::runtime_error(format("%s must be greater than zero, got %u", ml.llm_kv(kid).c_str(), value));
-@@ -205,10 +211,11 @@ void llama_model_qwen4exp::load_arch_tensors(llama_model_loader & ml) {
-             ple_rows = ple_w->tensor->ne[1];
-         }
- 
-         per_layer_tok_embd = create_tensor(tn(LLM_TENSOR_PER_LAYER_TOKEN_EMBD, "weight"),
-                                            { hparams.ple_head_dim, ple_rows }, TENSOR_READ_LAZY);
-+        ple_lazy = per_layer_tok_embd != nullptr && ml.lazy.has(per_layer_tok_embd);
      }
+ }
  
-     const int mtp_flags = !ml.load_mtp ? TENSOR_SKIP : 0;
+@@ -1216,16 +1222,65 @@ public:
  
-     for (int il = 0; il < (int) hparams.n_layer_all; ++il) {
-@@ -1299,10 +1306,59 @@ public:
+     // the predecessor tokens live in the attention KV cells (ext.tok)
+     const llama_kv_cache_context * mctx;
  
      // scratch, reused across set_input() calls
      std::vector<llama_token> prev;
@@ -104,25 +82,39 @@ index ce94720d4..11e56b3b1 100644
 +#endif
 +}
 +
- void llm_graph_input_ple::set_input(const llama_ubatch * ubatch) {
-     const auto & hp = pmodel.hparams;
+ void llm_graph_input_qwen4exp_ple::set_input(const llama_ubatch * ubatch) {
+     const auto & hparams = model.hparams;
  
      // an image arrives as an embd batch, so ubatch->token is null, but every position still needs a row for ggml_get_rows
      // stand in the image token id that the reference hashes, or EOS if the file has no such key
-@@ -1359,10 +1415,18 @@ void llm_graph_input_ple::set_input(const llama_ubatch * ubatch) {
-                     (int32_t) (mixed % hp.ple_head_vocab_sizes[h_i] + hp.ple_head_offsets[h_i]);
+     // gemma3n and gemma4 do the same with a hardcoded row 0 of per_layer_token_embd.
+     const llama_token img_tok = hparams.ple_image_token_id != 0
+         ? (llama_token) hparams.ple_image_token_id
+@@ -1280,19 +1335,28 @@ void llm_graph_input_qwen4exp_ple::set_input(const llama_ubatch * ubatch) {
+                     (int32_t) (mixed % hparams.ple_head_vocab_sizes[h_i] + hparams.ple_head_offsets[h_i]);
              }
          }
      }
  
-+    static const bool prefetch = [] {
-+        const char * v = getenv("TOSH_PLE_PREFETCH");
-+        return v == nullptr || atoi(v) != 0;
-+    }();
-+    if (prefetch && pmodel.ple_lazy) {
-+        qwen4exp_ple_prefetch(pmodel.per_layer_tok_embd, idx);
-+    }
-+
+     {
+         ggml_tensor * ple = model.per_layer_tok_embd;
+ 
+-        const bool prefetch = model.can_prefetch.count(ple);
++        static const bool tosh_prefetch = [] {
++            const char * v = getenv("TOSH_PLE_PREFETCH");
++            return v == nullptr || atoi(v) != 0;
++        }();
++        const bool prefetch = tosh_prefetch && model.can_prefetch.count(ple);
+         if (prefetch) {
++#if defined(__APPLE__)
++            // llama_prefetch only acts on Linux and Windows
++            qwen4exp_ple_prefetch(ple, idx);
++#else
+             llama_prefetch_rows(ple, idx.data(), idx.size());
++#endif
+         }
+     }
+ 
      ggml_backend_tensor_set(rows, idx.data(), 0, idx.size()*ggml_element_size(rows));
  }
  

@@ -1,8 +1,8 @@
 diff --git a/ggml/src/ggml-metal/ggml-metal-device.m b/ggml/src/ggml-metal/ggml-metal-device.m
-index 7be8f38d0..4427bae5d 100644
+index 66fae4d..e54bbcd 100644
 --- a/ggml/src/ggml-metal/ggml-metal-device.m
 +++ b/ggml/src/ggml-metal/ggml-metal-device.m
-@@ -1433,16 +1433,20 @@ ggml_metal_device_t ggml_metal_device_init(int device, int n_devices) {
+@@ -1449,16 +1449,20 @@ ggml_metal_device_t ggml_metal_device_init(int device, int n_devices) {
                      // head-64 prefill path below.
                      char simd_width_env[16];
                      snprintf(simd_width_env, sizeof(simd_width_env), "%d", dev->props.simd_width);

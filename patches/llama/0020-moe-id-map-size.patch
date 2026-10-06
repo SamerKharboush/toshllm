@@ -1,8 +1,8 @@
 diff --git a/ggml/src/ggml-metal/ggml-metal-ops.cpp b/ggml/src/ggml-metal/ggml-metal-ops.cpp
-index d10b22598..017f19dd2 100644
+index 30ec0ed..baa7360 100644
 --- a/ggml/src/ggml-metal/ggml-metal-ops.cpp
 +++ b/ggml/src/ggml-metal/ggml-metal-ops.cpp
-@@ -3168,17 +3168,21 @@ int ggml_metal_op_mul_mat(ggml_metal_op_t ctx, int idx) {
+@@ -3301,17 +3301,21 @@ int ggml_metal_op_mul_mat(ggml_metal_op_t ctx, int idx) {
      }
  
      return 1;

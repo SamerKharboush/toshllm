@@ -1,8 +1,8 @@
 diff --git a/ggml/src/ggml-metal/ggml-metal-ops.cpp b/ggml/src/ggml-metal/ggml-metal-ops.cpp
-index 017f19dd2..096fde95a 100644
+index baa7360..7957ef9 100644
 --- a/ggml/src/ggml-metal/ggml-metal-ops.cpp
 +++ b/ggml/src/ggml-metal/ggml-metal-ops.cpp
-@@ -4064,20 +4064,42 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
+@@ -4238,20 +4238,42 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
              }
          }
          if (props_dev->simd_width == 64) {

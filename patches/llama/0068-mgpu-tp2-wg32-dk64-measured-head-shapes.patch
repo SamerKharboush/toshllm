@@ -1,8 +1,8 @@
 diff --git a/ggml/src/ggml-metal/ggml-metal-ops.cpp b/ggml/src/ggml-metal/ggml-metal-ops.cpp
-index 00ba810b0..a1a12bdf2 100644
+index 1e5d720..8a2eb42 100644
 --- a/ggml/src/ggml-metal/ggml-metal-ops.cpp
 +++ b/ggml/src/ggml-metal/ggml-metal-ops.cpp
-@@ -3787,16 +3787,29 @@ static int64_t ggml_metal_fa_wg_dk128_min_kv_w64(int64_t n_head, int64_t n_head_
+@@ -3920,16 +3920,29 @@ static int64_t ggml_metal_fa_wg_dk128_min_kv_w64(int64_t n_head, int64_t n_head_
      for (const auto & m : measured) {
          if (m.n_head == n_head && m.n_head_kv == n_head_kv) {
              return m.min_kv;
@@ -32,7 +32,7 @@ index 00ba810b0..a1a12bdf2 100644
          case GGML_TYPE_Q4_0: return "q4_0";
          case GGML_TYPE_TURBO2_0: return "turbo2";
          case GGML_TYPE_TURBO3_0: return "turbo3";
-@@ -4466,22 +4479,23 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
+@@ -4640,22 +4653,23 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
              return s ? (int64_t) atoll(s) : (int64_t) -1;
          }();
          const bool wg_wide_head =

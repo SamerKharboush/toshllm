@@ -1,8 +1,8 @@
 diff --git a/ggml/src/ggml-backend-meta.cpp b/ggml/src/ggml-backend-meta.cpp
-index 910ca4d26..94c6c6bc8 100644
+index e10bd9c..72bbf5c 100644
 --- a/ggml/src/ggml-backend-meta.cpp
 +++ b/ggml/src/ggml-backend-meta.cpp
-@@ -2109,17 +2109,25 @@ static void ggml_backend_meta_get_tensor_async(ggml_backend_t backend, const ggm
+@@ -2114,17 +2114,25 @@ static void ggml_backend_meta_get_tensor_async(ggml_backend_t backend, const ggm
  
  static void ggml_backend_meta_synchronize(ggml_backend_t backend) {
      const size_t n_backends = ggml_backend_meta_n_backends(backend);
@@ -28,7 +28,7 @@ index 910ca4d26..94c6c6bc8 100644
      const bool needs_rebuild = (cgraph->uid == 0) || (cgraph->uid != backend_ctx->uid);
  
      bool max_nnodes_raised = false;
-@@ -2359,16 +2367,62 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend,
+@@ -2364,16 +2372,62 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend,
                          if ((bcj.nodes[i]->flags & GGML_TENSOR_FLAG_COMPUTE) == 0) {
                              for (int ii = i + 1; ii <= i_delayed; ii++) {
                                  bcj.nodes[ii]->flags &= ~GGML_TENSOR_FLAG_COMPUTE;
@@ -92,7 +92,7 @@ index 910ca4d26..94c6c6bc8 100644
                  n_subgraphs++;
                  i_start = i + 1;
 diff --git a/ggml/src/ggml-metal/ggml-metal-context.m b/ggml/src/ggml-metal/ggml-metal-context.m
-index a2728d31d..8dacceed9 100644
+index 2672acd..161f075 100644
 --- a/ggml/src/ggml-metal/ggml-metal-context.m
 +++ b/ggml/src/ggml-metal/ggml-metal-context.m
 @@ -263,16 +263,20 @@ struct ggml_metal {
@@ -1262,9 +1262,9 @@ index a2728d31d..8dacceed9 100644
          return GGML_STATUS_FAILED;
      }
  
- #ifdef TOSH_ENABLE_DYNAMIC_MOE
-     bool staged_moe = false;
-@@ -3113,42 +3632,61 @@ enum ggml_status ggml_metal_graph_compute(ggml_metal_t ctx, struct ggml_cgraph *
+     if (gf->n_nodes == 0) {
+         return GGML_STATUS_SUCCESS;
+@@ -3114,42 +3633,61 @@ enum ggml_status ggml_metal_graph_compute(ggml_metal_t ctx, struct ggml_cgraph *
          // short-hand
          id<MTLCommandQueue> queue = ctx->queue;
  
@@ -1328,7 +1328,7 @@ index a2728d31d..8dacceed9 100644
              if (ctx->cmd_bufs[cb_idx].obj) {
                  [ctx->cmd_bufs[cb_idx].obj release];
              }
-@@ -3287,16 +3825,17 @@ void ggml_metal_graph_optimize(ggml_metal_t ctx, struct ggml_cgraph * gf) {
+@@ -3288,16 +3826,17 @@ void ggml_metal_graph_optimize(ggml_metal_t ctx, struct ggml_cgraph * gf) {
      }
  
      //printf("%s: graph optimize took %.3f ms\n", __func__, (ggml_time_us() - t_start) / 1000.0);
@@ -1346,7 +1346,7 @@ index a2728d31d..8dacceed9 100644
          [cmd_buf commit];
  
          [ctx->cmd_bufs_ext addObject:cmd_buf];
-@@ -3309,16 +3848,17 @@ void ggml_metal_event_record(ggml_metal_t ctx, ggml_metal_event_t ev) {
+@@ -3310,16 +3849,17 @@ void ggml_metal_event_record(ggml_metal_t ctx, ggml_metal_event_t ev) {
  void ggml_metal_event_wait(ggml_metal_t ctx, ggml_metal_event_t ev) {
      if (ggml_metal_defer_waits() && ctx->n_ev_wait_pending < GGML_METAL_MAX_PENDING_WAITS) {
          ctx->ev_wait_pending[ctx->n_ev_wait_pending++] = ev;
@@ -1365,10 +1365,10 @@ index a2728d31d..8dacceed9 100644
  
          [ctx->cmd_bufs_ext addObject:cmd_buf];
 diff --git a/ggml/src/ggml-metal/ggml-metal.cpp b/ggml/src/ggml-metal/ggml-metal.cpp
-index ddad25afd..c90cb36e3 100644
+index d8f0ef5..595e148 100644
 --- a/ggml/src/ggml-metal/ggml-metal.cpp
 +++ b/ggml/src/ggml-metal/ggml-metal.cpp
-@@ -1072,17 +1072,37 @@ static void ggml_backend_metal_comm_free(void * comm_ctx_v) {
+@@ -1078,17 +1078,37 @@ static void ggml_backend_metal_comm_free(void * comm_ctx_v) {
      for (auto & buf : comm_ctx->tmp) {
          if (buf != nullptr) {
              ggml_backend_buffer_free(buf);
@@ -1406,7 +1406,7 @@ index ddad25afd..c90cb36e3 100644
          return false;
      }
  
-@@ -1217,17 +1237,28 @@ static bool ggml_backend_metal_comm_allreduce_tensor(void * comm_ctx_v, ggml_ten
+@@ -1223,17 +1243,28 @@ static bool ggml_backend_metal_comm_allreduce_tensor(void * comm_ctx_v, ggml_ten
              }
              // Only the tensor-to-tensor variant needs the partner's tensor, and it is the one
              // that would thrash its view cache when a step's partner changes between rounds,

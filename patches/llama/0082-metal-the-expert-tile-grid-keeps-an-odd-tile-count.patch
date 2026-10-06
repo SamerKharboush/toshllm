@@ -1,8 +1,8 @@
 diff --git a/ggml/src/ggml-metal/ggml-metal-ops.cpp b/ggml/src/ggml-metal/ggml-metal-ops.cpp
-index 3aed316f3..a9871f1f4 100644
+index 4e9d7e0..b4ddd46 100644
 --- a/ggml/src/ggml-metal/ggml-metal-ops.cpp
 +++ b/ggml/src/ggml-metal/ggml-metal-ops.cpp
-@@ -4086,17 +4086,29 @@ int ggml_metal_op_mul_mat_id(ggml_metal_op_t ctx, int idx) {
+@@ -4213,17 +4213,29 @@ int ggml_metal_op_mul_mat_id(ggml_metal_op_t ctx, int idx) {
              ggml_metal_encoder_set_buffer  (enc, bid_amax, 6);
  
              const size_t smem = pipeline.smem;

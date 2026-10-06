@@ -1,5 +1,5 @@
 diff --git a/ggml/src/ggml-metal/ggml-metal-context.h b/ggml/src/ggml-metal/ggml-metal-context.h
-index 119e8b65b..8fb157e36 100644
+index 119e8b6..8fb157e 100644
 --- a/ggml/src/ggml-metal/ggml-metal-context.h
 +++ b/ggml/src/ggml-metal/ggml-metal-context.h
 @@ -35,16 +35,22 @@ void ggml_metal_read_batch_end  (ggml_metal_t ctx);
@@ -26,7 +26,7 @@ index 119e8b65b..8fb157e36 100644
  
  // Create and reserve both directed links of a pair, so exchange_reduce calls running on
 diff --git a/ggml/src/ggml-metal/ggml-metal-context.m b/ggml/src/ggml-metal/ggml-metal-context.m
-index cd9dfa040..b083e0c70 100644
+index 904f582..ea5d5bd 100644
 --- a/ggml/src/ggml-metal/ggml-metal-context.m
 +++ b/ggml/src/ggml-metal/ggml-metal-context.m
 @@ -2201,16 +2201,172 @@ static bool ggml_metal_add_inplace_buffer(ggml_metal_t ctx, id<MTLCommandBuffer>
@@ -203,10 +203,10 @@ index cd9dfa040..b083e0c70 100644
  }
  
 diff --git a/ggml/src/ggml-metal/ggml-metal-device.cpp b/ggml/src/ggml-metal/ggml-metal-device.cpp
-index eb6b40984..0cc644c9d 100644
+index 11b2a29..e123613 100644
 --- a/ggml/src/ggml-metal/ggml-metal-device.cpp
 +++ b/ggml/src/ggml-metal/ggml-metal-device.cpp
-@@ -2646,16 +2646,54 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_bin_one(ggml_met
+@@ -2811,16 +2811,54 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_bin_one(ggml_met
          res = ggml_metal_library_compile_pipeline(lib, base, name, cv);
  
          ggml_metal_cv_free(cv);
@@ -262,10 +262,10 @@ index eb6b40984..0cc644c9d 100644
      const bool is_c4 = op->src[0]->ne[0] % 4 == 0;
  
 diff --git a/ggml/src/ggml-metal/ggml-metal-device.h b/ggml/src/ggml-metal/ggml-metal-device.h
-index c2d5fe086..3a6877e75 100644
+index 686e3d7..35ce981 100644
 --- a/ggml/src/ggml-metal/ggml-metal-device.h
 +++ b/ggml/src/ggml-metal/ggml-metal-device.h
-@@ -155,16 +155,18 @@ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_fwht
+@@ -157,16 +157,18 @@ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_fwht
  
  struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_top_k             (ggml_metal_library_t lib, const struct ggml_tensor * op);
  struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_top_k_radix       (ggml_metal_library_t lib, const struct ggml_tensor * op);
@@ -285,10 +285,10 @@ index c2d5fe086..3a6877e75 100644
  struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_conv_transpose_1d (ggml_metal_library_t lib, const struct ggml_tensor * op);
  struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_conv_transpose_2d (ggml_metal_library_t lib, const struct ggml_tensor * op);
 diff --git a/ggml/src/ggml-metal/ggml-metal.cpp b/ggml/src/ggml-metal/ggml-metal.cpp
-index 348a24c1e..42fbfa927 100644
+index b107600..1da8034 100644
 --- a/ggml/src/ggml-metal/ggml-metal.cpp
 +++ b/ggml/src/ggml-metal/ggml-metal.cpp
-@@ -1018,16 +1018,19 @@ static void ggml_backend_metal_fusion_set_enabled(ggml_backend_fusion_t finfo, b
+@@ -1024,16 +1024,19 @@ static void ggml_backend_metal_fusion_set_enabled(ggml_backend_fusion_t finfo, b
  // graph submission per device on each of those adds; here the copy and the add are issued
  // directly, which is what the CUDA and SYCL backends already do for themselves.
  struct ggml_backend_metal_comm_context {
@@ -308,7 +308,7 @@ index 348a24c1e..42fbfa927 100644
  static size_t ggml_backend_metal_comm_offset_max(size_t n_backends) {
      size_t offset = n_backends/2;
      while ((offset & (offset - 1)) != 0) {
-@@ -1073,16 +1076,21 @@ static void * ggml_backend_metal_comm_init(ggml_backend_t * backends, size_t n_b
+@@ -1079,16 +1082,21 @@ static void * ggml_backend_metal_comm_init(ggml_backend_t * backends, size_t n_b
  
  static void ggml_backend_metal_comm_free(void * comm_ctx_v) {
      auto * comm_ctx = (ggml_backend_metal_comm_context *) comm_ctx_v;
@@ -330,7 +330,7 @@ index 348a24c1e..42fbfa927 100644
  // It exists for one measurement: what tensor-split decode would cost if communication were free.
  static bool ggml_backend_metal_comm_allreduce_noop(void) {
      static int v = -1;
-@@ -1185,16 +1193,86 @@ static bool ggml_backend_metal_comm_allreduce_tensor(void * comm_ctx_v, ggml_ten
+@@ -1191,16 +1199,86 @@ static bool ggml_backend_metal_comm_allreduce_tensor(void * comm_ctx_v, ggml_ten
              return false;
          }
      }
@@ -417,7 +417,7 @@ index 348a24c1e..42fbfa927 100644
      }
      const bool hold_dst = fuse == 1;
  
-@@ -1224,28 +1302,41 @@ static bool ggml_backend_metal_comm_allreduce_tensor(void * comm_ctx_v, ggml_ten
+@@ -1230,28 +1308,41 @@ static bool ggml_backend_metal_comm_allreduce_tensor(void * comm_ctx_v, ggml_ten
          }
      }
  
@@ -463,7 +463,7 @@ index 348a24c1e..42fbfa927 100644
          return true;
      };
 diff --git a/ggml/src/ggml-metal/kernels/binbcast.metal b/ggml/src/ggml-metal/kernels/binbcast.metal
-index 7c7ab9b5e..6738b5f3b 100644
+index 7c7ab9b..6738b5f 100644
 --- a/ggml/src/ggml-metal/kernels/binbcast.metal
 +++ b/ggml/src/ggml-metal/kernels/binbcast.metal
 @@ -160,16 +160,20 @@ kernel void kernel_bin_fuse_impl(

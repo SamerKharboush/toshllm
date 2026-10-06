@@ -1,8 +1,8 @@
 diff --git a/ggml/src/ggml-metal/ggml-metal-impl.h b/ggml/src/ggml-metal/ggml-metal-impl.h
-index ed84f2843..4de2df086 100644
+index ed8a450..9a56728 100644
 --- a/ggml/src/ggml-metal/ggml-metal-impl.h
 +++ b/ggml/src/ggml-metal/ggml-metal-impl.h
-@@ -472,18 +472,18 @@ typedef struct {
+@@ -481,18 +481,18 @@ typedef struct {
      float    m1;
      int32_t  n_head_log2;
      float    logit_softcap;
@@ -23,7 +23,7 @@ index ed84f2843..4de2df086 100644
      uint64_t nb02;
      uint64_t nb03;
      int32_t  ne11;
-@@ -509,16 +509,17 @@ typedef struct {
+@@ -518,16 +518,17 @@ typedef struct {
      float    scale;
      float    max_bias;
      float    m0;
@@ -42,10 +42,10 @@ index ed84f2843..4de2df086 100644
      int32_t  ne33;
      uint64_t nb31;
 diff --git a/ggml/src/ggml-metal/ggml-metal-ops.cpp b/ggml/src/ggml-metal/ggml-metal-ops.cpp
-index d059614b1..1e82cb185 100644
+index be53e3b..9c42277 100644
 --- a/ggml/src/ggml-metal/ggml-metal-ops.cpp
 +++ b/ggml/src/ggml-metal/ggml-metal-ops.cpp
-@@ -4158,16 +4158,22 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
+@@ -4332,16 +4332,22 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
                       (int) ne00, (int) ne20, ks, vs, props_dev->simd_width == 64 ? "_w64" : "");
          }
      }
@@ -68,7 +68,7 @@ index d059614b1..1e82cb185 100644
              /*.ne01          =*/ ne01,
              /*.ne02          =*/ ne02,
              /*.ne03          =*/ ne03,
-@@ -4197,16 +4203,17 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
+@@ -4371,16 +4377,17 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
              /*.scale         =*/ scale,
              /*.max_bias      =*/ max_bias,
              /*.m0            =*/ m0,
@@ -86,7 +86,7 @@ index d059614b1..1e82cb185 100644
          static const bool pfmla = getenv("TOSH_FA_PF_MLA_DISABLE") == nullptr;
          const bool fa_pf_512 = pf512 && ne00 == 512 && ne00 == ne20;
          const bool fa_pf_mla = pfmla && ne00 == 576 && ne20 == 512 &&
-@@ -4444,16 +4451,48 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
+@@ -4618,16 +4625,48 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
              (wg_dk128 || ne11 >= 1024) &&
              getenv("TOSH_FA_WG_DISABLE") == NULL ? 32 : 1;
  
@@ -135,7 +135,7 @@ index d059614b1..1e82cb185 100644
  
          // dispatching more threads than the pipeline admits hangs the GPU, and how many
          // it admits depends on the K type's dequant; fall through rather than risk it
-@@ -4467,16 +4506,17 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
+@@ -4641,16 +4680,17 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
          ggml_metal_encoder_set_bytes   (enc, &args, sizeof(args), 0);
          ggml_metal_encoder_set_buffer  (enc, bid_src0, 1);
          ggml_metal_encoder_set_buffer  (enc, bid_src1, 2);
@@ -154,15 +154,14 @@ index d059614b1..1e82cb185 100644
              ggml_metal_kargs_flash_attn_ext_vec_reduce args0 = { (int32_t) (ne1*ne2*ne3) };
  
 diff --git a/ggml/src/ggml-metal/kernels/fa.metal b/ggml/src/ggml-metal/kernels/fa.metal
-index 79eca9a75..def0751bc 100644
+index ab95d54..0342666 100644
 --- a/ggml/src/ggml-metal/kernels/fa.metal
 +++ b/ggml/src/ggml-metal/kernels/fa.metal
-@@ -2480,30 +2480,32 @@ template [[host_name("kernel_lightning_indexer_q4_0")]] kernel kernel_lightning_
- template [[host_name("kernel_lightning_indexer_q4_1")]] kernel kernel_lightning_indexer_t kernel_lightning_indexer<block_q4_1, 2, dequantize_q4_1>;
- template [[host_name("kernel_lightning_indexer_q5_0")]] kernel kernel_lightning_indexer_t kernel_lightning_indexer<block_q5_0, 2, dequantize_q5_0>;
- template [[host_name("kernel_lightning_indexer_q5_1")]] kernel kernel_lightning_indexer_t kernel_lightning_indexer<block_q5_1, 2, dequantize_q5_1>;
- template [[host_name("kernel_lightning_indexer_q8_0")]] kernel kernel_lightning_indexer_t kernel_lightning_indexer<block_q8_0, 2, dequantize_q8_0>;
+@@ -1,29 +1,31 @@
+ #include "common.h"
+ #include "dequantize.h"
  
+ // AMD flash attention kernels; the upstream ones live in fa_*.metal
  // vec kernel above miscompiles. Generalized over the K/V element type via the
  // dequantize_*_t4 helpers; standard kernels cover their native dimensions and
  // TurboQuant kernels cover padded head dimensions 128/256/384/512/640.
@@ -190,7 +189,7 @@ index 79eca9a75..def0751bc 100644
      constexpr short DV4 = DV/4;   // float4 per head row (32 for DV=128, 64 for DV=256)
      // chunks per lane scale with the simd width; on wave64 with DK=128 the upper
      // lanes own no chunk (guarded below) but still join the simd_sum reductions.
-@@ -2543,16 +2545,27 @@ kernel void kernel_flash_attn_ext_vec_amd(
+@@ -63,16 +65,27 @@ kernel void kernel_flash_attn_ext_vec_amd(
      device const char * vp = v + ikv2*args.nb22 + ikv3*args.nb23;
  
      // Without a mask ne32/ne33 are 0, so the index math would divide by zero.
@@ -218,7 +217,7 @@ index 79eca9a75..def0751bc 100644
      for (short c = 0; c < NCK; ++c) {
          const short ch = lch + c*SUBW;
          myq[c] = ch < DK4 ? q4[ch] : float4(0.0f);
-@@ -2560,26 +2573,36 @@ kernel void kernel_flash_attn_ext_vec_amd(
+@@ -80,26 +93,36 @@ kernel void kernel_flash_attn_ext_vec_amd(
  
      float4 acc[NCV];  // this lane's slice(s) of the output
      for (short c = 0; c < NCV; ++c) {
@@ -258,7 +257,7 @@ index 79eca9a75..def0751bc 100644
                  deq_k(kb + ch/NKK, ch%NKK, kreg);
                  pl += dot(myq[c], kreg);
              }
-@@ -2593,17 +2616,17 @@ kernel void kernel_flash_attn_ext_vec_amd(
+@@ -113,17 +136,17 @@ kernel void kernel_flash_attn_ext_vec_amd(
          }
          const float p = pl; // full DK-dim Q.K
  

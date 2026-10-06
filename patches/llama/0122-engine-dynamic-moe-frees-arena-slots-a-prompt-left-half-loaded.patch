@@ -1,8 +1,11 @@
 diff --git a/src/llama-tosh-dmoe.cpp b/src/llama-tosh-dmoe.cpp
-index bcbabef62..0209b96f1 100644
+index bcbabef..0209b96 100644
 --- a/src/llama-tosh-dmoe.cpp
 +++ b/src/llama-tosh-dmoe.cpp
-@@ -709,10 +709,11 @@ struct policy {
+@@ -706,16 +706,17 @@ struct policy {
+     };
+ 
+     // promotions carried by prefill uploads, per layer, consumed by the three bank uploads
      std::mutex vp_mutex;
      std::vector<std::vector<std::pair<int32_t, int32_t>>> vplan;
      std::vector<int> claims;              // slots claimed by bank uploads, not yet seen by the policy
@@ -14,7 +17,13 @@ index bcbabef62..0209b96f1 100644
      uint64_t vpromotions = 0, vexpired = 0;
  
      struct obs {
-@@ -987,10 +988,17 @@ struct policy {
+         int16_t  e;
+         int16_t  slot;
+         uint8_t  multi;
+@@ -984,16 +985,23 @@ struct policy {
+                 if (resident_slot[key] >= 0 || pending[key]) {
+                     sl.drop = true;
+                     lent_dropped++;
                  } else {
                      pending[key] = 1;
                  }
@@ -32,7 +41,13 @@ index bcbabef62..0209b96f1 100644
                  slot & sl = slots[gs];
                  const int il = gs / Q, s = gs % Q;
                  const size_t key = (size_t) il*n_expert + sl.e;
-@@ -1376,10 +1384,11 @@ static bool dmoe_bank_plan(const void * host, size_t size, tosh_dmoe_bank_plan *
+                 if (sl.drop && ((sl.parts == full[il] && sync > sl.encoded_sync) || sync > sl.reserved_sync + 16) && vmask[il] == 0) {
+                     // a duplicate: free the slot once nothing can still be copying into it
+                     auto & lst = vplan[il];
+@@ -1373,16 +1381,17 @@ static bool dmoe_bank_plan(const void * host, size_t size, tosh_dmoe_bank_plan *
+                 auto & sl = p.slots[(size_t) r.il*p.Q + s];
+                 sl.parts |= (uint8_t) (1u << r.which);
+                 if (sl.parts == p.full[r.il]) sl.encoded_sync = tosh_dmoe_completed_value();
              }
              plan->promo_expert = pe.data();
              plan->promo_slot   = ps.data();
@@ -44,7 +59,13 @@ index bcbabef62..0209b96f1 100644
                      lst.erase(std::remove_if(lst.begin(), lst.end(), [rows](auto & q) { return rows[q.first] > 0; }), lst.end());
                  } else {
                      lst.clear();
-@@ -1925,10 +1934,11 @@ static void dmoe_init(std::vector<llama_layer> & layers, const llama_hparams & h
+                 }
+                 p.vmask[r.il] = 0;
+             }
+@@ -1922,16 +1931,17 @@ static void dmoe_init(std::vector<llama_layer> & layers, const llama_hparams & h
+         // a layer with few slots cannot empty eight of them every chunk and still keep a working set
+         pol->reserve      = (int) envf("TOSH_DMOE_LEND_RESERVE", std::min(8, quota/8));
+         pol->reserve_tail = (int) envf("TOSH_DMOE_LEND_TAIL", 8);
          pol->verify_every = (long) envf("TOSH_DMOE_VERIFY", 0);
          pol->defer_wide   = envf("TOSH_DMOE_DEFER_WIDE", 0) != 0;
          pol->vram_promote = envf("TOSH_DMOE_PREFILL_PROMOTE", 1) != 0;
@@ -56,3 +77,6 @@ index bcbabef62..0209b96f1 100644
              if (layers[il].ffn_gate_exps == nullptr) pol->full[il] = 5;
          }
          pol->layers.assign(n_layer, nullptr);
+         pol->free_list.resize(n_layer);
+         for (auto & [il, dl] : made) {
+             pol->layers[il] = &g_layers[dmoe_gate(layers[il])];

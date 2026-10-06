@@ -1,5 +1,5 @@
 diff --git a/ggml/src/ggml-metal/ggml-metal-context.h b/ggml/src/ggml-metal/ggml-metal-context.h
-index cf42cf7e0..8ab795f0d 100644
+index cf42cf7..8ab795f 100644
 --- a/ggml/src/ggml-metal/ggml-metal-context.h
 +++ b/ggml/src/ggml-metal/ggml-metal-context.h
 @@ -35,16 +35,21 @@ void ggml_metal_read_batch_end  (ggml_metal_t ctx);
@@ -25,7 +25,7 @@ index cf42cf7e0..8ab795f0d 100644
  ggml_metal_event_t ggml_metal_get_ev_cpy(ggml_metal_t ctx);
  
 diff --git a/ggml/src/ggml-metal/ggml-metal-context.m b/ggml/src/ggml-metal/ggml-metal-context.m
-index 2ecd8a91a..3a77125fd 100644
+index a13a198..75ef516 100644
 --- a/ggml/src/ggml-metal/ggml-metal-context.m
 +++ b/ggml/src/ggml-metal/ggml-metal-context.m
 @@ -177,16 +177,17 @@ static void ggml_metal_encode_pending_waits(ggml_metal_t ctx, id<MTLCommandBuffe
@@ -179,10 +179,10 @@ index 2ecd8a91a..3a77125fd 100644
  
      ggml_metal_op_t ctx_op = ggml_metal_op_init(
 diff --git a/ggml/src/ggml-metal/ggml-metal.cpp b/ggml/src/ggml-metal/ggml-metal.cpp
-index 59cb7b03e..dd7c11237 100644
+index c511642..9423db2 100644
 --- a/ggml/src/ggml-metal/ggml-metal.cpp
 +++ b/ggml/src/ggml-metal/ggml-metal.cpp
-@@ -552,16 +552,24 @@ static void ggml_backend_metal_read_batch_begin(ggml_backend_t backend) {
+@@ -558,16 +558,24 @@ static void ggml_backend_metal_read_batch_begin(ggml_backend_t backend) {
      ggml_metal_read_batch_begin((ggml_metal_t) backend->context);
  }
  
@@ -207,7 +207,7 @@ index 59cb7b03e..dd7c11237 100644
      if (!ggml_backend_buffer_is_metal(src->buffer) || !ggml_backend_buffer_is_metal(dst->buffer)) {
          return false;
      }
-@@ -1188,17 +1196,42 @@ static bool ggml_backend_metal_comm_allreduce_tensor(void * comm_ctx_v, ggml_ten
+@@ -1194,17 +1202,42 @@ static bool ggml_backend_metal_comm_allreduce_tensor(void * comm_ctx_v, ggml_ten
                  return false;
              }
          }

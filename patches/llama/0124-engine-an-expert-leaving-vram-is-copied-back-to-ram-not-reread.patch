@@ -1,8 +1,11 @@
 diff --git a/ggml/src/ggml-metal/ggml-metal-device.m b/ggml/src/ggml-metal/ggml-metal-device.m
-index d6c11e464..a4b6f1937 100644
+index bd24684..152c25d 100644
 --- a/ggml/src/ggml-metal/ggml-metal-device.m
 +++ b/ggml/src/ggml-metal/ggml-metal-device.m
-@@ -1271,10 +1271,11 @@ struct ggml_metal_dmoe_up {
+@@ -1284,16 +1284,17 @@ struct ggml_metal_buffer_id ggml_metal_device_dmoe_tables(ggml_metal_device_t de
+ #define DMOE_UP_TICKETS 1024
+ 
+ struct ggml_metal_dmoe_up {
      ggml_metal_device_t  dev;
      id<MTLCommandQueue>  queue;
      id<MTLBuffer>        stage[DMOE_UP_SLOTS];
@@ -14,7 +17,13 @@ index d6c11e464..a4b6f1937 100644
      long                 fail_at;   // test only
      NSLock *             lock;
  };
-@@ -1361,10 +1362,49 @@ static double ggml_metal_dmoe_upload_gpu_us(void * ctx_raw, uint64_t ticket) {
+ 
+ static uint64_t ggml_metal_dmoe_upload_impl(void * ctx_raw, const struct tosh_dmoe_copy * copies, int n);
+ 
+@@ -1374,16 +1375,55 @@ static double ggml_metal_dmoe_upload_gpu_us(void * ctx_raw, uint64_t ticket) {
+     struct ggml_metal_dmoe_up * up = ctx_raw;
+     [up->lock lock];
+     id<MTLCommandBuffer> cb = up->tickets[ticket % DMOE_UP_TICKETS];
      const double us = cb != nil ? ([cb GPUEndTime] - [cb GPUStartTime])*1e6 : 0.0;
      [up->lock unlock];
      return us;
@@ -64,7 +73,13 @@ index d6c11e464..a4b6f1937 100644
  static void ggml_metal_dmoe_uploader_make(void) {
      if (g_uploader_dev != NULL) {
          ggml_metal_dmoe_uploader_init(g_uploader_dev);
-@@ -1379,11 +1419,12 @@ static void ggml_metal_dmoe_uploader_init(ggml_metal_device_t dev) {
+     }
+ }
+ 
+@@ -1392,17 +1432,18 @@ static void ggml_metal_dmoe_uploader_init(ggml_metal_device_t dev) {
+     up->dev   = dev;
+     up->queue = [dev->mtl_device newCommandQueue];
+     for (int i = 0; i < DMOE_UP_SLOTS; ++i) {
          up->stage[i] = [dev->mtl_device newBufferWithLength:DMOE_UP_BYTES options:MTLResourceStorageModeShared];
      }
      up->lock = [[NSLock alloc] init];
@@ -78,11 +93,17 @@ index d6c11e464..a4b6f1937 100644
  
  struct ggml_metal_buffer_id ggml_metal_device_dmoe_wide_stage(ggml_metal_device_t dev, size_t bytes) {
      [dev->dmoe_lock lock];
+     if (dev->dmoe_wide == nil) {
+         dev->dmoe_wide = [dev->mtl_device newBufferWithLength:bytes options:MTLResourceStorageModeShared];
+         GGML_ASSERT(dev->dmoe_wide != nil);
 diff --git a/src/llama-tosh-dmoe.cpp b/src/llama-tosh-dmoe.cpp
-index 0209b96f1..0680c8a0e 100644
+index 0209b96..0680c8a 100644
 --- a/src/llama-tosh-dmoe.cpp
 +++ b/src/llama-tosh-dmoe.cpp
-@@ -819,18 +819,53 @@ struct policy {
+@@ -816,24 +816,59 @@ struct policy {
+         if (admit_fixed > 0) return admit_fixed;
+         // expected reuse must pay the upload: T_upload / (T_cpu - T_gpu). This charges the stage
+         // copy as if it were serial, so it errs strict; the default is a fixed threshold.
          if (upload_done < 16 || promotions == 0 || t_cpu_expert_us <= 10) return 1.8;
          const double t_up = us_upload_gpu/upload_done + us_upload_call/promotions;
          return std::max(1.0, t_up/(t_cpu_expert_us - 7.0));
@@ -137,7 +158,13 @@ index 0209b96f1..0680c8a0e 100644
          const host_bank & b = (*banks)[il];
          const int e = slots[(size_t) il*Q + s].e;
          bool ok = true;
-@@ -1192,10 +1227,11 @@ struct policy {
+         const int32_t eid = e;
+         const bool hc = tosh_hostcache_on();
+         if (hc && !tosh_hostcache_acquire(il, &eid, 1, TOSH_HC_VERIFY)) {
+@@ -1189,16 +1224,17 @@ struct policy {
+                     lifetime_sum += now - sl.since; lifetime_n++; uses_sum += sl.uses;
+                     sl.state = RETIRING; sl.retire_sync = UINT64_MAX;
+                     retiring_slots.push_back(il*Q + victim);
                      evictions++; reserve_evictions++;
                      dirty = true;
                  }
@@ -149,7 +176,13 @@ index 0209b96f1..0680c8a0e 100644
          // 5. publish a table with what is resident now, into a version no graph can be reading
          if (dirty) {
              int next = -1;
-@@ -1273,10 +1309,14 @@ struct policy {
+             for (int k = 1; k < TOSH_DMOE_VERSIONS; ++k) {
+                 const int v = (cur_version + k) % TOSH_DMOE_VERSIONS;
+                 if (sync >= version_retired[v] + 2) { next = v; break; }
+@@ -1270,16 +1306,20 @@ struct policy {
+         fprintf(stderr, "tosh_dmoe: policy thread per graph %.1f us (drain %.1f, decide %.1f incl. upload calls %.1f, publish %.1f), %llu publishes, %llu cycles\n",
+                 us_cycle/g, us_drain/g, us_decide/g, us_upload_call/g, us_publish/g, (unsigned long long) publishes, (unsigned long long) n_cycles);
+         if (const char * p = getenv("TOSH_DMOE_TRACE_PROMO")) {
              if (FILE * f = fopen(p, "w")) {
                  for (size_t t = 1; t < promo_by_tick.size() && t <= graphs; ++t) fprintf(f, "%zu %u\n", t, promo_by_tick[t]);
                  fclose(f);
@@ -164,11 +197,17 @@ index 0209b96f1..0680c8a0e 100644
                      (unsigned long long) vpromotions, (unsigned long long) vexpired, (unsigned long long) lent, (unsigned long long) lent_dropped);
              fprintf(stderr, "tosh_dmoe: evictions to keep %d free slots per layer during prefill %llu\n", reserve, (unsigned long long) reserve_evictions);
          }
+         if (obs_prefill + obs_lost > 0) {
+             fprintf(stderr, "tosh_dmoe: prefill routing observed %llu selections, %llu records lost\n",
+                     (unsigned long long) obs_prefill, (unsigned long long) obs_lost);
 diff --git a/tosh-moe/tosh-dmoe.h b/tosh-moe/tosh-dmoe.h
-index b5defd177..cc40c42f8 100644
+index b5defd1..cc40c42 100644
 --- a/tosh-moe/tosh-dmoe.h
 +++ b/tosh-moe/tosh-dmoe.h
-@@ -141,10 +141,12 @@ struct tosh_dmoe_copy {
+@@ -138,16 +138,18 @@ struct tosh_dmoe_copy {
+     const void * src;
+     size_t       size;
+ };
  struct tosh_dmoe_uploader {
      void *   ctx;
      uint64_t (*upload)(void * ctx, const struct tosh_dmoe_copy * copies, int n);   // 0 on failure
@@ -181,11 +220,17 @@ index b5defd177..cc40c42f8 100644
  const struct tosh_dmoe_uploader * tosh_dmoe_get_uploader(void);
  // the GPU backend makes the uploader the first time it is asked for
  void tosh_dmoe_set_uploader_factory(void (*make)(void));
+ 
+ // Prefill. A bank upload asks for the layer's residency so resident experts come from the
+ // VRAM arena and only the rest from host memory. Registered by whoever owns the banks.
 diff --git a/tosh-moe/tosh-hostcache.cpp b/tosh-moe/tosh-hostcache.cpp
-index bbbd9d534..e1957bc13 100644
+index bbbd9d5..e1957bc 100644
 --- a/tosh-moe/tosh-hostcache.cpp
 +++ b/tosh-moe/tosh-hostcache.cpp
-@@ -83,11 +83,11 @@ struct cache {
+@@ -80,17 +80,17 @@ struct cache {
+     uint64_t reuse_n[3] = {}, reuse_bytes[3] = {}, loaded_n[3] = {}, loaded_bytes[3] = {};
+     std::vector<int32_t>    key_of, ref, prev, next;
+     std::vector<uint8_t>    state;
  
      std::string error;
  
@@ -198,7 +243,13 @@ index bbbd9d534..e1957bc13 100644
      std::vector<float> qwait_us[2], rd_us[2];
      uint64_t rd_n[2] = {}, rd_bytes[2] = {};
      double wait_own_us[TOSH_HC_KINDS] = {}, wait_co_dem_us[TOSH_HC_KINDS] = {}, wait_co_bg_us[TOSH_HC_KINDS] = {};
-@@ -708,39 +708,68 @@ void tosh_hostcache_drop(int il, int e) {
+     uint64_t bg_used = 0, bg_used_loading = 0, bg_wasted = 0, bg_dropped_unused = 0;
+     size_t prewarm_bytes = 0; double prewarm_us = 0;
+     uint64_t boosted = 0, kept_on_promotion = 0, refreshed = 0;
+@@ -705,45 +705,74 @@ void tosh_hostcache_drop(int il, int e) {
+     if (g.bg_unused[s]) { g.bg_unused[s] = 0; g.bg_dropped_unused++; }
+     // the copy stays, first in line for eviction: if the expert leaves VRAM before it is evicted
+     // here, nothing has to be read back
      g.lru_unlink(s);
      g.lru_push_tail(s);
      g.kept_on_promotion++;
@@ -286,7 +337,13 @@ index bbbd9d534..e1957bc13 100644
      auto it = g.bank_of.find(data);
      if (it == g.bank_of.end()) return false;
      *il = it->second.first;
-@@ -830,11 +859,12 @@ void tosh_hostcache_report(void) {
+     *part = it->second.second;
+     return true;
+ }
+@@ -827,17 +856,18 @@ void tosh_hostcache_report(void) {
+             (unsigned long long) g.bg_dropped_unused, (unsigned long long) bg_left);
+     fprintf(stderr, "tosh_hostcache: file reads: first touch %llu, capacity miss %llu, read-back %llu\n",
+             (unsigned long long) (g.rd_n[0] > g.reloads ? g.rd_n[0] - g.reloads : 0), (unsigned long long) g.reloads, (unsigned long long) g.rd_n[1]);
      fprintf(stderr, "tosh_hostcache: read-backs moved ahead for a waiting demand %llu | promoted copies kept %llu, refreshed on eviction %llu\n",
              (unsigned long long) g.boosted, (unsigned long long) g.kept_on_promotion, (unsigned long long) g.refreshed);
      std::vector<float> v = g.read_us;
@@ -300,11 +357,17 @@ index bbbd9d534..e1957bc13 100644
                  (unsigned long long) g.loaded_n[1], g.loaded_bytes[1]/1048576.0, (unsigned long long) g.loaded_n[2], g.loaded_bytes[2]/1048576.0,
                  (unsigned long long) g.fill_dup, g.fill_stop_t > 0 ? (g.fill_stop_t - g.t_ready)/1000 : -1.0,
                  (unsigned long long) g.reuse_n[1], g.reuse_bytes[1]/1048576.0, (unsigned long long) g.reuse_n[2], g.reuse_bytes[2]/1048576.0);
+     }
+     fprintf(stderr, "tosh_hostcache: reads %llu (%.1f MiB), coalesced %llu, evictions %llu, reloads %llu | expert read p50 %.0f p95 %.0f p99 %.0f us | resident %.0f MiB, peak %.0f MiB of %.0f locked\n",
+             (unsigned long long) g.reads, g.read_bytes/1048576.0, (unsigned long long) g.coalesced, (unsigned long long) g.evictions,
 diff --git a/tosh-moe/tosh-hostcache.h b/tosh-moe/tosh-hostcache.h
-index 4c7f74332..597bd9b29 100644
+index 4c7f743..597bd9b 100644
 --- a/tosh-moe/tosh-hostcache.h
 +++ b/tosh-moe/tosh-hostcache.h
-@@ -45,10 +45,14 @@ void tosh_hostcache_release(int il, const int32_t * ids, int n);
+@@ -42,16 +42,20 @@ bool tosh_mlock_paced(void * addr, size_t bytes, char * err, size_t err_len);
+ bool tosh_hostcache_acquire(int il, const int32_t * ids, int n, int kind);
+ const char * tosh_hostcache_part(int il, int e, int part);
+ void tosh_hostcache_release(int il, const int32_t * ids, int n);
  
  // an expert promoted to VRAM keeps its RAM copy first in line for eviction (drop); one leaving
  // VRAM without a copy is read back in the background, behind demand reads (prefetch)
@@ -319,3 +382,6 @@ index 4c7f74332..597bd9b29 100644
  bool tosh_hostcache_lookup(const void * data, int * il, int * part);
  
  // full bank loaded: expert e of a noted tensor read with pread equals the loaded bytes
+ bool tosh_hostcache_bytecheck(const void * data, size_t part_bytes, int e);
+ int  tosh_hostcache_n_files(void);
+ 

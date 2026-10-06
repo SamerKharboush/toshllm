@@ -1,8 +1,8 @@
 diff --git a/ggml/src/ggml-metal/ggml-metal-ops.cpp b/ggml/src/ggml-metal/ggml-metal-ops.cpp
-index d501092dd..6db894c8b 100644
+index d5576b9..d4f8b4c 100644
 --- a/ggml/src/ggml-metal/ggml-metal-ops.cpp
 +++ b/ggml/src/ggml-metal/ggml-metal-ops.cpp
-@@ -661,17 +661,20 @@ static int ggml_metal_op_encode_impl(ggml_metal_op_t ctx, int idx) {
+@@ -665,17 +665,20 @@ static int ggml_metal_op_encode_impl(ggml_metal_op_t ctx, int idx) {
                  n_fuse = ggml_metal_op_arange(ctx, idx);
              } break;
          case GGML_OP_TIMESTEP_EMBEDDING:
@@ -24,7 +24,7 @@ index d501092dd..6db894c8b 100644
          case GGML_OP_TRI:
              {
                  n_fuse = ggml_metal_op_tri(ctx, idx);
-@@ -6960,16 +6963,17 @@ int ggml_metal_op_argmax(ggml_metal_op_t ctx, int idx) {
+@@ -7208,16 +7211,17 @@ int ggml_metal_op_argmax(ggml_metal_op_t ctx, int idx) {
  
  
  // the MoE router emits softmax -> argsort -> get_rows [-> sum_rows -> clamp -> div].
@@ -42,7 +42,7 @@ index d501092dd..6db894c8b 100644
  
  static ggml_tensor * ggml_metal_view_base(ggml_tensor * t) {
      while (t && t->view_src) {
-@@ -6978,19 +6982,19 @@ static ggml_tensor * ggml_metal_view_base(ggml_tensor * t) {
+@@ -7226,19 +7230,19 @@ static ggml_tensor * ggml_metal_view_base(ggml_tensor * t) {
      return t;
  }
  
@@ -65,7 +65,7 @@ index d501092dd..6db894c8b 100644
          return false;
      }
  
-@@ -7073,49 +7077,109 @@ static bool ggml_metal_tosh_topk_moe_fusion(ggml_metal_op_t ctx, int idx, ggml_m
+@@ -7321,49 +7325,109 @@ static bool ggml_metal_tosh_topk_moe_fusion(ggml_metal_op_t ctx, int idx, ggml_m
          return false;
      }
  

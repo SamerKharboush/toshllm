@@ -1,5 +1,5 @@
 diff --git a/ggml/src/ggml-metal/ggml-metal-context.m b/ggml/src/ggml-metal/ggml-metal-context.m
-index 8dacceed9..45289079e 100644
+index 161f075..da57f73 100644
 --- a/ggml/src/ggml-metal/ggml-metal-context.m
 +++ b/ggml/src/ggml-metal/ggml-metal-context.m
 @@ -2144,36 +2144,48 @@ static bool ggml_metal_add_inplace_buffer(ggml_metal_t ctx, id<MTLCommandBuffer>

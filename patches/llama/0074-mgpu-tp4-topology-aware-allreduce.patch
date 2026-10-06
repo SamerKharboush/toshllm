@@ -1,5 +1,5 @@
 diff --git a/ggml/src/ggml-metal/ggml-metal-context.h b/ggml/src/ggml-metal/ggml-metal-context.h
-index 8fb157e36..ea366a643 100644
+index 8fb157e..ea366a6 100644
 --- a/ggml/src/ggml-metal/ggml-metal-context.h
 +++ b/ggml/src/ggml-metal/ggml-metal-context.h
 @@ -13,16 +13,17 @@ extern "C" {
@@ -21,7 +21,7 @@ index 8fb157e36..ea366a643 100644
  // batch small synchronous reads into one device round-trip
  void ggml_metal_read_batch_begin(ggml_metal_t ctx);
 diff --git a/ggml/src/ggml-metal/ggml-metal-context.m b/ggml/src/ggml-metal/ggml-metal-context.m
-index b083e0c70..2245fbb49 100644
+index ea5d5bd..b8de331 100644
 --- a/ggml/src/ggml-metal/ggml-metal-context.m
 +++ b/ggml/src/ggml-metal/ggml-metal-context.m
 @@ -1177,16 +1177,28 @@ void ggml_metal_free(ggml_metal_t ctx) {
@@ -54,10 +54,10 @@ index b083e0c70..2245fbb49 100644
          @autoreleasepool {
              if (tosh_mgpu_trace()) atomic_fetch_add(&g_tr_cmd_all, 1);
 diff --git a/ggml/src/ggml-metal/ggml-metal.cpp b/ggml/src/ggml-metal/ggml-metal.cpp
-index 42fbfa927..02569a06e 100644
+index 1da8034..0d4dd3c 100644
 --- a/ggml/src/ggml-metal/ggml-metal.cpp
 +++ b/ggml/src/ggml-metal/ggml-metal.cpp
-@@ -1022,18 +1022,70 @@ struct ggml_backend_metal_comm_context {
+@@ -1028,18 +1028,70 @@ struct ggml_backend_metal_comm_context {
      // scratch per device and reduction step: reusing one per device would let a step
      // overwrite what the previous one is still reducing
      std::vector<ggml_backend_buffer_t>  tmp;
@@ -128,7 +128,7 @@ index 42fbfa927..02569a06e 100644
          offset--;
      }
      return offset;
-@@ -1062,16 +1114,33 @@ static void * ggml_backend_metal_comm_init(ggml_backend_t * backends, size_t n_b
+@@ -1068,16 +1120,33 @@ static void * ggml_backend_metal_comm_init(ggml_backend_t * backends, size_t n_b
      }
  
      auto * comm_ctx = new ggml_backend_metal_comm_context;
@@ -162,7 +162,7 @@ index 42fbfa927..02569a06e 100644
  }
  
  static void ggml_backend_metal_comm_free(void * comm_ctx_v) {
-@@ -1100,21 +1169,16 @@ static bool ggml_backend_metal_comm_allreduce_noop(void) {
+@@ -1106,21 +1175,16 @@ static bool ggml_backend_metal_comm_allreduce_noop(void) {
          if (v) {
              fprintf(stderr, "ggml_metal: WARNING TOSH_MGPU_ALLREDUCE_NOOP=1, the reduction is "
                              "skipped and the output is meaningless. Benchmark only.\n");
@@ -184,7 +184,7 @@ index 42fbfa927..02569a06e 100644
      auto * comm_ctx = (ggml_backend_metal_comm_context *) comm_ctx_v;
  
      const size_t n_backends = comm_ctx->backends.size();
-@@ -1209,17 +1273,19 @@ static bool ggml_backend_metal_comm_allreduce_tensor(void * comm_ctx_v, ggml_ten
+@@ -1215,17 +1279,19 @@ static bool ggml_backend_metal_comm_allreduce_tensor(void * comm_ctx_v, ggml_ten
          const char * v = getenv("TOSH_MGPU_STAGE_F16");
          stage = (v && v[0] == '1') ? 1 : 0;
      }
@@ -205,7 +205,7 @@ index 42fbfa927..02569a06e 100644
                  break;
              }
          }
-@@ -1280,18 +1346,18 @@ static bool ggml_backend_metal_comm_allreduce_tensor(void * comm_ctx_v, ggml_ten
+@@ -1286,18 +1352,18 @@ static bool ggml_backend_metal_comm_allreduce_tensor(void * comm_ctx_v, ggml_ten
      // inbox and sums from local VRAM, instead of the butterfly's log2(n) host-staged rounds.
      // The staged round trips are pure latency at 16 KiB, which is why TP4 decode loses to one
      // card today. Encodes nothing and falls through if the hive is not peer-direct.
@@ -226,7 +226,7 @@ index 42fbfa927..02569a06e 100644
      // continue past it need the standalone ones, and they must land before the first publish.
      for (size_t i = 0; i < n_backends; i++) {
          if (zero_mask & ((size_t) 1 << i)) {
-@@ -1300,29 +1366,29 @@ static bool ggml_backend_metal_comm_allreduce_tensor(void * comm_ctx_v, ggml_ten
+@@ -1306,29 +1372,29 @@ static bool ggml_backend_metal_comm_allreduce_tensor(void * comm_ctx_v, ggml_ten
                  return false;
              }
          }
@@ -259,7 +259,7 @@ index 42fbfa927..02569a06e 100644
          }
          return ok;
      };
-@@ -1336,22 +1402,67 @@ static bool ggml_backend_metal_comm_allreduce_tensor(void * comm_ctx_v, ggml_ten
+@@ -1342,22 +1408,67 @@ static bool ggml_backend_metal_comm_allreduce_tensor(void * comm_ctx_v, ggml_ten
                  GGML_ABORT("%s: allreduce add failed after partial reduction\n", __func__);
              }
              return false;
@@ -328,7 +328,7 @@ index 42fbfa927..02569a06e 100644
                  return false;
              }
          }
-@@ -1362,18 +1473,18 @@ static bool ggml_backend_metal_comm_allreduce_tensor(void * comm_ctx_v, ggml_ten
+@@ -1368,18 +1479,18 @@ static bool ggml_backend_metal_comm_allreduce_tensor(void * comm_ctx_v, ggml_ten
      // so the copies all go out before any of the adds.
      static int fused = -1;
      if (fused < 0) {
@@ -349,7 +349,7 @@ index 42fbfa927..02569a06e 100644
              // that would thrash its view cache when a step's partner changes between rounds,
              // so it is handed the partner for a pair and nothing otherwise. The default path
              // publishes into an inbox instead and engages at any device count: on four dies it
-@@ -1443,17 +1554,17 @@ static bool ggml_backend_metal_comm_allreduce_tensor(void * comm_ctx_v, ggml_ten
+@@ -1449,17 +1560,17 @@ static bool ggml_backend_metal_comm_allreduce_tensor(void * comm_ctx_v, ggml_ten
                  step++;
                  continue;
              }

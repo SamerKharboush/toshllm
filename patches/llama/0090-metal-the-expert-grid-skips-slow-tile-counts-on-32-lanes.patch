@@ -1,8 +1,8 @@
 diff --git a/ggml/src/ggml-metal/ggml-metal-ops.cpp b/ggml/src/ggml-metal/ggml-metal-ops.cpp
-index 976541751..e1394d247 100644
+index 3dff5db..793ef20 100644
 --- a/ggml/src/ggml-metal/ggml-metal-ops.cpp
 +++ b/ggml/src/ggml-metal/ggml-metal-ops.cpp
-@@ -4107,16 +4107,26 @@ int ggml_metal_op_mul_mat_id(ggml_metal_op_t ctx, int idx) {
+@@ -4234,16 +4234,26 @@ int ggml_metal_op_mul_mat_id(ggml_metal_op_t ctx, int idx) {
              // than the tile, so the working threadgroups sit one every ntg0. An even ntg0 parks
              // them on half the engines and a multiple of four on a single one (measured 1.8x and
              // 3.4x). One inert tile restores the spread; it returns before reading anything.

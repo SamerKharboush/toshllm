@@ -1,5 +1,5 @@
 diff --git a/ggml/src/ggml-metal/kernels/mul_mv.metal b/ggml/src/ggml-metal/kernels/mul_mv.metal
-index a594f1dd2..ce596fecc 100644
+index a594f1d..ce596fe 100644
 --- a/ggml/src/ggml-metal/kernels/mul_mv.metal
 +++ b/ggml/src/ggml-metal/kernels/mul_mv.metal
 @@ -6603,39 +6603,45 @@ template [[host_name("kernel_mul_mv_f16_f32")]]   kernel mul_mv_t_t kernel_mul_m

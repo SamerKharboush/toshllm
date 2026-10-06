@@ -1,5 +1,5 @@
 diff --git a/ggml/src/ggml-metal/kernels/mul_mv.metal b/ggml/src/ggml-metal/kernels/mul_mv.metal
-index f7a256bca..994f5db21 100644
+index f7a256b..994f5db 100644
 --- a/ggml/src/ggml-metal/kernels/mul_mv.metal
 +++ b/ggml/src/ggml-metal/kernels/mul_mv.metal
 @@ -163,16 +163,95 @@ inline float block_q_n_dot_y(device const block_q5_1 * qb_curr, float sumy, thre

@@ -1,8 +1,11 @@
 diff --git a/ggml/include/ggml-cpu.h b/ggml/include/ggml-cpu.h
-index dc6453c6e..ddb205b64 100644
+index dc6453c..ddb205b 100644
 --- a/ggml/include/ggml-cpu.h
 +++ b/ggml/include/ggml-cpu.h
-@@ -123,10 +123,15 @@ extern "C" {
+@@ -120,16 +120,21 @@ extern "C" {
+         enum ggml_type           vec_dot_type;
+         int64_t                  nrows; // number of rows to process simultaneously
+     };
  
      GGML_BACKEND_API const struct ggml_type_traits_cpu * ggml_get_type_traits_cpu(enum ggml_type type);
  
@@ -18,11 +21,14 @@ index dc6453c6e..ddb205b64 100644
      //
  
      GGML_BACKEND_API ggml_backend_t ggml_backend_cpu_init(void);
+ 
+     GGML_BACKEND_API bool ggml_backend_is_cpu                (ggml_backend_t backend);
+     GGML_BACKEND_API void ggml_backend_cpu_set_n_threads     (ggml_backend_t backend_cpu, int n_threads);
 diff --git a/ggml/src/ggml-cpu/arch-fallback.h b/ggml/src/ggml-cpu/arch-fallback.h
-index 9546e16dd..034aed625 100644
+index 4afc89b..fa096c7 100644
 --- a/ggml/src/ggml-cpu/arch-fallback.h
 +++ b/ggml/src/ggml-cpu/arch-fallback.h
-@@ -1,11 +1,14 @@
+@@ -1,14 +1,17 @@
  
  #pragma once
  
@@ -38,7 +44,13 @@ index 9546e16dd..034aed625 100644
  // This effectively selects the generic implementation.
  
  #if defined(GGML_CPU_GENERIC)
-@@ -89,11 +92,10 @@
+ // quants.c
+ #define quantize_row_q8_0_generic quantize_row_q8_0
+ #define quantize_row_q8_1_generic quantize_row_q8_1
+@@ -86,17 +89,16 @@
+ #define ggml_gemv_iq4_nl_8x8_q8_0_generic ggml_gemv_iq4_nl_8x8_q8_0
+ #define ggml_gemv_mxfp4_8x8_q8_0_generic ggml_gemv_mxfp4_8x8_q8_0
+ #define ggml_gemv_q2_K_8x8_q8_K_generic ggml_gemv_q2_K_8x8_q8_K
  #define ggml_gemm_iq4_nl_8x8_q8_0_generic ggml_gemm_iq4_nl_8x8_q8_0
  #define ggml_gemm_mxfp4_8x8_q8_0_generic ggml_gemm_mxfp4_8x8_q8_0
  #define ggml_gemm_q2_K_8x8_q8_K_generic ggml_gemm_q2_K_8x8_q8_K
@@ -50,11 +62,17 @@ index 9546e16dd..034aed625 100644
  #define ggml_quantize_mat_q8_K_4x4_generic ggml_quantize_mat_q8_K_4x4
  #define ggml_gemv_q1_0_4x4_q8_0_generic ggml_gemv_q1_0_4x4_q8_0
  #define ggml_gemv_q1_0_4x8_q8_0_generic ggml_gemv_q1_0_4x8_q8_0
+ #define ggml_gemv_q4_0_4x4_q8_0_generic ggml_gemv_q4_0_4x4_q8_0
+ #define ggml_gemv_q4_0_4x8_q8_0_generic ggml_gemv_q4_0_4x8_q8_0
+ #define ggml_gemv_q4_K_8x4_q8_K_generic ggml_gemv_q4_K_8x4_q8_K
 diff --git a/ggml/src/ggml-cpu/arch/x86/quants.c b/ggml/src/ggml-cpu/arch/x86/quants.c
-index ea54cfe44..0a1187be2 100644
+index ea54cfe..0a1187b 100644
 --- a/ggml/src/ggml-cpu/arch/x86/quants.c
 +++ b/ggml/src/ggml-cpu/arch/x86/quants.c
-@@ -1503,10 +1503,179 @@ void ggml_vec_dot_tq1_0_q8_K(int n, float * GGML_RESTRICT s, size_t bs, const vo
+@@ -1500,16 +1500,185 @@ void ggml_vec_dot_tq1_0_q8_K(int n, float * GGML_RESTRICT s, size_t bs, const vo
+ #else
+     UNUSED(x);
+     UNUSED(y);
      UNUSED(nb);
      ggml_vec_dot_tq1_0_q8_K_generic(n, s, bs, vx, bx, vy, by, nrc);
  #endif
@@ -234,7 +252,13 @@ index ea54cfe44..0a1187be2 100644
      UNUSED(nrc);
      UNUSED(bx);
      UNUSED(by);
-@@ -2033,10 +2202,86 @@ void ggml_vec_dot_q3_K_q8_K(int n, float * GGML_RESTRICT s, size_t bs, const voi
+     UNUSED(bs);
+ 
+     const block_tq2_0 * GGML_RESTRICT x = vx;
+@@ -2030,16 +2199,92 @@ void ggml_vec_dot_q3_K_q8_K(int n, float * GGML_RESTRICT s, size_t bs, const voi
+     UNUSED(kmask2);
+     UNUSED(x);
+     UNUSED(y);
      UNUSED(nb);
      ggml_vec_dot_q3_K_q8_K_generic(n, s, bs, vx, bx, vy, by, nrc);
  #endif
@@ -321,7 +345,13 @@ index ea54cfe44..0a1187be2 100644
      assert(nrc == 1);
      UNUSED(nrc);
      UNUSED(bx);
-@@ -4104,5 +4349,351 @@ void ggml_vec_dot_iq4_xs_q8_K(int n, float * GGML_RESTRICT s, size_t bs, const v
+     UNUSED(by);
+     UNUSED(bs);
+ 
+@@ -4101,8 +4346,354 @@ void ggml_vec_dot_iq4_xs_q8_K(int n, float * GGML_RESTRICT s, size_t bs, const v
+ 
+ #else
+     UNUSED(x);
      UNUSED(y);
      UNUSED(nb);
      ggml_vec_dot_iq4_xs_q8_K_generic(n, s, bs, vx, bx, vy, by, nrc);
@@ -674,10 +704,13 @@ index ea54cfe44..0a1187be2 100644
 +    return NULL;
 +}
 diff --git a/ggml/src/ggml-cpu/ggml-cpu.c b/ggml/src/ggml-cpu/ggml-cpu.c
-index ce070127c..6663833e5 100644
+index 3922857..316e370 100644
 --- a/ggml/src/ggml-cpu/ggml-cpu.c
 +++ b/ggml/src/ggml-cpu/ggml-cpu.c
-@@ -1561,10 +1561,52 @@ static void ggml_compute_forward_mul_mat_id_one_chunk(
+@@ -1562,16 +1562,58 @@ static void ggml_compute_forward_mul_mat_id_one_chunk(
+     ggml_vec_dot_t    const vec_dot      = type_traits_cpu[type].vec_dot;
+     enum ggml_type    const vec_dot_type = type_traits_cpu[type].vec_dot_type;
+ 
      const int64_t blck_0 = 16;
      const int64_t blck_1 = 16;
  
@@ -730,7 +763,13 @@ index ce070127c..6663833e5 100644
              for (int64_t ir1 = iir1; ir1 < iir1 + blck_1 && ir1 < ir1_end; ++ir1) {
                  const int64_t _i12 = ir1; // logical row index for this expert
  
-@@ -4086,5 +4128,9 @@ void ggml_cpu_init(void) {
+                 struct mmid_row_mapping row_mapping = MMID_MATRIX_ROW(cur_a, _i12);
+                 const int id       = row_mapping.i1; // selected expert index
+ 
+@@ -4075,8 +4117,12 @@ void ggml_cpu_init(void) {
+             ggml_cpu_disable_fusion = (env != NULL && atoi(env) == 1);
+         }
+ 
          is_first_call = false;
      }
  
@@ -741,10 +780,13 @@ index ce070127c..6663833e5 100644
 +    return getenv("GGML_CPU_NO_MULTI_DOT") ? NULL : (ggml_cpu_vec_dot_multi_t) ggml_get_vec_dot_multi(type);
 +}
 diff --git a/ggml/src/ggml-cpu/quants.c b/ggml/src/ggml-cpu/quants.c
-index 7a9b27a41..79046ee3c 100644
+index 7a9b27a..79046ee 100644
 --- a/ggml/src/ggml-cpu/quants.c
 +++ b/ggml/src/ggml-cpu/quants.c
-@@ -1455,5 +1455,10 @@ void quantize_row_iq4_nl(const float * GGML_RESTRICT x, void * GGML_RESTRICT y,
+@@ -1452,8 +1452,13 @@ void quantize_row_iq4_nl(const float * GGML_RESTRICT x, void * GGML_RESTRICT y,
+     assert(k % QK4_NL == 0);
+     quantize_row_iq4_nl_ref(x, y, k);
+ }
  
  void quantize_row_iq4_xs(const float * GGML_RESTRICT x, void * GGML_RESTRICT y, int64_t k) {
      assert(k % QK_K == 0);
@@ -756,10 +798,13 @@ index 7a9b27a41..79046ee3c 100644
 +    return NULL;
 +}
 diff --git a/ggml/src/ggml-cpu/quants.h b/ggml/src/ggml-cpu/quants.h
-index 3164323c4..169dc85c5 100644
+index 3164323..169dc85 100644
 --- a/ggml/src/ggml-cpu/quants.h
 +++ b/ggml/src/ggml-cpu/quants.h
-@@ -54,10 +54,16 @@ void ggml_vec_dot_mxfp4_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const vo
+@@ -51,16 +51,22 @@ void ggml_vec_dot_q5_1_q8_1(int n, float * GGML_RESTRICT s, size_t bs, const voi
+ void ggml_vec_dot_q8_0_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, size_t bx, const void * GGML_RESTRICT vy, size_t by, int nrc);
+ 
+ void ggml_vec_dot_mxfp4_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, size_t bx, const void * GGML_RESTRICT vy, size_t by, int nrc);
  void ggml_vec_dot_nvfp4_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, size_t bx, const void * GGML_RESTRICT vy, size_t by, int nrc);
  
  void ggml_vec_dot_q2_K_q8_K(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, size_t bx, const void * GGML_RESTRICT vy, size_t by, int nrc);
@@ -776,3 +821,6 @@ index 3164323c4..169dc85c5 100644
  
  void ggml_vec_dot_tq1_0_q8_K(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, size_t bx, const void * GGML_RESTRICT vy, size_t by, int nrc);
  void ggml_vec_dot_tq2_0_q8_K(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, size_t bx, const void * GGML_RESTRICT vy, size_t by, int nrc);
+ 
+ void ggml_vec_dot_iq2_xxs_q8_K(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, size_t bx, const void * GGML_RESTRICT vy, size_t by, int nrc);
+ void ggml_vec_dot_iq2_xs_q8_K (int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, size_t bx, const void * GGML_RESTRICT vy, size_t by, int nrc);

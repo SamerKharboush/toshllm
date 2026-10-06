@@ -1,8 +1,8 @@
 diff --git a/ggml/src/ggml-metal/ggml-metal-ops.cpp b/ggml/src/ggml-metal/ggml-metal-ops.cpp
-index e79b4c680..8f5c9f96e 100644
+index 64a0b6b..52ce229 100644
 --- a/ggml/src/ggml-metal/ggml-metal-ops.cpp
 +++ b/ggml/src/ggml-metal/ggml-metal-ops.cpp
-@@ -3982,26 +3982,34 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
+@@ -4156,26 +4156,34 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
          int fa_pf_bq = (ne00 == 256 || ne00 == 160) ? 32
              : ((fa_pf_512 || fa_pf_mla || fa_pf_mla320) ? 16 : 64);
          const bool fa_pf_head_ok =
@@ -37,7 +37,7 @@ index e79b4c680..8f5c9f96e 100644
                  // Only the symmetric heads have one; MLA and the asymmetric pairs stay above.
                  // TOSH_FA_PF_LG picks the group so the three can be compared; 16 reproduces
                  // the 32-lane kernel exactly and is the control.
-@@ -4019,17 +4027,17 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
+@@ -4193,17 +4201,17 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
                  }();
                  // TOSH_FA_PF_BK picks the key-block twin: the counterpart of BQ on the other
                  // side of the K/V reuse, so a bigger block pays the same traffic fewer times
@@ -56,7 +56,7 @@ index e79b4c680..8f5c9f96e 100644
                      } else {
                          snprintf(w64_name, sizeof(w64_name), "%s_w64_lg%d", fa_pf_pipeline, pf_lg);
                      }
-@@ -4039,21 +4047,44 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
+@@ -4213,21 +4221,44 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
                          // the grid steps in query blocks, so it has to follow the twin
                          if (pf_bq > 0) {
                              fa_pf_bq = pf_bq;
@@ -102,7 +102,7 @@ index e79b4c680..8f5c9f96e 100644
                  ggml_metal_encoder_set_buffer  (enc, bid_src1, 2);
                  ggml_metal_encoder_set_buffer  (enc, bid_src2, 3);
 diff --git a/ggml/src/ggml-metal/kernels/fa_w64.metal b/ggml/src/ggml-metal/kernels/fa_w64.metal
-index 1c6183349..a7bc5d29a 100644
+index 1c61833..a7bc5d2 100644
 --- a/ggml/src/ggml-metal/kernels/fa_w64.metal
 +++ b/ggml/src/ggml-metal/kernels/fa_w64.metal
 @@ -22,16 +22,19 @@ kernel void kernel_flash_attn_ext_pf_amd_w64(

@@ -1,5 +1,5 @@
 diff --git a/ggml/src/ggml-backend-meta.cpp b/ggml/src/ggml-backend-meta.cpp
-index e4a943818..d431742ae 100644
+index 20ac61d..4d92d95 100644
 --- a/ggml/src/ggml-backend-meta.cpp
 +++ b/ggml/src/ggml-backend-meta.cpp
 @@ -126,17 +126,17 @@ static void ggml_backend_meta_device_get_props(ggml_backend_dev_t dev, ggml_back
@@ -125,7 +125,7 @@ index e4a943818..d431742ae 100644
      static std::map<ggml_backend_meta_device_context, struct ggml_backend_device> meta_devs;
  
      std::vector<ggml_backend_dev_t> simple_devs;
-@@ -2476,32 +2527,49 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend,
+@@ -2483,32 +2534,49 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend,
                      return status;
                  }
              }
@@ -178,10 +178,10 @@ index e4a943818..d431742ae 100644
  
  static ggml_backend_t ggml_backend_meta_device_init_backend(ggml_backend_dev_t dev, const char * params) {
 diff --git a/src/llama-context.cpp b/src/llama-context.cpp
-index cf01ebbc4..3698257d7 100644
+index 296f6a8..72b11a9 100644
 --- a/src/llama-context.cpp
 +++ b/src/llama-context.cpp
-@@ -424,27 +424,28 @@ llama_context::llama_context(
+@@ -427,27 +427,28 @@ llama_context::llama_context(
  
          LLAMA_LOG_DEBUG("%s: backend_ptrs.size() = %zu\n", __func__, backend_ptrs.size());
  
@@ -212,7 +212,7 @@ index cf01ebbc4..3698257d7 100644
                  if (!props.caps.async || !props.caps.events) {
                      // device does not support async compute or events
                      pipeline_parallel = false;
-@@ -2602,16 +2603,17 @@ llm_graph_cb llama_context::graph_get_cb() const {
+@@ -2642,16 +2643,17 @@ llm_graph_cb llama_context::graph_get_cb() const {
          } else {
              ggml_set_name(cur, name);
          }

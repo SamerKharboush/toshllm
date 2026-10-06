@@ -1,8 +1,8 @@
 diff --git a/ggml/src/ggml-metal/ggml-metal-device.cpp b/ggml/src/ggml-metal/ggml-metal-device.cpp
-index 721449016..59909db0d 100644
+index 026e87d..542d1fc 100644
 --- a/ggml/src/ggml-metal/ggml-metal-device.cpp
 +++ b/ggml/src/ggml-metal/ggml-metal-device.cpp
-@@ -1600,16 +1600,27 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mv(ggml_meta
+@@ -1730,16 +1730,27 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mv(ggml_meta
                      nsg = N_SG_IQ4_XS;
                      nr0 = N_R0_IQ4_XS;
                  }
@@ -31,7 +31,7 @@ index 721449016..59909db0d 100644
          default:
              {
 diff --git a/ggml/src/ggml-metal/ggml-metal-impl.h b/ggml/src/ggml-metal/ggml-metal-impl.h
-index 549db4449..712c5310d 100644
+index e23f585..dc39c1c 100644
 --- a/ggml/src/ggml-metal/ggml-metal-impl.h
 +++ b/ggml/src/ggml-metal/ggml-metal-impl.h
 @@ -100,16 +100,17 @@
@@ -53,7 +53,7 @@ index 549db4449..712c5310d 100644
  #define FC_FLASH_ATTN_EXT_PAD          100
  #define FC_FLASH_ATTN_EXT_BLK          200
 diff --git a/ggml/src/ggml-metal/kernels/mul_mv.metal b/ggml/src/ggml-metal/kernels/mul_mv.metal
-index 78fc1c7f4..c5c546002 100644
+index 78fc1c7..c5c5460 100644
 --- a/ggml/src/ggml-metal/kernels/mul_mv.metal
 +++ b/ggml/src/ggml-metal/kernels/mul_mv.metal
 @@ -3786,16 +3786,139 @@ kernel void kernel_mul_mv_iq4_nl_f32_r8(
@@ -197,7 +197,7 @@ index 78fc1c7f4..c5c546002 100644
          threadgroup  char * shmem,
          uint3  tgpig,
 diff --git a/ggml/src/ggml-metal/kernels/mul_mv_w64.metal b/ggml/src/ggml-metal/kernels/mul_mv_w64.metal
-index ab342c912..474a7ea23 100644
+index ab342c9..474a7ea 100644
 --- a/ggml/src/ggml-metal/kernels/mul_mv_w64.metal
 +++ b/ggml/src/ggml-metal/kernels/mul_mv_w64.metal
 @@ -3184,16 +3184,131 @@ void kernel_mul_mv_iq4_xs_f32_w64_impl(

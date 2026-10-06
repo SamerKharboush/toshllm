@@ -1,8 +1,13 @@
 diff --git a/src/llama-tosh-dmoe.cpp b/src/llama-tosh-dmoe.cpp
-index 320561905..920572b23 100644
+index 3205619..920572b 100644
 --- a/src/llama-tosh-dmoe.cpp
 +++ b/src/llama-tosh-dmoe.cpp
-@@ -1189,8 +1189,8 @@ struct policy {
+@@ -1184,18 +1184,18 @@ struct policy {
+                 decay, admit_used, upload_done ? us_upload_wall/upload_done : 0.0, upload_done ? us_upload_gpu/upload_done : 0.0,
+                 t_cpu_expert_us, budget, margin);
+         fprintf(stderr, "tosh_dmoe: per graph: promotions %.2f, evictions %.2f, MiB promoted %.2f | re-promotions %.1f%% | failed %llu, dropped obs %llu, hits on a changed slot %llu\n",
+                 promotions/g, evictions/g, bytes_promoted/1048576.0/g, promotions ? 100.0*repromotions/promotions : 0.0,
+                 (unsigned long long) failed, (unsigned long long) dropped.load(), (unsigned long long) stale_hits);
          fprintf(stderr, "tosh_dmoe: slots %d of %d resident | evicted lifetime mean %.1f median %u graphs, uses per evicted residency %.1f\n",
                  used, (int) slots.size(), lifetime_n ? (double) lifetime_sum/lifetime_n : 0.0,
                  lifetimes.empty() ? 0u : lifetimes[lifetimes.size()/2], lifetime_n ? (double) uses_sum/lifetime_n : 0.0);
@@ -13,11 +18,21 @@ index 320561905..920572b23 100644
          fprintf(stderr, "tosh_dmoe: uses per promotion (evicted + live) %.1f\n",
                  promotions ? (double) (uses_sum + live_uses)/promotions : 0.0);
          fprintf(stderr, "tosh_dmoe: policy thread per graph %.1f us (drain %.1f, decide %.1f incl. upload calls %.1f, publish %.1f), %llu publishes, %llu cycles\n",
+                 us_cycle/g, us_drain/g, us_decide/g, us_upload_call/g, us_publish/g, (unsigned long long) publishes, (unsigned long long) n_cycles);
+         if (const char * p = getenv("TOSH_DMOE_TRACE_PROMO")) {
+             if (FILE * f = fopen(p, "w")) {
+                 for (size_t t = 1; t < promo_by_tick.size() && t <= graphs; ++t) fprintf(f, "%zu %u\n", t, promo_by_tick[t]);
+                 fclose(f);
 diff --git a/tosh-moe/tosh-hostcache.cpp b/tosh-moe/tosh-hostcache.cpp
-index c7e995d66..b7e64a355 100644
+index c7e995d..b7e64a3 100644
 --- a/tosh-moe/tosh-hostcache.cpp
 +++ b/tosh-moe/tosh-hostcache.cpp
-@@ -754,8 +754,8 @@ bool tosh_hostcache_warmup_done(void) {
+@@ -749,18 +749,18 @@ uint64_t tosh_hostcache_cold_reads(void) {
+ 
+ bool tosh_hostcache_warmup_done(void) {
+     if (g.base == nullptr || g.ready) return g.error.empty();
+     // never ready with an unlocked cache
+     if (g.locker.joinable()) g.locker.join();
      std::lock_guard<std::mutex> lock(g.m);
      g.ready = true;
      g.t_ready = now_us();
@@ -28,3 +43,8 @@ index c7e995d66..b7e64a355 100644
      if (!g.error.empty()) fprintf(stderr, "tosh_hostcache: %s\n", g.error.c_str());
      fprintf(stderr, "tosh_hostcache: ready %.0f ms after the cache started | resident %.0f MiB (%.1f%% of %.0f locked) | warm-up read %llu experts (%.0f MiB), hits %llu | fill %llu experts (%.0f MiB) so far\n",
              (g.t_ready - g.t_start)/1000, g.resident_bytes/1048576.0, 100.0*g.resident_bytes/std::max<size_t>(1, g.locked_bytes), g.locked_bytes/1048576.0,
+             (unsigned long long) g.loaded_n[1], g.loaded_bytes[1]/1048576.0, (unsigned long long) hits,
+             (unsigned long long) g.fill_n, g.fill_bytes/1048576.0);
+     return g.error.empty();
+ }
+ 

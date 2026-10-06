@@ -1,8 +1,8 @@
 diff --git a/ggml/src/ggml-backend-meta.cpp b/ggml/src/ggml-backend-meta.cpp
-index d431742ae..76cbdfbde 100644
+index 4d92d95..bba99c4 100644
 --- a/ggml/src/ggml-backend-meta.cpp
 +++ b/ggml/src/ggml-backend-meta.cpp
-@@ -1704,16 +1704,54 @@ static void ggml_backend_meta_buffer_get_tensor(ggml_backend_buffer_t buffer, co
+@@ -1708,16 +1708,54 @@ static void ggml_backend_meta_buffer_get_tensor(ggml_backend_buffer_t buffer, co
              ggml_backend_tensor_get(simple_tensor, data, offset, size);
          } break;
          default: {
@@ -57,7 +57,7 @@ index d431742ae..76cbdfbde 100644
  }
  
  static void ggml_backend_meta_buffer_reset(ggml_backend_buffer_t buffer) {
-@@ -1728,17 +1766,17 @@ static const ggml_backend_buffer_i ggml_backend_meta_buffer_iface = {
+@@ -1732,17 +1770,17 @@ static const ggml_backend_buffer_i ggml_backend_meta_buffer_iface = {
      /* .free_buffer     = */ ggml_backend_meta_buffer_free_buffer,
      /* .get_base        = */ ggml_backend_meta_buffer_get_base,
      /* .init_tensor     = */ ggml_backend_meta_buffer_init_tensor,
@@ -76,7 +76,7 @@ index d431742ae..76cbdfbde 100644
      return buf != nullptr && buf->iface.free_buffer == ggml_backend_meta_buffer_iface.free_buffer;
  }
  
-@@ -2544,33 +2582,101 @@ static void ggml_backend_meta_event_record(ggml_backend_t backend, ggml_backend_
+@@ -2551,33 +2589,101 @@ static void ggml_backend_meta_event_record(ggml_backend_t backend, ggml_backend_
  static void ggml_backend_meta_event_wait(ggml_backend_t backend, ggml_backend_event_t event) {
      auto * backend_ctx = (ggml_backend_meta_context *) backend->context;
      auto * ev_ctx = (ggml_backend_meta_event_context *) event->context;

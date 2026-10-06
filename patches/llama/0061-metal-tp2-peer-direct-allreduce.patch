@@ -1,5 +1,5 @@
 diff --git a/ggml/src/ggml-metal/ggml-metal-context.h b/ggml/src/ggml-metal/ggml-metal-context.h
-index 8ab795f0d..fef606412 100644
+index 8ab795f..fef6064 100644
 --- a/ggml/src/ggml-metal/ggml-metal-context.h
 +++ b/ggml/src/ggml-metal/ggml-metal-context.h
 @@ -36,19 +36,21 @@ bool ggml_metal_cpy_tensor_async_ex(ggml_metal_t ctx_src, ggml_metal_t ctx_dst,
@@ -27,7 +27,7 @@ index 8ab795f0d..fef606412 100644
  
  ggml_metal_event_t ggml_metal_get_ev_cpy(ggml_metal_t ctx);
 diff --git a/ggml/src/ggml-metal/ggml-metal-context.m b/ggml/src/ggml-metal/ggml-metal-context.m
-index 38dff9f84..182caa063 100644
+index 847f2db..a6a20cc 100644
 --- a/ggml/src/ggml-metal/ggml-metal-context.m
 +++ b/ggml/src/ggml-metal/ggml-metal-context.m
 @@ -271,21 +271,26 @@ struct ggml_metal {
@@ -308,10 +308,10 @@ index 38dff9f84..182caa063 100644
      const size_t size = ggml_nbytes(t_self);
      if (!ggml_metal_xdev_link_reserve(ctx_self, ctx_peer, link_out, size) ||
 diff --git a/ggml/src/ggml-metal/ggml-metal.cpp b/ggml/src/ggml-metal/ggml-metal.cpp
-index dd7c11237..b4f32af98 100644
+index 9423db2..a31f895 100644
 --- a/ggml/src/ggml-metal/ggml-metal.cpp
 +++ b/ggml/src/ggml-metal/ggml-metal.cpp
-@@ -553,21 +553,22 @@ static void ggml_backend_metal_read_batch_begin(ggml_backend_t backend) {
+@@ -559,21 +559,22 @@ static void ggml_backend_metal_read_batch_begin(ggml_backend_t backend) {
  }
  
  static void ggml_backend_metal_read_batch_end(ggml_backend_t backend) {
@@ -336,7 +336,7 @@ index dd7c11237..b4f32af98 100644
      }
  
      if (!ggml_backend_buffer_is_metal(src->buffer) || !ggml_backend_buffer_is_metal(dst->buffer)) {
-@@ -1209,19 +1210,25 @@ static bool ggml_backend_metal_comm_allreduce_tensor(void * comm_ctx_v, ggml_ten
+@@ -1215,19 +1216,25 @@ static bool ggml_backend_metal_comm_allreduce_tensor(void * comm_ctx_v, ggml_ten
      for (size_t offset = offset_max; offset >= 1; offset /= 2) {
          if (fused && prefer_events) {
              static uint64_t seq_round = 0;

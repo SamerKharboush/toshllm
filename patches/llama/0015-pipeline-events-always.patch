@@ -1,8 +1,8 @@
 diff --git a/src/llama-context.cpp b/src/llama-context.cpp
-index 3698257d7..b9881d819 100644
+index 72b11a9..42fc37b 100644
 --- a/src/llama-context.cpp
 +++ b/src/llama-context.cpp
-@@ -421,21 +421,22 @@ llama_context::llama_context(
+@@ -424,21 +424,22 @@ llama_context::llama_context(
              backend_ptrs.push_back(backend.get());
              backend_buf_exp_size.push_back(0);
          }

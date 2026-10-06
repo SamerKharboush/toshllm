@@ -1,8 +1,8 @@
 diff --git a/ggml/src/ggml-metal/ggml-metal-device.cpp b/ggml/src/ggml-metal/ggml-metal-device.cpp
-index 6088ac849..f619a1f27 100644
+index f748f6e..47cded0 100644
 --- a/ggml/src/ggml-metal/ggml-metal-device.cpp
 +++ b/ggml/src/ggml-metal/ggml-metal-device.cpp
-@@ -253,17 +253,23 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_repeat(ggml_meta
+@@ -254,17 +254,23 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_repeat(ggml_meta
  
      return res;
  }
@@ -28,10 +28,10 @@ index 6088ac849..f619a1f27 100644
  
      return res;
 diff --git a/ggml/src/ggml-metal/kernels/quantize.metal b/ggml/src/ggml-metal/kernels/quantize.metal
-index cfb3945ef..141be8744 100644
+index 3526691..b427c99 100644
 --- a/ggml/src/ggml-metal/kernels/quantize.metal
 +++ b/ggml/src/ggml-metal/kernels/quantize.metal
-@@ -297,16 +297,62 @@ kernel void kernel_concat_q(
+@@ -307,16 +307,62 @@ kernel void kernel_concat_q(
  typedef decltype(kernel_concat_q<block_q4_0>) kernel_concat_q_t;
  
  template [[host_name("kernel_concat_q4_0")]] kernel kernel_concat_q_t kernel_concat_q<block_q4_0>;

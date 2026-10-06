@@ -1,8 +1,11 @@
 diff --git a/common/tosh-plan.cpp b/common/tosh-plan.cpp
-index 1b3d66721..eda9b9d00 100644
+index 1b3d667..eda9b9d 100644
 --- a/common/tosh-plan.cpp
 +++ b/common/tosh-plan.cpp
-@@ -18,10 +18,12 @@
+@@ -15,28 +15,33 @@
+ #include <cmath>
+ #include <cstdio>
+ #include <cstdlib>
  #include <cstring>
  #include <list>
  #include <regex>
@@ -15,7 +18,8 @@ index 1b3d66721..eda9b9d00 100644
  #endif
  
  static constexpr double MiB = 1048576.0;
-@@ -30,10 +32,13 @@ static constexpr double MiB = 1048576.0;
+ 
+ // safety reserve: a share of the card, bounded on small and large cards
  static constexpr double RESERVE_FRACTION = 0.08;
  static constexpr double RESERVE_MIN_MIB  = 768.0;
  static constexpr double RESERVE_MAX_MIB  = 1536.0;
@@ -29,7 +33,13 @@ index 1b3d66721..eda9b9d00 100644
  
  struct moe_info {
      bool   moe       = false;
-@@ -50,10 +55,19 @@ struct moe_info {
+     int    n_layer   = 0;
+     int    n_moe     = 0;       // layers with an expert bank
+     int    n_expert  = 0;
+@@ -47,16 +52,25 @@ struct moe_info {
+     double embd_mib  = 0;       // token embeddings, kept in host memory
+ };
+ 
  struct host_mem {
      double ram_mib        = 0;
      double wired_mib      = 0;
@@ -49,7 +59,13 @@ index 1b3d66721..eda9b9d00 100644
  struct probe {
      bool   ok = false;
      double model = 0, context = 0, compute = 0;   // GPU, MiB
-@@ -104,10 +118,15 @@ moe_info read_moe_info(const char * path) {
+     double host_model = 0, host_other = 0;
+ };
+ 
+@@ -101,36 +115,75 @@ moe_info read_moe_info(const char * path) {
+         if (il >= 0 && il < (int) has.size()) has[il] = true;
+     }
+     mi.n_moe = (int) std::count(has.begin(), has.end(), true);
      mi.moe = mi.n_expert > 0 && mi.n_used > 0 && mi.n_moe > 0;
      gguf_free(g);
      return mi;
@@ -65,7 +81,10 @@ index 1b3d66721..eda9b9d00 100644
  #ifdef __APPLE__
      uint64_t mem = 0; size_t len = sizeof(mem);
      if (sysctlbyname("hw.memsize", &mem, &len, nullptr, 0) == 0) h.ram_mib = mem/MiB;
-@@ -118,16 +137,50 @@ host_mem read_host_info() {
+     uint64_t lim = 0; len = sizeof(lim);
+     if (sysctlbyname("vm.user_wire_limit", &lim, &len, nullptr, 0) == 0) h.wire_limit_mib = lim/MiB;
+     vm_statistics64_data_t vs;
+     mach_msg_type_number_t cnt = HOST_VM_INFO64_COUNT;
      if (host_statistics64(mach_host_self(), HOST_VM_INFO64, (host_info64_t) &vs, &cnt) == KERN_SUCCESS) {
          h.wired_mib = (double) vs.wire_count*vm_page_size/MiB;
          h.available_mib = (double) (vs.free_count + vs.inactive_count + vs.speculative_count + vs.purgeable_count)*vm_page_size/MiB;
@@ -117,7 +136,13 @@ index 1b3d66721..eda9b9d00 100644
  }
  
  // keeps override patterns alive for the lifetime of the params that point at them
-@@ -218,10 +271,11 @@ const char * tosh_plan_state_name(tosh_plan_state s) {
+ std::list<std::string> & pattern_store() {
+     static std::list<std::string> s;
+     return s;
+@@ -215,16 +268,17 @@ const char * kv_name(ggml_type t) { return ggml_type_name(t); }
+ const char * tosh_plan_state_name(tosh_plan_state s) {
+     switch (s) {
+         case TOSH_PLAN_NOT_PLANNED:            return "NOT_PLANNED";
          case TOSH_PLAN_FULL_GPU_OPTIMAL:       return "FULL_GPU_OPTIMAL";
          case TOSH_PLAN_DMOE_CONTEXT_OPTIMAL:   return "DMOE_CONTEXT_OPTIMAL";
          case TOSH_PLAN_DMOE_CAPACITY_REQUIRED: return "DMOE_CAPACITY_REQUIRED";
@@ -129,7 +154,13 @@ index 1b3d66721..eda9b9d00 100644
  }
  
  static std::string jstr(const std::string & s) {
-@@ -242,10 +296,21 @@ std::string tosh_plan_json(const tosh_plan & p) {
+     std::string o = "\"";
+     for (char c : s) o += (c == '"' || c == '\\') ? '\'' : c;
+     return o + "\"";
+@@ -239,16 +293,27 @@ std::string tosh_plan_json(const tosh_plan & p) {
+     o += ", \"kv\": " + jstr(kv_name(p.kv));
+     o += string_format(", \"n_ctx\": %d, \"ubatch\": %d, \"ncmoe\": %d", p.n_ctx, p.ubatch, p.ncmoe);
+     o += string_format(", \"reserve_mib\": %.0f, \"arena_mib\": %.0f, \"min_arena_mib\": %.0f", p.reserve_mib, p.arena_mib, p.min_arena_mib);
      o += string_format(", \"projected_private_mib\": %.0f, \"projected_free_mib\": %.0f", p.private_mib, p.free_mib);
      o += string_format(", \"vram_total_mib\": %.0f, \"vram_free_mib\": %.0f", p.vram_total_mib, p.vram_free_mib);
      o += string_format(", \"host_required_mib\": %.0f, \"host_ram_mib\": %.0f, \"host_available_mib\": %.0f, \"host_reserve_mib\": %.0f, \"bank_mib\": %.0f",
@@ -151,7 +182,13 @@ index 1b3d66721..eda9b9d00 100644
          const auto & c = p.candidates[i];
          o += i ? ", {" : "{";
          o += "\"name\": " + jstr(c.name) + ", \"mode\": " + jstr(c.mode) + ", \"kv\": " + jstr(kv_name(c.kv)) + ", \"valid\": " + (c.valid ? "true" : "false") + ", \"reason\": " + jstr(c.reason);
-@@ -261,10 +326,20 @@ static void plan_log(const tosh_plan & p) {
+         o += string_format(", \"ubatch\": %d, \"ncmoe\": %d, \"private_mib\": %.0f, \"free_mib\": %.0f, \"arena_mib\": %.0f, \"kv_mib\": %.0f, \"compute_mib\": %.0f}",
+                            c.ubatch, c.ncmoe, c.private_mib, c.free_mib, c.arena_mib, c.kv_mib, c.compute_mib);
+     }
+@@ -258,16 +323,26 @@ std::string tosh_plan_json(const tosh_plan & p) {
+ static void plan_log(const tosh_plan & p) {
+     LOG_INF("Tosh auto memory plan\n");
+     LOG_INF("  requested context %d, VRAM %.1f GiB (%.1f free), reserve %.1f GiB\n",
              p.n_ctx, p.vram_total_mib/1024, p.vram_free_mib/1024, p.reserve_mib/1024);
      for (const auto & c : p.candidates) {
          LOG_INF("  %-22s ub %4d  private %6.0f MiB  free %6.0f MiB  arena %6.0f MiB  %s: %s\n", c.name.c_str(), c.ubatch,
@@ -172,7 +209,13 @@ index 1b3d66721..eda9b9d00 100644
              p.free_mib, p.host_required_mib/1024, p.fallback.empty() ? "" : "; ", p.fallback.c_str());
  }
  
-@@ -374,10 +449,50 @@ bool tosh_plan_apply(common_params & params, tosh_plan * out) {
+ static void add_override(common_params & params, const char * pattern) {
+     auto & ov = params.tensor_buft_overrides;
+     for (auto & o : ov) {
+@@ -371,16 +446,56 @@ bool tosh_plan_apply(common_params & params, tosh_plan * out) {
+     } else if (hi.available_mib > 0 && host_dmoe + HOST_MARGIN_MIB > hi.available_mib) {
+         dmoe_block = string_format("host RAM: %.1f GiB needed, %.1f GiB available now", host_dmoe/1024, hi.available_mib/1024);
+     } else if (hi.wire_limit_mib > 0 && mi.bank_mib > hi.wire_limit_mib - hi.wired_mib) {
          dmoe_block = string_format("DMOE_HOST_BANK_NOT_LOCKABLE: %.1f GiB bank > %.1f GiB lockable",
                                     mi.bank_mib/1024, (hi.wire_limit_mib - hi.wired_mib)/1024);
      }
@@ -223,7 +266,13 @@ index 1b3d66721..eda9b9d00 100644
      const double weights_full = full[0].second.ok ? full[0].second.model : mi.bank_mib;
      const bool weights_fit = weights_full + 512.0 <= p.vram_free_mib;
  
-@@ -403,13 +518,21 @@ bool tosh_plan_apply(common_params & params, tosh_plan * out) {
+     auto evaluate = [&](double R) {
+         p.candidates.clear();
+         p.reserve_mib = R;
+@@ -400,19 +515,27 @@ bool tosh_plan_apply(common_params & params, tosh_plan * out) {
+                 const probe & pr = dm[k][u];
+                 tosh_plan_candidate c;
+                 c.name = std::string("dmoe+") + kv_name(kvs[k]); c.mode = "dmoe"; c.kv = kvs[k]; c.ubatch = ubs[u];
                  const double base = pr.model + pr.context + pr.compute;
                  c.arena_mib   = std::max(0.0, p.vram_free_mib - base - slots - overhead - R);
                  c.private_mib = base + slots + overhead + c.arena_mib;
@@ -248,7 +297,13 @@ index 1b3d66721..eda9b9d00 100644
              }
          }
          // legacy: the fewest layers of experts on the host that leave the reserve
-@@ -425,11 +548,12 @@ bool tosh_plan_apply(common_params & params, tosh_plan * out) {
+         for (auto & [kv, pr] : full) {
+             tosh_plan_candidate c;
+             c.name = std::string("legacy+") + kv_name(kv); c.mode = "legacy_offload"; c.kv = kv; c.ubatch = ub_full;
+@@ -422,17 +545,18 @@ bool tosh_plan_apply(common_params & params, tosh_plan * out) {
+                 const double priv = full_priv - n*per_layer + slots;
+                 if (p.vram_free_mib - priv >= R) {
+                     c.ncmoe = n; c.private_mib = priv; c.free_mib = p.vram_free_mib - priv; c.valid = true;
                      break;
                  }
              }
@@ -262,7 +317,13 @@ index 1b3d66721..eda9b9d00 100644
                  string_format("%d layers of experts on the host", c.ncmoe);
              c.valid = c.valid && host_ok;
              p.candidates.push_back(c);
-@@ -502,20 +626,36 @@ bool tosh_plan_apply(common_params & params, tosh_plan * out) {
+         }
+     };
+ 
+@@ -499,26 +623,42 @@ bool tosh_plan_apply(common_params & params, tosh_plan * out) {
+         p.reason = "no configuration fits the requested context with the minimum reserve";
+     } else {
+         p.mode = sel->mode; p.kv = sel->kv; p.ubatch = sel->ubatch; p.ncmoe = sel->ncmoe;
          p.arena_mib = sel->arena_mib; p.private_mib = sel->private_mib; p.free_mib = sel->free_mib;
          if (sel->mode == "full_gpu") {
              p.state = TOSH_PLAN_FULL_GPU_OPTIMAL;
@@ -299,7 +360,13 @@ index 1b3d66721..eda9b9d00 100644
      if (const char * f = getenv("TOSH_AUTO_PLAN_FILE")) {
          if (FILE * fp = fopen(f, "w")) {
              fprintf(fp, "%s\n", tosh_plan_json(p).c_str());
-@@ -548,13 +688,19 @@ bool tosh_plan_apply(common_params & params, tosh_plan * out) {
+             fclose(fp);
+         }
+         if (getenv("TOSH_DMOE_STATUS_FILE") == nullptr) {
+@@ -545,19 +685,25 @@ bool tosh_plan_apply(common_params & params, tosh_plan * out) {
+     params.cache_type_k = p.kv;
+     params.cache_type_v = p.kv;
+     params.n_ctx = p.n_ctx;
      params.n_ubatch = p.ubatch;
      params.n_batch  = std::max(params.n_batch, p.ubatch);
      if (p.mode != "full_gpu") {
@@ -320,11 +387,17 @@ index 1b3d66721..eda9b9d00 100644
          setenv("TOSH_DMOE_MIN_ARENA_MIB", string_format("%.0f", p.min_arena_mib).c_str(), 1);
          setenv("TOSH_DMOE_RARE_ROWS", "auto", 0);
          setenv("TOSH_DMOE_RARE_TAIL", "0", 0);
+         setenv("GGML_SCHED_PREFETCH_EXPERTS", "1", 0);
+         setenv("GGML_CPU_NO_REPACK", "1", 0);
+ #ifdef TOSH_ENABLE_DYNAMIC_MOE
 diff --git a/common/tosh-plan.h b/common/tosh-plan.h
-index 6175317d8..fae10a1cc 100644
+index 6175317..fae10a1 100644
 --- a/common/tosh-plan.h
 +++ b/common/tosh-plan.h
-@@ -16,10 +16,11 @@ enum tosh_plan_state {
+@@ -13,16 +13,17 @@ struct common_params;
+ 
+ enum tosh_plan_state {
+     TOSH_PLAN_NOT_PLANNED,          // dense model, or planning off
      TOSH_PLAN_FULL_GPU_OPTIMAL,     // weights and the requested workload fit with the reserve
      TOSH_PLAN_DMOE_CONTEXT_OPTIMAL, // the weights fit, the requested context does not
      TOSH_PLAN_DMOE_CAPACITY_REQUIRED,
@@ -336,7 +409,13 @@ index 6175317d8..fae10a1cc 100644
  struct tosh_plan_candidate {
      std::string name;
      std::string mode;               // full_gpu, dmoe, legacy_offload
-@@ -56,10 +57,32 @@ struct tosh_plan {
+     ggml_type   kv      = GGML_TYPE_F16;
+     int         ubatch  = 512;
+     int         ncmoe   = 0;
+@@ -53,16 +54,38 @@ struct tosh_plan {
+     double      vram_free_mib      = 0;
+     double      host_required_mib  = 0;
+     double      host_ram_mib       = 0;
      double      host_available_mib = 0;
      double      host_reserve_mib   = 0;
      double      bank_mib           = 0;
@@ -369,3 +448,6 @@ index 6175317d8..fae10a1cc 100644
  
  const char * tosh_plan_state_name(tosh_plan_state s);
  std::string  tosh_plan_json(const tosh_plan & plan);
+ 
+ // Plans and applies the result to params. Returns false when planning is off or not needed.
+ bool tosh_plan_apply(common_params & params, tosh_plan * out = nullptr);

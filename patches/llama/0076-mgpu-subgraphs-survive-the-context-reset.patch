@@ -1,8 +1,8 @@
 diff --git a/ggml/src/ggml-backend-meta.cpp b/ggml/src/ggml-backend-meta.cpp
-index 1fb695fc4..ce7e15d52 100644
+index 3b9f8c3..f7832bf 100644
 --- a/ggml/src/ggml-backend-meta.cpp
 +++ b/ggml/src/ggml-backend-meta.cpp
-@@ -2609,18 +2609,19 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend,
+@@ -2614,18 +2614,19 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend,
              const ggml_init_params params = {
                  /*.mem_size   =*/ n_backends * (mem_per_device_graphs_main + mem_per_device_graphs_aux + mem_per_device_nodes_aux),
                  /*.mem_buffer =*/ nullptr,

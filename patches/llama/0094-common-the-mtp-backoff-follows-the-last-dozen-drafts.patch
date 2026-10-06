@@ -1,8 +1,8 @@
 diff --git a/common/speculative.cpp b/common/speculative.cpp
-index c14bf7192..4f5578ba5 100644
+index 615d196..db101cb 100644
 --- a/common/speculative.cpp
 +++ b/common/speculative.cpp
-@@ -1972,17 +1972,19 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
+@@ -2004,17 +2004,19 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
      }
  
      void accept(llama_seq_id seq_id, uint16_t n_accepted, bool /*is_other*/) override {

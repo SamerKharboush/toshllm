@@ -1,7 +1,11 @@
 diff --git a/common/chat-auto-parser-generator.cpp b/common/chat-auto-parser-generator.cpp
+index b78789d..72a8a3d 100644
 --- a/common/chat-auto-parser-generator.cpp
 +++ b/common/chat-auto-parser-generator.cpp
-@@ -232,11 +232,13 @@ common_peg_parser analyze_tools::build_tool_parser_json_native(parser_build_cont
+@@ -229,17 +229,19 @@ common_peg_parser analyze_tools::build_tool_parser_json_native(parser_build_cont
+ 
+     std::string tool_start = "{";
+     if (!format.section_start.empty()) {
          tool_start = format.section_start;
      } else if (!format.per_call_start.empty()) {
          tool_start = format.per_call_start;
@@ -16,7 +20,13 @@ diff --git a/common/chat-auto-parser-generator.cpp b/common/chat-auto-parser-gen
  common_peg_parser analyze_tools::build_func_parser(common_chat_peg_builder & p, const std::string & name,
                                                      const common_peg_parser & call_id_section, bool have_call_id,
                                                      const common_peg_parser & args,
-@@ -351,11 +353,13 @@ common_peg_parser analyze_tools::build_tool_parser_tag_json(parser_build_context
+                                                     std::optional<common_peg_parser> atomic_peek) const {
+     auto              open           = p.tool_open(function.name_prefix + p.tool_name(p.literal(name)) + function.name_suffix);
+     bool              matched_atomic = false;
+@@ -348,17 +350,19 @@ common_peg_parser analyze_tools::build_tool_parser_tag_json(parser_build_context
+     }
+ 
+     if (!require_calls) {
          tool_calls = p.optional(tool_calls);
      }
  
@@ -31,7 +41,13 @@ diff --git a/common/chat-auto-parser-generator.cpp b/common/chat-auto-parser-gen
  common_peg_parser analyze_tools::build_tool_parser_tag_tagged(parser_build_context & ctx) const {
      auto &       p           = ctx.p;
      const auto & inputs      = ctx.inputs;
-@@ -470,9 +474,11 @@ common_peg_parser analyze_tools::build_tool_parser_tag_tagged(parser_build_conte
+ 
+     auto until_suffix = p.rule("until-suffix", p.until(arguments.value_suffix));
+ 
+@@ -467,12 +471,14 @@ common_peg_parser analyze_tools::build_tool_parser_tag_tagged(parser_build_conte
+     }
+ 
+     if (!require_tools) {
          tool_calls = p.optional(tool_calls);
      }
  
@@ -45,9 +61,13 @@ diff --git a/common/chat-auto-parser-generator.cpp b/common/chat-auto-parser-gen
  
  }  // namespace autoparser
 diff --git a/common/chat-peg-parser.cpp b/common/chat-peg-parser.cpp
+index ee9a05f..87553dc 100644
 --- a/common/chat-peg-parser.cpp
 +++ b/common/chat-peg-parser.cpp
-@@ -874,10 +874,76 @@ common_peg_parser common_chat_peg_builder::prefix(const std::string & s, const s
+@@ -872,16 +872,82 @@ common_peg_parser common_chat_peg_builder::prefix(const std::string & s, const s
+         return eps();
+     }
+     if (delimiter.empty()) {
          return literal(s);
      }
      return literal(s.substr(0, s.find(delimiter)));
@@ -124,10 +144,17 @@ diff --git a/common/chat-peg-parser.cpp b/common/chat-peg-parser.cpp
      size_t end_of_prefix_space = tag.size();
      size_t start_of_suffix_space = tag.size();
      for (size_t i = 0; i < tag.size(); i++) {
+         if (!std::isspace(tag[i])) {
+             end_of_prefix_space = i;
+             break;
 diff --git a/common/chat-peg-parser.h b/common/chat-peg-parser.h
+index 114fa04..b75417d 100644
 --- a/common/chat-peg-parser.h
 +++ b/common/chat-peg-parser.h
-@@ -55,10 +55,12 @@ class common_chat_peg_minimax_m3_mapper : public common_chat_peg_mapper {
+@@ -52,16 +52,18 @@ class common_chat_peg_minimax_m3_mapper : public common_chat_peg_mapper {
+     void visit(const common_peg_ast_arena & arena, common_peg_ast_id id);
+ };
+ 
  struct content_structure;
  struct tool_call_structure;
  
@@ -140,7 +167,13 @@ diff --git a/common/chat-peg-parser.h b/common/chat-peg-parser.h
      // Tag constants (from former common_chat_peg_base_builder)
      static constexpr const char * REASONING_BLOCK = "reasoning-block";
      static constexpr const char * REASONING       = "reasoning";
-@@ -114,10 +116,17 @@ class common_chat_peg_builder : public common_peg_parser_builder {
+     static constexpr const char * CONTENT         = "content";
+ 
+     // Tag constants
+@@ -111,16 +113,23 @@ class common_chat_peg_builder : public common_peg_parser_builder {
+     common_peg_parser permute(const std::string & rule_prefix, const std::vector<common_peg_parser> & parsers);
+ 
+     // Return a parser that parses the prefix of a string, up to a given delimiter.
      common_peg_parser prefix(const std::string & s, const std::string & delimiter = {});
  
      // Return a parser that parses all elements of tag, but leading and trailing spaces are optional
@@ -158,10 +191,17 @@ diff --git a/common/chat-peg-parser.h b/common/chat-peg-parser.h
      // name_key/args_key: JSON key names for function name and arguments
      //   Empty or "name"/"arguments" will accept both common variations
      //   Supports dot notation for nested objects (e.g., "function.name")
+     // array_wrapped: if true, tool calls are wrapped in JSON array [...]
+     // function_is_key: if true, function name is the JSON key (e.g., {"func_name": {...}})
+     // call_id_key: JSON key for string call ID (e.g., "id")
 diff --git a/common/parsers/deepseek.cpp b/common/parsers/deepseek.cpp
+index 9ca4bb3..bf9d475 100644
 --- a/common/parsers/deepseek.cpp
 +++ b/common/parsers/deepseek.cpp
-@@ -250,10 +250,11 @@ common_chat_params common_chat_params_init_deepseek_v3_2(const common_chat_templ
+@@ -247,16 +247,17 @@ common_chat_params common_chat_params_init_deepseek_v3_2(const common_chat_templ
+ 
+         if (!has_tool_calls) {
+             return generation_prompt + reasoning + p.content(p.rest()) + end;
          }
  
          auto content_before_tools = p.negate(p.literal(THINK_START)) +
@@ -173,10 +213,17 @@ diff --git a/common/parsers/deepseek.cpp b/common/parsers/deepseek.cpp
      });
  
      data.parser = parser.save();
+ 
+     if (include_grammar) {
+         data.grammar_lazy = has_tools && !require_tools;
 diff --git a/common/parsers/gigachat-v3.cpp b/common/parsers/gigachat-v3.cpp
+index 48abcb3..182ad45 100644
 --- a/common/parsers/gigachat-v3.cpp
 +++ b/common/parsers/gigachat-v3.cpp
-@@ -47,11 +47,11 @@ common_chat_params common_chat_params_init_gigachat_v3(
+@@ -44,17 +44,17 @@ common_chat_params common_chat_params_init_gigachat_v3(
+             }
+ 
+             // Define the tool call structure
              auto min_calls = inputs.tool_choice == COMMON_CHAT_TOOL_CHOICE_REQUIRED ? 1 : 0;
              auto max_calls = 1; // parallel toolcalls are not supported
              auto tool_call = p.rule("tool-call", p.literal(tool_call_start_prefix) + tool_choice);
@@ -189,10 +236,17 @@ diff --git a/common/parsers/gigachat-v3.cpp b/common/parsers/gigachat-v3.cpp
              include_grammar = false;
              ret = p.content(p.rest());
          }
+ 
+         return p.literal("assistant<|role_sep|>\n") + ret;
+     });
 diff --git a/common/parsers/kimi-k2.cpp b/common/parsers/kimi-k2.cpp
+index 5ee9121..3e6ffa1 100644
 --- a/common/parsers/kimi-k2.cpp
 +++ b/common/parsers/kimi-k2.cpp
-@@ -104,11 +104,13 @@ common_chat_params common_chat_params_init_kimi_k2(const common_chat_template &
+@@ -101,17 +101,19 @@ common_chat_params common_chat_params_init_kimi_k2(const common_chat_template &
+         auto max_calls  = inputs.parallel_tool_calls ? -1 : 1;
+         // Use trigger_rule so grammar generator knows where to start generating rules
+         auto tool_calls = p.rule("tool-calls",
              p.optional(p.literal(SECTION_BEGIN)) +
              p.trigger_rule("tool-call", p.repeat(CALL_BEGIN + tool_choice, min_calls, max_calls) +
                  p.optional(p.literal(SECTION_END)))
@@ -207,10 +261,17 @@ diff --git a/common/parsers/kimi-k2.cpp b/common/parsers/kimi-k2.cpp
      });
  
      data.parser = parser.save();
+ 
+     if (include_grammar) {
+         data.grammar_lazy = inputs.tool_choice == COMMON_CHAT_TOOL_CHOICE_AUTO;
 diff --git a/common/parsers/lfm2.cpp b/common/parsers/lfm2.cpp
+index 2807885..7ee73d4 100644
 --- a/common/parsers/lfm2.cpp
 +++ b/common/parsers/lfm2.cpp
-@@ -86,11 +86,11 @@ common_chat_params common_chat_params_init_lfm2(const common_chat_template &
+@@ -83,17 +83,17 @@ common_chat_params common_chat_params_init_lfm2(const common_chat_template &
+         auto tool_calls = p.rule("tool-calls",
+             p.trigger_rule("tool-call",
+                 p.literal(TOOL_CALL_START) +
                  p.python_style_tool_calls(inputs.tools, inputs.parallel_tool_calls, /* allow_json_literals = */ true) +
                  p.literal(TOOL_CALL_END)
              )
@@ -223,10 +284,17 @@ diff --git a/common/parsers/lfm2.cpp b/common/parsers/lfm2.cpp
      });
  
      data.parser = parser.save();
+ 
+     if (include_grammar) {
+         data.grammar_lazy = !(has_response_format || (has_tools && inputs.tool_choice == COMMON_CHAT_TOOL_CHOICE_REQUIRED));
 diff --git a/common/parsers/minicpm5.cpp b/common/parsers/minicpm5.cpp
+index 4d18d3d..fb6659f 100644
 --- a/common/parsers/minicpm5.cpp
 +++ b/common/parsers/minicpm5.cpp
-@@ -103,11 +103,11 @@ common_chat_params common_chat_params_init_minicpm5(const common_chat_template &
+@@ -100,17 +100,17 @@ common_chat_params common_chat_params_init_minicpm5(const common_chat_template &
+                     << p.tool_close(p.literal("</function>")));
+ 
+                 tool_choice |= p.rule("tool-" + name, tool_parser);
              });
  
              auto max_calls  = inputs.parallel_tool_calls ? -1 : 1;
@@ -239,10 +307,17 @@ diff --git a/common/parsers/minicpm5.cpp b/common/parsers/minicpm5.cpp
          }
  
          return generation_prompt + reasoning + p.content(p.rest()) + p.end();
+     });
+ 
+     data.parser = parser.save();
 diff --git a/common/parsers/minimax-m3.cpp b/common/parsers/minimax-m3.cpp
+index 7ea9bfe..0f41504 100644
 --- a/common/parsers/minimax-m3.cpp
 +++ b/common/parsers/minimax-m3.cpp
-@@ -207,10 +207,11 @@ common_chat_params common_chat_params_init_minimax_m3(const common_chat_template
+@@ -204,16 +204,17 @@ common_chat_params common_chat_params_init_minimax_m3(const common_chat_template
+                 p.literal(FC_START) + p.space() + tool_choice + p.space() + p.literal(FC_END));
+         }
+ 
          if (!require_tools) {
              tool_calls = p.optional(tool_calls);
          }
@@ -254,10 +329,17 @@ diff --git a/common/parsers/minimax-m3.cpp b/common/parsers/minimax-m3.cpp
  
      data.parser = parser.save();
  
+     if (include_grammar) {
+         data.grammar_lazy = !(has_response_format || (has_tools && inputs.tool_choice == COMMON_CHAT_TOOL_CHOICE_REQUIRED));
+         data.grammar      = build_grammar([&](const common_grammar_builder & builder) {
 diff --git a/common/parsers/ministral3.cpp b/common/parsers/ministral3.cpp
+index 8bcd204..27a9237 100644
 --- a/common/parsers/ministral3.cpp
 +++ b/common/parsers/ministral3.cpp
-@@ -98,11 +98,12 @@ common_chat_params common_chat_params_init_ministral_3(const common_chat_templat
+@@ -95,17 +95,18 @@ common_chat_params common_chat_params_init_ministral_3(const common_chat_templat
+                     p.rule("tool-" + name, p.tool_open(p.tool_name(p.literal(name)) + "[ARGS]") +
+                                                p.tool_args(p.schema(p.json(), "tool-" + name + "-schema", schema)));
+             });
  
              auto min_calls  = inputs.tool_choice == COMMON_CHAT_TOOL_CHOICE_REQUIRED ? 1 : 0;
              auto max_calls  = inputs.parallel_tool_calls ? -1 : 1;
@@ -271,10 +353,17 @@ diff --git a/common/parsers/ministral3.cpp b/common/parsers/ministral3.cpp
          // Content only parser
          include_grammar = false;
          return generation_prompt + (reasoning << p.content(p.rest()));
+     });
+ 
+     data.parser = parser.save();
 diff --git a/common/parsers/qwen3-coder.cpp b/common/parsers/qwen3-coder.cpp
+index 208f551..5e2c394 100644
 --- a/common/parsers/qwen3-coder.cpp
 +++ b/common/parsers/qwen3-coder.cpp
-@@ -164,12 +164,13 @@ common_chat_params common_chat_params_init_qwen3_coder(const common_chat_templat
+@@ -161,18 +161,19 @@ common_chat_params common_chat_params_init_qwen3_coder(const common_chat_templat
+             // Qwen3-Coder models may occasionally omit the <tool_call> token.
+             auto tool_call_first = is_qwen3_coder ?
+                 p.rule("tool-call-first", p.optional(p.literal("<tool_call>\n")) + tool_call_body) :
                  tool_call;
  
              auto calls      = inputs.parallel_tool_calls ? tool_call_first + p.zero_or_more(tool_call) : tool_call_first;
@@ -290,10 +379,17 @@ diff --git a/common/parsers/qwen3-coder.cpp b/common/parsers/qwen3-coder.cpp
          // Content only parser
          return generation_prompt + (reasoning << p.content(p.rest()));
      });
+ 
+     data.parser = parser.save();
+ 
 diff --git a/tests/test-chat.cpp b/tests/test-chat.cpp
+index 4b5eabc..3d8d313 100644
 --- a/tests/test-chat.cpp
 +++ b/tests/test-chat.cpp
-@@ -2173,10 +2173,43 @@ static void test_lfm2_parser(const std::string & template_path, bool detailed_de
+@@ -2180,16 +2180,49 @@ static void test_lfm2_parser(const std::string & template_path, bool detailed_de
+     // Tool call with empty arguments
+     tst.test("<|tool_call_start|>[empty_args()]<|tool_call_end|>")
+         .tools({ empty_args_tool })
          .expect(simple_assist_msg("", "", "empty_args", "{}"))
          .run();
  
@@ -337,7 +433,13 @@ diff --git a/tests/test-chat.cpp b/tests/test-chat.cpp
  
      // JSON schemas
      const char * invoice_schema = R"({
-@@ -7697,9 +7730,10 @@ int main(int argc, char ** argv) {
+         "type": "object",
+         "properties": {
+             "amount": {"type": "number"},
+@@ -7806,12 +7839,13 @@ int main(int argc, char ** argv) {
+         test_developer_role_to_system_workaround();
+         test_deepseek_v4_thinking_retention();
+         test_deepseek_v4_tool_result_ordering();
          test_template_generation_prompt();
          test_reasoning_effort_caps();
          test_reasoning_budget_tokens_per_request();

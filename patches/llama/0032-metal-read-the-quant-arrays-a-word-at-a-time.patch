@@ -1,8 +1,8 @@
 diff --git a/ggml/src/ggml-metal/ggml-metal-device.cpp b/ggml/src/ggml-metal/ggml-metal-device.cpp
-index 0bf7c4195..b5f738e20 100644
+index 409dc4d..7e497f4 100644
 --- a/ggml/src/ggml-metal/ggml-metal-device.cpp
 +++ b/ggml/src/ggml-metal/ggml-metal-device.cpp
-@@ -1330,29 +1330,37 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mv(ggml_meta
+@@ -1460,29 +1460,37 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mv(ggml_meta
          }
      }
  
@@ -42,7 +42,7 @@ index 0bf7c4195..b5f738e20 100644
      res.nr0  = nr0;
      res.nr1  = nr1;
 diff --git a/ggml/src/ggml-metal/kernels/mul_mv.metal b/ggml/src/ggml-metal/kernels/mul_mv.metal
-index 3cef1dcf3..94846e280 100644
+index 3cef1dc..94846e2 100644
 --- a/ggml/src/ggml-metal/kernels/mul_mv.metal
 +++ b/ggml/src/ggml-metal/kernels/mul_mv.metal
 @@ -211,16 +211,17 @@ static inline void helper_mv_reduce_and_write(
