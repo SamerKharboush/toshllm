@@ -1,0 +1,46 @@
+diff --git a/common/speculative.cpp b/common/speculative.cpp
+index 8493d929e..1785afe6d 100644
+--- a/common/speculative.cpp
++++ b/common/speculative.cpp
+@@ -2293,16 +2293,19 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
+         for (llama_seq_id seq_id = 0; seq_id < (llama_seq_id) n_seq; ++seq_id) {
+             auto & dp = dparams[seq_id];
+             if (!dp.drafting) {
+                 continue;
+             }
+ 
+             if (dp.result->size() < (size_t) params.n_min) {
+                 dp.result->clear();
++                if (dp.result_q) {
++                    dp.result_q->clear();
++                }
+             }
+             if (drafted_this_step[seq_id]) {
+                 n_last_draft[seq_id] = (int32_t) dp.result->size();
+             }
+ 
+             if (use_lookup) {
+                 auto & rs = rounds[seq_id];
+                 auto & result = *dp.result;
+@@ -2314,16 +2317,21 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
+                 if (!result.empty()) {
+                     llama_token buf[common_speculative_lookup_policy::max_t];
+                     const int cap = std::min(this->n_max, dp.n_max > 0 ? dp.n_max : this->n_max);
+                     const int k = sfx[seq_id].propose(cap, buf);
+                     if (k > 0 && buf[0] == result[0]) {
+                         const int t = lookup_policy->choose(rs.t, k, sfx[seq_id].last_match);
+                         if (t > 0) {
+                             result.assign(buf, buf + (t - 1));
++                            // the window's tokens carry no draft distribution, so the target
++                            // verifies them by match instead of by rejection
++                            if (dp.result_q) {
++                                dp.result_q->clear();
++                            }
+                             rs.t      = t;
+                             rs.lookup = true;
+                             rs.match  = sfx[seq_id].last_match;
+                             n_last_draft[seq_id] = (int32_t) result.size();
+                         }
+                     }
+                 }
+                 rs.t_us = t_now;
