@@ -20,6 +20,9 @@ PYTHON = os.path.join(RUNTIME, "python", "bin", "python3")
 
 # the key the app gives the helpers, so a test can vouch for a request the way the app does
 KEY = "test-trust-key"
+# CI runners are virtual and run this x86 runtime translated: wall-clock limits get three times the room
+SLOW = 3 if os.environ.get("CI") else 1
+SHARED = {"TOSH_SYMPY_TIMEOUT_MS": 20000} if SLOW > 1 else {}
 
 
 class Helper:
@@ -466,7 +469,7 @@ def test_timeout_and_recovery(_):
         # a Python callback per solver step over ~10^7 periods: seconds on any machine, unlike linear algebra
         reply = helper.call("ode", "solve_ivp", equations=["dy/dt = cos(1000*t)"], initial_conditions={"y": 0},
                             interval=[0, 100000])
-        assert code(reply) == "timeout" and reply["timed_out"] is True and time.monotonic() - started < 8, reply
+        assert code(reply) == "timeout" and reply["timed_out"] is True and time.monotonic() - started < 8*SLOW, reply
         assert helper.call("linalg", "determinant", matrix=[[1, 2], [3, 4]])["determinant"] == -2.0
         workers = helper.children()
         assert len(workers) == 1
@@ -650,7 +653,7 @@ def test_infinite_limits_are_in_the_definition(h):
 
 def main():
     tests = [(name, function) for name, function in globals().items() if name.startswith("test_")]
-    helper = Helper()
+    helper = Helper(**SHARED)
     failed = 0
     for name, function in tests:
         try:
@@ -660,7 +663,7 @@ def main():
             failed += 1
             print(f"FAIL  {name}: {type(error).__name__}: {str(error)[:500]}")
             if helper.process.poll() is not None:
-                helper = Helper()
+                helper = Helper(**SHARED)
     helper.close()
     measure()
     print(f"{len(tests) - failed} of {len(tests)} passed")

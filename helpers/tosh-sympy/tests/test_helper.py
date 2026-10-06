@@ -20,6 +20,9 @@ PYTHON = os.path.join(RUNTIME, "python", "bin", "python3")
 
 # the key the app gives the helpers, so a test can vouch for a request the way the app does
 KEY = "test-trust-key"
+# CI runners are virtual and run this x86 runtime translated: wall-clock limits get three times the room
+SLOW = 3 if os.environ.get("CI") else 1
+SHARED = {"TOSH_SYMPY_TIMEOUT_MS": 20000} if SLOW > 1 else {}
 
 
 class Helper:
@@ -282,7 +285,7 @@ def test_timeout_and_recovery(_):
         reply = expression(helper, "expand", "(a + b + c + d + f + g)**90")
         elapsed = time.monotonic() - started
         assert error_code(reply) == "timeout", reply
-        assert elapsed < 4, elapsed
+        assert elapsed < 4*SLOW, elapsed
         assert expression(helper, "factor", "x**2 - 1")["exact"] == "(x - 1)*(x + 1)"
     finally:
         helper.close()
@@ -346,7 +349,7 @@ def test_open_sum_is_not_a_result(h):
 def test_series_fast_path_matches(h):
     started = time.monotonic()
     reply = expression(h, "series", "exp(sin(x))", order=20)
-    assert time.monotonic() - started < 5, "the composed series should not need the slow routine"
+    assert time.monotonic() - started < 5*SLOW, "the composed series should not need the slow routine"
     assert reply["exact"].startswith("1 + x + x**2/2 - x**4/8 - x**5/15 - x**6/240 + x**7/90 + 31*x**8/5760"), reply
     assert reply["exact"].endswith("O(x**20)"), reply
     assert expression(h, "series", "1/(1 - x)", order=4)["exact"] == "1 + x + x**2 + x**3 + O(x**4)"
@@ -426,7 +429,7 @@ def test_same_answer_in_every_worker(_):
     try:
         started = time.monotonic()
         reply = expression(helper, "integrate", "1/(1 + x**3 + sin(x))", variable="x")
-        assert error_code(reply) == "no_closed_form" and time.monotonic() - started < 10, reply
+        assert error_code(reply) == "no_closed_form" and time.monotonic() - started < 10*SLOW, reply
     finally:
         helper.close()
 
@@ -675,7 +678,7 @@ def measure():
 
 def main():
     tests = [(name, function) for name, function in globals().items() if name.startswith("test_")]
-    helper = Helper()
+    helper = Helper(**SHARED)
     failed = 0
     for name, function in tests:
         try:
@@ -685,7 +688,7 @@ def main():
             failed += 1
             print(f"FAIL  {name}: {type(error).__name__}: {str(error)[:500]}")
             if not helper.process.poll() is None:
-                helper = Helper()
+                helper = Helper(**SHARED)
     helper.close()
     measure()
     print(f"{len(tests) - failed} of {len(tests)} passed")
