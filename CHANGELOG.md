@@ -5,18 +5,25 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+
+- **LLMs: Dynamic MoE can read the experts that do not fit in RAM from the SSD.** An engine switch for now (`TOSH_AUTO_DISK_EXPERTS=1`): Qwen3.8-Flash-Next Coder runs on a 32 GB Mac with a 12 GB card at 14-18 tokens a second, and decode asks for the next layer's experts ahead.
+
 ### Changed
 
-- **LLMs: the engine moves to llama.cpp v0.6.0.** It brings upstream's fixes for Qwen3.8-Flash-Next and its own MTP head for that model, fixes for speculative decoding and the recurrent state of hybrid models, and faster model loading. Generation and reading a prompt match the previous engine on dense models and on Dynamic MoE.
+- **LLMs: the engine moves to llama.cpp v0.6.0.** It brings upstream's fixes for Qwen3.8-Flash-Next and its MTP head, for speculative decoding and for the recurrent state of hybrid models, and loads models faster. Dense models and Dynamic MoE run within 2% of the previous engine.
 
 ### Improved
 
-- **LLMs: MTP keeps more of its draft when the chat has a temperature.** The draft is sampled and the model verifies it by rejection instead of keeping only exact matches, which leaves the text distribution unchanged. At the default temperature of 0.7, prose with a 9B model goes up to 7% faster and with Qwen3.6-35B-A3B under Dynamic MoE up to 3%; at temperature 0 nothing changes.
+- **LLMs: MTP keeps more of its draft when the chat has a temperature.** The model verifies a sampled draft by rejection instead of keeping only exact matches, with the same text distribution. At temperature 0.7 prose is up to 7% faster with a 9B model and 3% with Qwen3.6-35B-A3B under Dynamic MoE.
+- **LLMs: Dynamic MoE keeps more experts in VRAM.** The plan takes an 8-bit cache or a smaller prompt batch when they free room for experts. On a 12 GB card Qwen3.6-35B-A3B at 128K reads a prompt 8% faster and writes code 10-15% faster; gemma-4-26B and GLM-4.7 write 10% faster and read a prompt up to 13% slower.
 - **LLMs: Qwen3.8-Flash-Next runs its attention indexer on AMD GPUs.** It ran on the CPU because its kernel needs matrix units AMD cards do not have. On one card of a Radeon Pro Vega II Duo, generation goes from about 15 to 20 tokens a second with a 6K prompt.
 
 ### Fixed
 
-- **LLMs: the FirePro D500 and D700 of a Mac Pro 6,1 can keep the AMD attention kernels when generating.** Those cards give a kernel 32 KB of local memory and the AMD one asked for about 34 KB, so it fell back to the generic kernels, which there are slower than turning flash attention off. A version with half the work groups now fits, and a kernel the driver refuses is no longer rebuilt on every token. Reported in [#12](https://github.com/engeldlgado/toshllm/issues/12).
+- **LLMs: the download list no longer marks Qwen3.8-Flash-Next as too big.** The fit badge counted its 27 GB n-gram table, which stays on disk, and guessed the experts from the file size; it now reads both from the model's header.
+- **LLMs: Qwen3.8-Flash-Next plans its memory on 48 and 64 GB Macs.** Dynamic MoE no longer counts its 27 GB n-gram table, read from disk, as RAM it needs: the Q2_0 asked for about 54 GB and now plans with 48 GB and a 12 GB card.
+- **LLMs: the FirePro D500 and D700 keep the AMD attention kernels when generating.** The AMD kernel asked for 34 KB of local memory and those cards give 32 KB, so it fell back to slower kernels. A version with half the work groups now fits. Reported in [#12](https://github.com/engeldlgado/toshllm/issues/12).
 
 ## [0.87.16] - 2026-10-05
 
