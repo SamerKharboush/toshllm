@@ -1,13 +1,8 @@
 diff --git a/ggml/src/ggml-backend.cpp b/ggml/src/ggml-backend.cpp
-index 3eb937d..677bc0d 100644
+index 3eb937d50..34691d875 100644
 --- a/ggml/src/ggml-backend.cpp
 +++ b/ggml/src/ggml-backend.cpp
-@@ -1934,16 +1934,35 @@ static bool ggml_backend_sched_prefetch_init(ggml_backend_sched_t sched, ggml_ba
-             }
-             sched->prefetch_slots[i] = new_buf;
-             sched->prefetch_used[i] = false;
-         }
-     }
+@@ -1939,6 +1939,25 @@ static bool ggml_backend_sched_prefetch_init(ggml_backend_sched_t sched, ggml_ba
      return true;
  }
  
@@ -33,43 +28,24 @@ index 3eb937d..677bc0d 100644
  static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t sched) {
      GGML_ASSERT(sched);
      struct ggml_backend_sched_split * splits = sched->splits;
- 
-     ggml_tensor * prev_ids_tensor = nullptr;
-     std::vector<int32_t> ids;
-     std::vector<ggml_bitset_t> used_ids;
-     std::vector<int32_t> chunk_ids;
-@@ -2008,16 +2027,21 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
- 
-         // copy the input tensors to the split backend
-         for (int input_id = 0; input_id < split->n_inputs; input_id++) {
-             ggml_backend_t input_backend = ggml_backend_sched_get_tensor_backend(sched, split->inputs[input_id]);
+@@ -2012,6 +2031,12 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
              struct ggml_tensor * input = split->inputs[input_id];
              struct ggml_tensor * input_cpy = tensor_copy(input, split_backend_id, sched->cur_copy);
  
++            // a tensor that only feeds a branch ggml_build_forward_select left out is never read
++            // here; on a discrete GPU each of these copies is a synchronous upload
++            if (!ggml_backend_sched_input_is_read(&split->graph, input_cpy)) {
++                continue;
++            }
++
              if (input->flags & GGML_TENSOR_FLAG_INPUT) {
-+                // an input that only feeds a branch ggml_build_forward_select left out is never read;
-+                // on a discrete GPU each of these small copies is a synchronous upload
-+                if (!ggml_backend_sched_input_is_read(&split->graph, input_cpy)) {
-+                    continue;
-+                }
                  // inputs from the user must be copied immediately to prevent the user overwriting the data before the copy is done
                  if (sched->events[split_backend_id][sched->cur_copy] != NULL) {
-                     ggml_backend_event_synchronize(sched->events[split_backend_id][sched->cur_copy]);
-                 } else {
-                     ggml_backend_synchronize(split_backend);
-                 }
-                 ggml_backend_tensor_copy(input, input_cpy);
-             } else {
 diff --git a/src/llama-graph.cpp b/src/llama-graph.cpp
-index ee0ffbe..91436e7 100644
+index ee0ffbe32..91436e7ac 100644
 --- a/src/llama-graph.cpp
 +++ b/src/llama-graph.cpp
-@@ -4050,23 +4050,27 @@ llm_graph_input_rs * llm_graph_context::build_rs_inp() const {
- ggml_tensor * llm_graph_context::build_rs(
-         llm_graph_input_rs * inp,
-         ggml_tensor * s,
-             int32_t   state_size,
-             int32_t   n_seqs,
+@@ -4055,13 +4055,17 @@ ggml_tensor * llm_graph_context::build_rs(
          const llm_graph_get_rows_fn & get_state_rows) const {
      const auto * kv_state = inp->mctx;
  
@@ -89,8 +65,3 @@ index ee0ffbe..91436e7 100644
  }
  
  ggml_tensor * llm_graph_context::build_rwkv_token_shift_load(
-     llm_graph_input_rs * inp,
-     const llama_ubatch & ubatch,
-                    int   il) const {
-     const auto * mctx_cur = static_cast<const llama_memory_recurrent_context *>(mctx);
- 
