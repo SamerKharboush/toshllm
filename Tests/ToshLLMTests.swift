@@ -996,6 +996,8 @@ final class ServerSettingsTests: XCTestCase {
         // One slot by default: retries resume aborted prefills (VS Code).
         XCTAssertEqual(args[args.firstIndex(of: "--parallel")! + 1], "1")
         XCTAssertEqual(args[args.firstIndex(of: "--cache-reuse")! + 1], "256")
+        XCTAssertTrue(args.contains("--no-reasoning-preserve"),
+                      "an empty reasoning block in every past turn makes the model stop mid-answer")
     }
 
     func testAutoMemoryPlanOwnsOffloadBatchAndCacheOnMoEModels() throws {
@@ -2634,6 +2636,8 @@ final class RouterModeTests: XCTestCase {
         XCTAssertTrue(ini.contains("[moe-a3b]"))
         XCTAssertTrue(ini.contains("model = /models/dense-4b.gguf"))
         XCTAssertTrue(ini.contains("n-cpu-moe = 12"))
+        XCTAssertEqual(ini.components(separatedBy: "reasoning-preserve = false").count - 1, 2,
+                       "every model the router loads drops preserved reasoning")
         // Dense entry has no ncmoe line: no false n-cpu-moe on a model with no experts.
         let denseSection = ini.components(separatedBy: "\n\n").first { $0.contains("dense-4b") } ?? ""
         XCTAssertFalse(denseSection.contains("n-cpu-moe"))

@@ -96,7 +96,7 @@ fi
 
 echo "Open http://127.0.0.1:${PORT:-8080} in your browser once the model has loaded."
 exec ./bin/llama-server -m "$MODEL" -ngl 99 -c "${CTX:-8192}" -fa auto --load-mode none --jinja \
-    --cache-ram 2048 --host 127.0.0.1 --port "${PORT:-8080}" --path web-ui "$@"
+    --no-reasoning-preserve --cache-ram 2048 --host 127.0.0.1 --port "${PORT:-8080}" --path web-ui "$@"
 EOF
 chmod +x "$STAGE/start.sh"
 

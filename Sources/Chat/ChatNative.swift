@@ -841,25 +841,12 @@ final class ChatStore: ObservableObject {
         }
 
         // Reasoning off can come from the toggle or a typed /no_think; a typed
-        // switch overrides the toggle for this turn. Not persisted to history.
+        // switch overrides the toggle for this turn.
         var reasoningOff = !thinking || sampling.reasoningEffort == "off"
         if let last = history.lastIndex(where: { ($0["role"] as? String) == "user" }) {
             let typed = Self.messageText(history[last]["content"])
             if typed.contains("/no_think") { reasoningOff = true }
             else if typed.contains("/think") { reasoningOff = false }
-
-            if reasoningOff, !typed.contains("/no_think") {
-                if let s = history[last]["content"] as? String {
-                    history[last]["content"] = s + "\n/no_think"
-                } else if var parts = history[last]["content"] as? [[String: Any]] {
-                    if let ti = parts.firstIndex(where: { ($0["type"] as? String) == "text" }) {
-                        parts[ti]["text"] = ((parts[ti]["text"] as? String) ?? "") + "\n/no_think"
-                    } else {
-                        parts.insert(["type": "text", "text": "/no_think"], at: 0)
-                    }
-                    history[last]["content"] = parts
-                }
-            }
         }
 
         conversations[i].messages.append(ChatMessage(role: "assistant", content: ""))

@@ -316,6 +316,9 @@ struct ServerSettings {
             if imageMaxTokens > 0 { args += ["--image-max-tokens", String(imageMaxTokens)] }
         }
         if jinja || mmproj != nil { args.append("--jinja") }
+        // History turns come back without their reasoning, and a template that preserves it
+        // writes an empty block in each one; the model then ends answers mid-sentence.
+        args.append("--no-reasoning-preserve")
         if !usesAutoPlan {
             if launchKV.k != "f16" { args += ["-ctk", launchKV.k] }
             if launchKV.v != "f16" { args += ["-ctv", launchKV.v] }
@@ -478,6 +481,7 @@ struct ServerSettings {
                 if imageMaxTokens > 0 { lines.append("image-max-tokens = \(imageMaxTokens)") }
             }
             if jinja || mmproj != nil { lines.append("jinja = true") }
+            lines.append("reasoning-preserve = false")
             if cacheTypeK != "f16" { lines.append("cache-type-k = \(cacheTypeK)") }
             if cacheTypeV != "f16" { lines.append("cache-type-v = \(cacheTypeV)") }
             lines.append("cache-ram = \(cacheRAM)")

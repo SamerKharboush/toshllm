@@ -3,6 +3,12 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Fixed
+
+- **LLMs: answers no longer stop mid-sentence in long chats.** Qwen3.6-35B-A3B cut 2 answers in 18 turns of a replayed chat and cuts none in 27 now.
+
 ## [0.87.17] - 2026-10-06
 
 ### Added
