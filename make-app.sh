@@ -257,5 +257,5 @@ if [ -x "$APP/Contents/Resources/tosh-sympy/python/bin/python3" ]; then
     codesign --force -s - "$APP/Contents/Resources/tosh-sympy/"**/*.(so|dylib)(.N) \
                           "$APP/Contents/Resources/tosh-sympy/python/bin/python3"
 fi
-codesign --force -s - "$APP"
+codesign --force --entitlements ToshLLM.entitlements -s - "$APP"
 echo "Done: $APP"

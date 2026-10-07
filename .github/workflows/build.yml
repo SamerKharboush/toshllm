@@ -170,8 +170,11 @@ jobs:
             case "$exe" in *.metallib) continue;; esac
             codesign --force --timestamp --options runtime -s "$IDENTITY" "$exe"
           done
-          codesign --force --timestamp --options runtime -s "$IDENTITY" "$APP"
+          # under the hardened runtime macOS never asks for the microphone without this entitlement
+          codesign --force --timestamp --options runtime --entitlements ToshLLM.entitlements -s "$IDENTITY" "$APP"
           codesign --verify --deep --strict --verbose=2 "$APP"
+          codesign -d --entitlements - "$APP" 2>/dev/null | grep -q 'com.apple.security.device.audio-input' ||
+            { echo "::error::the signed app lost its microphone entitlement"; exit 1; }
 
           # Name it per variant: the notary history lists submissions by filename.
           ZIP=/tmp/ToshLLM-${{ matrix.variant }}.zip

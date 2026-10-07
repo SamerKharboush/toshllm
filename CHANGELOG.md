@@ -8,6 +8,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 ### Fixed
 
 - **LLMs: answers no longer stop mid-sentence in long chats.** Qwen3.6-35B-A3B cut 2 answers in 18 turns of a replayed chat and cuts none in 27 now.
+- **Audio: voice input asks for the microphone again.** The signed release was denied without a prompt; macOS now shows its permission dialog and lists ToshLLM under Privacy & Security, Microphone.
 
 ## [0.87.17] - 2026-10-06
 
