@@ -148,6 +148,8 @@ jobs:
           fi
           echo "$CERT_P12" | base64 -d > /tmp/cert.p12
           security create-keychain -p ci tosh.keychain
+          # a new keychain locks itself after 5 minutes, and codesign then waits for a password nobody can type
+          security set-keychain-settings -lut 21600 tosh.keychain
           security default-keychain -s tosh.keychain
           security list-keychains -d user -s tosh.keychain login.keychain-db
           security unlock-keychain -p ci tosh.keychain
