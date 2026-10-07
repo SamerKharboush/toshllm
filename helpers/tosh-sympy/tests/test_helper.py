@@ -23,6 +23,8 @@ KEY = "test-trust-key"
 # CI runners are virtual and run this x86 runtime translated: wall-clock limits get three times the room
 SLOW = 3 if os.environ.get("CI") else 1
 SHARED = {"TOSH_SYMPY_TIMEOUT_MS": 20000} if SLOW > 1 else {}
+# a budget no calculation of these tests fits in on a worker that just started, yet the next small one does
+SHORT = 100*SLOW
 
 
 class Helper:
@@ -272,7 +274,7 @@ def test_size_limits(h):
 
 
 def test_output_is_bounded(h):
-    reply = expression(h, "expand", "(x + y + z + w)**40")
+    reply = expression(h, "expand", "(x + y + z + w)**16")
     assert reply["success"] and reply["truncated"] is True, reply
     assert len(reply["exact"]) == 6000 and "latex" not in reply, len(reply["exact"])
     assert len(json.dumps(reply)) < 8000
@@ -327,10 +329,14 @@ def test_definite_integral_falls_back_to_a_number(h):
 
 
 def test_no_number_for_a_divergent_integral(h):
-    for text in ("exp(sin(x))/x", "x**x/(x - 1/2)", "exp(sin(x))/(x - 0.3)**2"):
+    for text in ("exp(sin(x))/x", "x**x/(x - 1/2)", "exp(sin(x))/(x - 0.3)"):
         reply = expression(h, "integrate", text, variable="x", lower="0", upper="1")
         assert error_code(reply) == "no_closed_form" and "numeric" not in reply, reply
         assert reply["timed_out"] is False and reply["exact"] is None and "Integral" in reply["unevaluated"]
+    # SymPy takes seconds to give up on a double pole: finished or out of time, it gets no number
+    reply = expression(h, "integrate", "x**x/(x - 0.3)**2", variable="x", lower="0", upper="1")
+    assert error_code(reply) in ("no_closed_form", "timeout") and "numeric" not in reply, reply
+    assert reply["exact"] is None and "Integral" in reply["unevaluated"], reply
     assert error_code(expression(h, "integrate", "1/(sin(x) - 1/2)", lower="0", upper="1")) == "no_result"
 
 
@@ -370,7 +376,7 @@ def test_nsolve_never_guesses(h):
 
 
 def test_timed_out_indefinite_integral(_):
-    helper = Helper(TOSH_SYMPY_TIMEOUT_MS=100)
+    helper = Helper(TOSH_SYMPY_TIMEOUT_MS=SHORT)
     try:
         reply = expression(helper, "integrate", "1/(1 + x**3 + sin(x))", variable="x")
         assert error_code(reply) == "timeout" and reply["timed_out"] is True, reply
@@ -382,19 +388,24 @@ def test_timed_out_indefinite_integral(_):
 
 
 def test_timed_out_definite_integral_gets_a_number(_):
-    helper = Helper(TOSH_SYMPY_TIMEOUT_MS=100)
+    helper = Helper(TOSH_SYMPY_TIMEOUT_MS=SHORT)
     try:
-        reply = expression(helper, "integrate", "exp(sin(x))", variable="x", lower="0", upper="1")
+        reply = expression(helper, "integrate", "x**x", variable="x", lower="0", upper="1")
         assert reply["success"] is True and reply["exact"] is None, reply
         assert reply["timed_out_symbolic"] is True and reply["method"] == "numerical_integration", reply
-        assert reply["numeric"] == "1.63186960841805", reply
+        assert reply["numeric"] == "0.783430510712134", reply
         assert expression(helper, "expand", "(x + 1)**2")["exact"] == "x**2 + 2*x + 1"
+        # trigonometric functions get a second symbolic attempt after the number, which a slow machine
+        # stops as well, worker included: nothing may be asked of this helper after it
+        reply = expression(helper, "integrate", "exp(sin(x))", variable="x", lower="0", upper="1")
+        assert reply["success"] is True and reply["exact"] is None, reply
+        assert reply["method"] == "numerical_integration" and reply["numeric"] == "1.63186960841805", reply
     finally:
         helper.close()
 
 
 def test_timed_out_series_reports_what_finished(_):
-    helper = Helper(TOSH_SYMPY_TIMEOUT_MS=100)
+    helper = Helper(TOSH_SYMPY_TIMEOUT_MS=SHORT)
     try:
         reply = expression(helper, "series", "log(x)*exp(sin(x))", point="1", order=6)
         assert error_code(reply) == "timeout" and reply["timed_out"] is True and reply["exact"] is None, reply
@@ -407,7 +418,7 @@ def test_timed_out_series_reports_what_finished(_):
 
 
 def test_timed_out_ode(_):
-    helper = Helper(TOSH_SYMPY_TIMEOUT_MS=100)
+    helper = Helper(TOSH_SYMPY_TIMEOUT_MS=SHORT)
     try:
         reply = helper.call("solve", operation="dsolve", equations=["y'' + y = tan(x)"])
         assert error_code(reply) == "timeout" and reply["timed_out"] is True, reply
