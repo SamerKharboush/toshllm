@@ -3,6 +3,103 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.87.18] - 2026-10-07
+
+### Fixed
+
+- **LLMs: answers no longer stop mid-sentence in long chats.** Qwen3.6-35B-A3B cut 2 answers in 18 turns of a replayed chat and cuts none in 27 now.
+- **LLMs: turning reasoning off works on models whose template always opens the reasoning block.** Qwopus3.5-9B-Coder wrote 794 characters of reasoning with it off and writes none now.
+- **Audio: voice input asks for the microphone again.** The signed release was denied without a prompt; macOS now shows its permission dialog and lists ToshLLM under Privacy & Security, Microphone.
+
+## [0.87.17] - 2026-10-06
+
+### Added
+
+- **LLMs: Dynamic MoE can read the experts that do not fit in RAM from the SSD.** An engine switch for now (`TOSH_AUTO_DISK_EXPERTS=1`): Qwen3.8-Flash-Next Coder runs on a 32 GB Mac with a 12 GB card at 14-18 tokens a second, and decode asks for the next layer's experts ahead.
+
+### Changed
+
+- **LLMs: the engine moves to llama.cpp v0.6.0.** It brings upstream's fixes for Qwen3.8-Flash-Next and its MTP head, for speculative decoding and for the recurrent state of hybrid models, and loads models faster. Dense models and Dynamic MoE run within 2% of the previous engine.
+
+### Improved
+
+- **LLMs: MTP keeps more of its draft when the chat has a temperature.** The model verifies a sampled draft by rejection instead of keeping only exact matches, with the same text distribution. At temperature 0.7 prose is up to 7% faster with a 9B model and 3% with Qwen3.6-35B-A3B under Dynamic MoE.
+- **LLMs: Dynamic MoE keeps more experts in VRAM.** The plan takes an 8-bit cache or a smaller prompt batch when they free room for experts. On a 12 GB card Qwen3.6-35B-A3B at 128K reads a prompt 8% faster and writes code 10-15% faster; gemma-4-26B and GLM-4.7 write 10% faster and read a prompt up to 13% slower.
+- **LLMs: Qwen3.8-Flash-Next runs its attention indexer on AMD GPUs.** It ran on the CPU because its kernel needs matrix units AMD cards do not have. On one card of a Radeon Pro Vega II Duo, generation goes from about 15 to 20 tokens a second with a 6K prompt.
+
+### Fixed
+
+- **LLMs: the download list no longer marks Qwen3.8-Flash-Next as too big.** The fit badge counted its 27 GB n-gram table, which stays on disk, and guessed the experts from the file size; it now reads both from the model's header.
+- **LLMs: Qwen3.8-Flash-Next plans its memory on 48 and 64 GB Macs.** Dynamic MoE no longer counts its 27 GB n-gram table, read from disk, as RAM it needs: the Q2_0 asked for about 54 GB and now plans with 48 GB and a 12 GB card.
+- **LLMs: the FirePro D500 and D700 keep the AMD attention kernels when generating.** The AMD kernel asked for 34 KB of local memory and those cards give 32 KB, so it fell back to slower kernels. A version with half the work groups now fits. Reported in [#12](https://github.com/engeldlgado/toshllm/issues/12).
+
+## [0.87.16] - 2026-10-05
+
+### Added
+
+- **LLMs: a local MCP server can be approved for the server agent.** "Available to the server agent" in the server's MCP settings makes the engine start it for the agent alone: its tools answer through the agent for the app's chat, the web chat and API clients, and stay hidden from `/tools`. A value the user never gave is not sent to it, and math keeps its checks.
+- **LLMs: the engine alone for macOS 12.** The release also carries `toshllm-engine-<version>-macos12-x86_64.zip`, for Macs that cannot run the app: the same engine with a start script and the chat page in the browser.
+
+### Improved
+
+- **LLMs: Qwen3.8-Flash-Next writes faster on Radeon Pro Vega II.** On one card of a Radeon Pro Vega II Duo with Dynamic MoE and MTP, code goes from 32.7 to 36.2 tokens a second and prose from 28.8 to about 31; without MTP it gains about 1%.
+
+### Fixed
+
+- **LLMs: math in the chat no longer leaves blank space under its paragraph**, and resizing the window no longer makes that space grow.
+
+- **LLMs: a numbered list split by paragraphs keeps the numbers it was written with** instead of starting each part at 1.
+
+- **LLMs: formulas inside list items and headings, and numbers such as `$84$`, render as math.** Prices such as `$10` stay as text, and a formula with arithmetic such as `$|4/3 - 1.33| \approx 0$` no longer turns into plain text.
+
+- **LLMs: a long formula or matrix on its own line renders as a formula** instead of its LaTeX source.
+
+- **LLMs: on macOS 12 Monterey, Radeon RX 6000 cards generate Q8_0 models correctly.** The engine reads their weights aligned there by itself; the one-token cases of its own tests that failed on a Radeon RX 6800 under macOS 12 now pass.
+
+- **LLMs: a request with `tool_choice: "required"` always ends in a tool call.** The model could write a whole answer instead and run out of tokens; now it may write a short preamble at most, and `auto` is unchanged.
+
+## [0.87.15] - 2026-10-03
+
+### Added
+
+- **LLMs: math answers come from one agent in the engine, for the chat, the web chat and the API.** API clients ask for it with `X-Tosh-Agent: on`, also from another computer and without the app; the reply carries a `tosh` object with the intent, every call and the validated results.
+
+### Improved
+
+- **LLMs: a request for a calculation is answered with the math tools.** The model can no longer skip them and write the result from memory; explanations and questions without a calculation are answered as before.
+
+- **LLMs: stopping a math answer also stops its model passes and tool calls in the engine.** So does a client that closes the connection.
+
+- **LLMs: math answers for several clients at once run side by side** instead of one after another.
+
+- **LLMs: the math tools run without asking by default**, so the chat's math turns go through the engine's agent. "Use the math tools without asking" in the chat settings turns it off; no other tool changes.
+
+- **LLMs: the tool calls of a turn show as one block that folds.** It names the tools and counts those without a result; what the model wrote before a call sits inside it, marked as not verified.
+
+### Fixed
+
+- **LLMs: the web chat can no longer run the math tools without their checks.** Its conversations go through the engine's agent, and a page in a browser no longer gets the math tools for a loop of its own.
+
+- **LLMs: a request without streaming stops when its client goes away**, also while other requests keep the engine busy and in router mode.
+
+- **LLMs: the math answers written by the engine follow the language of the conversation.**
+
+- **LLMs: math written in LaTeX is checked like plain text.** A correct call is no longer refused for `\frac`, `\infty` or the limits of `\int`, and list numbers or digit counts in a request no longer count as data.
+
+- **LLMs: a numerical integral can go to infinity.** A call that puts a number such as 100 in place of infinity is refused instead of computed.
+
+- **LLMs: a math call refused once stays refused when the model repeats it.**
+
+- **LLMs: neither an API client nor the model can pass a math call off as checked.** The fields that carry your request to the tools are honoured only from Tosh itself.
+
+- **LLMs: what the model writes before a math call is dropped when the call gives no result.** An exact value written from memory no longer stays on screen after the call that should have computed it was refused.
+
+- **LLMs: a math turn keeps the results it already validated when a later call is refused.** The answer states them and says which parts could not be validated, instead of only saying that nothing could be.
+
+- **LLMs: after math tools, the answer only states numbers from your message or from a validated result.** An answer that adds others goes back to the model once and is otherwise replaced by the validated results, so it shows once it has been checked.
+
+
+
 ## [0.87.15-beta.5] - 2026-10-03
 
 Upstream 0.87.15 merged: math answers now come from one agent in the engine, for the chat,
@@ -99,47 +196,6 @@ new multi-GPU default. Known gaps are listed at the bottom of this section.
 - The cross-GPU events setting is still only turned on for a tensor split. It makes no measurable difference on a layer split, so forcing it on there buys nothing.
 - A 27B Qwen3.5 model cannot be split by tensor: an internal state tensor's width does not divide evenly. The engine now says which operation and which dimensions instead of failing a bare assert. The layer split, which that model uses, is unaffected.
 - The engine falls back to compiling its Metal kernels from embedded sources when the bundle has no precompiled copy. Functionally identical, slower on first start.
-
-## [0.87.15] - 2026-10-03
-
-### Added
-
-- **LLMs: math answers come from one agent in the engine, for the chat, the web chat and the API.** API clients ask for it with `X-Tosh-Agent: on`, also from another computer and without the app; the reply carries a `tosh` object with the intent, every call and the validated results.
-
-### Improved
-
-- **LLMs: a request for a calculation is answered with the math tools.** The model can no longer skip them and write the result from memory; explanations and questions without a calculation are answered as before.
-
-- **LLMs: stopping a math answer also stops its model passes and tool calls in the engine.** So does a client that closes the connection.
-
-- **LLMs: math answers for several clients at once run side by side** instead of one after another.
-
-- **LLMs: the math tools run without asking by default**, so the chat's math turns go through the engine's agent. "Use the math tools without asking" in the chat settings turns it off; no other tool changes.
-
-- **LLMs: the tool calls of a turn show as one block that folds.** It names the tools and counts those without a result; what the model wrote before a call sits inside it, marked as not verified.
-
-### Fixed
-
-- **LLMs: the web chat can no longer run the math tools without their checks.** Its conversations go through the engine's agent, and a page in a browser no longer gets the math tools for a loop of its own.
-
-- **LLMs: a request without streaming stops when its client goes away**, also while other requests keep the engine busy and in router mode.
-
-- **LLMs: the math answers written by the engine follow the language of the conversation.**
-
-- **LLMs: math written in LaTeX is checked like plain text.** A correct call is no longer refused for `\frac`, `\infty` or the limits of `\int`, and list numbers or digit counts in a request no longer count as data.
-
-- **LLMs: a numerical integral can go to infinity.** A call that puts a number such as 100 in place of infinity is refused instead of computed.
-
-- **LLMs: a math call refused once stays refused when the model repeats it.**
-
-- **LLMs: neither an API client nor the model can pass a math call off as checked.** The fields that carry your request to the tools are honoured only from Tosh itself.
-
-- **LLMs: what the model writes before a math call is dropped when the call gives no result.** An exact value written from memory no longer stays on screen after the call that should have computed it was refused.
-
-- **LLMs: a math turn keeps the results it already validated when a later call is refused.** The answer states them and says which parts could not be validated, instead of only saying that nothing could be.
-
-- **LLMs: after math tools, the answer only states numbers from your message or from a validated result.** An answer that adds others goes back to the model once and is otherwise replaced by the validated results, so it shows once it has been checked.
-
 
 ## [0.87.14] - 2026-10-02
 

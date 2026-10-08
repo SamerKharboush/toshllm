@@ -327,6 +327,9 @@ struct ServerSettings {
             if imageMaxTokens > 0 { args += ["--image-max-tokens", String(imageMaxTokens)] }
         }
         if jinja || mmproj != nil { args.append("--jinja") }
+        // History turns come back without their reasoning, and a template that preserves it
+        // writes an empty block in each one; the model then ends answers mid-sentence.
+        args.append("--no-reasoning-preserve")
         if !usesAutoPlan {
             if launchKV.k != "f16" { args += ["-ctk", launchKV.k] }
             if launchKV.v != "f16" { args += ["-ctv", launchKV.v] }
@@ -354,7 +357,7 @@ struct ServerSettings {
             if !toolsRuntime.isEmpty { args += ["--tools-runtime", toolsRuntime] }
         }
         let sympyArguments = SymPyToolsService.serverArguments(enabled: sympyEnabled, scientific: scientificEnabled,
-                                                                agent: mathAgentEnabled)
+                                                                agent: mathAgentEnabled, shared: MCPServerStore.load())
         if !sympyArguments.isEmpty {
             if !args.contains("--jinja") { args.append("--jinja") }
             args += sympyArguments
@@ -378,10 +381,10 @@ struct ServerSettings {
                      "-ngld", String(selection.ngld),
                      "-ctkd", "q8_0", "-ctvd", "q8_0"]
         } else if Self.mtpEnabled(forModel: modelPath), let draft = Self.mtpDraftPath(forModel: modelPath) {
-            args += ["-md", draft, "--spec-type", "draft-mtp"]
+            args += ["-md", draft, "--spec-type", "draft-mtp"] + Self.mtpSamplingArgs
             args += Self.mtpDraftWidthArgs(forModel: modelPath, gpuArchitecture: selectedGPUArchitecture)
         } else if Self.mtpEnabled(forModel: modelPath), Self.modelHasMTP(at: modelPath) {
-            args += ["--spec-type", "draft-mtp"]
+            args += ["--spec-type", "draft-mtp"] + Self.mtpSamplingArgs
             args += Self.mtpDraftWidthArgs(forModel: modelPath, gpuArchitecture: selectedGPUArchitecture)
         }
         if let ui = Self.chatUIPath { args += ["--path", ui] }
@@ -426,7 +429,7 @@ struct ServerSettings {
             if !toolsRuntime.isEmpty { args += ["--tools-runtime", toolsRuntime] }
         }
         let sympyArguments = SymPyToolsService.serverArguments(enabled: sympyEnabled, scientific: scientificEnabled,
-                                                                agent: mathAgentEnabled)
+                                                                agent: mathAgentEnabled, shared: MCPServerStore.load())
         if !sympyArguments.isEmpty {
             if !args.contains("--jinja") { args.append("--jinja") }
             args += sympyArguments
@@ -489,6 +492,7 @@ struct ServerSettings {
                 if imageMaxTokens > 0 { lines.append("image-max-tokens = \(imageMaxTokens)") }
             }
             if jinja || mmproj != nil { lines.append("jinja = true") }
+            lines.append("reasoning-preserve = false")
             if cacheTypeK != "f16" { lines.append("cache-type-k = \(cacheTypeK)") }
             if cacheTypeV != "f16" { lines.append("cache-type-v = \(cacheTypeV)") }
             lines.append("cache-ram = \(cacheRAM)")
@@ -514,11 +518,13 @@ struct ServerSettings {
             } else if Self.mtpEnabled(forModel: path), let draft = Self.mtpDraftPath(forModel: path) {
                 lines.append("model-draft = \(draft)")
                 lines.append("spec-type = draft-mtp")
+                lines.append("spec-draft-sampling = probabilistic")
                 if let n = Self.mtpDraftWidth(forModel: path, gpuArchitecture: selectedGPUArchitecture) {
                     lines.append("spec-draft-n-max = \(n)")
                 }
             } else if Self.mtpEnabled(forModel: path), Self.modelHasMTP(at: path) {
                 lines.append("spec-type = draft-mtp")
+                lines.append("spec-draft-sampling = probabilistic")
                 if let n = Self.mtpDraftWidth(forModel: path, gpuArchitecture: selectedGPUArchitecture) {
                     lines.append("spec-draft-n-max = \(n)")
                 }
@@ -754,11 +760,6 @@ struct ServerSettings {
             if planWithoutDMoE { env["TOSH_AUTO"] = "nodmoe" } else if executionMode == "dmoe" { env["TOSH_AUTO"] = "dmoe" }
             env["TOSH_AUTO_KV"] = autoKVMode
             if dynamicMoeLeanRAM { env["TOSH_AUTO_HOST_BANK"] = "lean" }
-            // the engine keeps this family's separate head behind a switch
-            if Self.mtpEnabled(forModel: modelPath), Self.mtpDraftPath(forModel: modelPath) != nil,
-               Self.ggufString("general.architecture", at: modelPath) == "qwen4exp" {
-                env["TOSH_QWEN4EXP_MTP_EXPERIMENTAL"] = "1"
-            }
             env["TOSH_AUTO_PLAN_FILE"] = AutoMemoryPlan.planURL(port: port).path
         } else if prefetchExperts && ((ncmoe > 0 && !manualFullGPU) || routerMode) {
             // At/above the measured cliff the prefetch overlap collapses and stalls the
@@ -1162,6 +1163,10 @@ struct ServerSettings {
     /// Finds the MTP head of a model: beside it, or in the `MTP/` folder the upstream
     /// repackagers ship. Names vary (`mtp-<model>.gguf`, `<model>.mtp.gguf`, `<model>-MTP-Q8_0`),
     /// so the file name only proposes a candidate and the header decides.
+    /// The MTP head samples its draft and the target verifies it by rejection: with a temperature
+    /// above zero more of the draft is accepted, and at zero it is the same as taking the argmax.
+    nonisolated static let mtpSamplingArgs = ["--spec-draft-sampling", "probabilistic"]
+
     nonisolated static func mtpDraftPath(forModel modelPath: String) -> String? {
         guard !modelPath.isEmpty, !GGUFFile.isDraft(modelPath) else { return nil }
         let modelURL = URL(fileURLWithPath: modelPath)

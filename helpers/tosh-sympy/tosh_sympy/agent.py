@@ -21,6 +21,8 @@ import uuid
 from . import policy
 
 TRUST_KEY = os.environ.get("TOSH_TRUST_KEY", "")
+# MCP servers an administrator approved for the agent; the engine names their tools "<server>_<tool>"
+APPROVED = tuple(name + "_" for name in os.environ.get("TOSH_AGENT_SERVERS", "").split(",") if name)
 MAX_ROUNDS = 10
 # what a client may set on a request that the agent passes on to each round
 _GENERATION = ("temperature", "top_p", "top_k", "min_p", "seed", "repeat_penalty", "presence_penalty",
@@ -33,7 +35,7 @@ DEFINITION = {
     "name": "run",
     "description": "Answers an OpenAI chat completions request with the math tools. Called by the engine.",
     "inputSchema": {"type": "object", "properties": {"request": {"type": "object"}, "base_url": {"type": "string"},
-                                                    "api_key": {"type": "string"}},
+                                                    "api_key": {"type": "string"}, "agent_key": {"type": "string"}},
                     "required": ["request", "base_url"], "additionalProperties": False},
     "annotations": {"readOnlyHint": True},
 }
@@ -48,10 +50,12 @@ class Cancelled(Exception):
 
 
 class Engine:
-    def __init__(self, base_url, api_key):
+    def __init__(self, base_url, api_key, agent_key=""):
         parsed = urllib.parse.urlparse(base_url)
         self.host, self.port = parsed.hostname or "127.0.0.1", parsed.port or 80
         self.api_key = api_key or ""
+        # what /tools asks before it lists or runs the tools of a server only the agent may use
+        self.agent_key = agent_key or ""
         self.cancelled = threading.Event()
         self._lock = threading.Lock()
         self._connection = None
@@ -75,6 +79,8 @@ class Engine:
         headers = {"Content-Type": "application/json", "X-Tosh-Agent": "off"}
         if self.api_key:
             headers["Authorization"] = "Bearer " + self.api_key
+        if self.agent_key:
+            headers["X-Tosh-Agent-Key"] = self.agent_key
         # connected before it is shared, so a cancellation always finds a socket to close
         connection.connect()
         with self._lock:
@@ -105,15 +111,25 @@ class Engine:
 
     def tools(self):
         listed = self._send("GET", "/tools", timeout=60)
-        return [t for t in listed if isinstance(t, dict) and policy.is_math(t.get("tool"))] if isinstance(listed, list) else []
+        return [t for t in listed if isinstance(t, dict) and (policy.is_math(t.get("tool")) or approved(t.get("tool")))] \
+            if isinstance(listed, list) else []
 
-    def call(self, name, params):
-        reply = self._send("POST", "/tools", {"tool": name, "params": params}, timeout=120)
+    def call(self, name, params, timeout=120):
+        return self.call_checked(name, params, timeout)[0]
+
+    def call_checked(self, name, params, timeout=120):
+        """The tool's text and whether it ran without an error."""
+        reply = self._send("POST", "/tools", {"tool": name, "params": params}, timeout=timeout)
         if isinstance(reply, dict):
-            text = reply.get("plain_text_response", reply.get("error"))
-            if isinstance(text, str):
-                return text
-        return json.dumps(reply)
+            if isinstance(reply.get("plain_text_response"), str):
+                return reply["plain_text_response"], True
+            if isinstance(reply.get("error"), str):
+                return reply["error"], False
+        return json.dumps(reply), False
+
+
+def approved(name):
+    return bool(APPROVED) and isinstance(name, str) and name.startswith(APPROVED) and not policy.is_math(name)
 
 
 def _text(content):
@@ -159,6 +175,8 @@ class Turn:
         self.sources = [t["content"] for t in self.history if t["role"] == "user"] + [self.question]
         self.messages = []          # this turn's rounds, as the model reads them
         self.calls = []             # every call of the turn and how it ended
+        self.listed = set()         # tool names the engine offered this turn
+        self.definitions = {}       # and their definitions
         self.guard = policy.Guard()
         self.passes = 0
         self.usage = {"prompt_tokens": 0, "completion_tokens": 0}
@@ -232,14 +250,18 @@ class Turn:
     def _source(self):
         """The user's words and what the tools returned this turn: refused and failed calls stay out."""
         context = [t["content"] for t in self.history if t["role"] == "user"]
-        context += [c["result"] for c in self.calls if policy.succeeded(c)]
+        context += [c["result"] for c in self.calls
+                    if policy.succeeded(c) or (approved(c["name"]) and c["state"] == "completed")]
         return {"request": self.question, "context": "\n".join(context)[-6000:]}
 
     def _review(self, reply, operation):
         lines = reply.get("interpreted_input") or []
+        # a number an approved server returned this turn is as given as the user's own
+        returned = [c["result"][:1500] for c in self.calls if approved(c["name"]) and c["state"] == "completed"]
+        request = self.question + ("\n\nRETURNED BY THE TOOLS FOR THIS REQUEST:\n" + "\n".join(returned) if returned else "")
         answer = self.engine.complete(self._routed({
             "messages": [{"role": "system", "content": policy.REVIEW_INSTRUCTIONS},
-                         {"role": "user", "content": f"REQUEST:\n{self.question}\n\nCALL: {operation or ''}\n"
+                         {"role": "user", "content": f"REQUEST:\n{request}\n\nCALL: {operation or ''}\n"
                                                      + "\n".join(lines) + " /no_think"}],
             "max_tokens": 4, "temperature": 0, "grammar": policy.REVIEW_GRAMMAR, "cache_prompt": False,
             "chat_template_kwargs": {"enable_thinking": False}}))
@@ -260,6 +282,19 @@ class Turn:
         if not isinstance(arguments, dict):
             entry["result"] = json.dumps({"success": False, "error": {"code": "invalid_arguments",
                                                                        "message": "the arguments are not a JSON object"}})
+        elif approved(name) and name in self.listed:
+            # an approved server's tool gets the model's arguments as they are; the math checks are not its
+            plain = {k: v for k, v in arguments.items() if not str(k).startswith("_")}
+            ungiven = self._ungiven(name, plain)
+            if ungiven:
+                entry["result"] = json.dumps({"success": False, "error": {
+                    "code": "needs_user_input",
+                    "message": "the request never gave " + ", ".join(ungiven) + "; ask the user with "
+                               + policy.CLARIFY + " instead of guessing"}})
+                entry["reply"] = json.loads(entry["result"])
+            else:
+                text, ok = self.engine.call_checked(name, plain, timeout=900)
+                entry.update(result=text, state="completed" if ok else "failed")
         elif not policy.is_math(name):
             entry["result"] = json.dumps({"success": False, "error": {"code": "invalid_arguments",
                                                                        "message": f"no such tool: {name[:60]}"}})
@@ -280,16 +315,61 @@ class Turn:
                    "call": dict(_describe(entry), id=entry["id"], state=entry["state"], result=entry["result"][:20000])})
         return entry
 
+    def _clarification(self):
+        """The question for the user after an approved server's tool lacked a value; None when the turn never reached
+        one, and the math wording applies."""
+        reached = [c for c in self.calls if approved(c["name"])]
+        if not reached:
+            return None
+        wanted = []
+        for c in reached:
+            if (c.get("reply") or {}).get("error", {}).get("code") == "needs_user_input":
+                try:
+                    wanted += [k for k in json.loads(c["arguments"]) if k not in wanted]
+                except (ValueError, TypeError, AttributeError):
+                    pass
+        named = ", ".join(f"`{k}`" for k in wanted)
+        if self.lang == "es":
+            return f"Para responder necesito que me indiques {named}." if named else "Para responder necesito más datos. ¿Puedes concretar la petición?"
+        return f"To answer, I need you to tell me {named}." if named else "To answer, I need more details. Could you make the request more specific?"
+
+    def _ungiven(self, name, arguments):
+        """Numbers and single words an approved tool would get that neither the user nor an earlier result gave.
+        Free text with spaces, booleans and the values the tool's schema lists are the model's to write."""
+        schema = ((self.definitions.get(name) or {}).get("function") or {}).get("parameters") or {}
+        properties = schema.get("properties") if isinstance(schema.get("properties"), dict) else {}
+        given = "\n".join([_text(t["content"]) for t in self.history if t["role"] == "user"] + [self.question]
+                          + [c["result"] for c in self.calls if c["state"] == "completed"]).lower()
+        numbers = {value for _, value, _, _ in policy.numbers(given)}
+        ungiven = []
+        for key, value in arguments.items():
+            if isinstance(value, bool) or value in ((properties.get(key) or {}).get("enum") or []):
+                continue
+            if isinstance(value, (int, float)) and float(value) not in numbers:
+                ungiven.append(f"{key}={value}")
+            elif isinstance(value, str) and value.strip() and " " not in value.strip():
+                word = value.strip().lower()
+                # the parameter's own name or a <placeholder> is not a value either
+                if word not in given or word == key.lower() or "<" in word or ">" in word:
+                    ungiven.append(f"{key}={value.strip()!r}")
+        return ungiven
+
     def run(self):
         listed = self.engine.tools()
+        # an approved server's tool runs only if the engine listed it
+        self.listed = {t.get("tool") for t in listed}
+        self.definitions = {t.get("tool"): t.get("definition") for t in listed}
         if not listed:
             # no math tools on this engine: the model answers as it is
             message = self._generate(self._body(None, None, None))
             return message.get("content") or "", "answered"
         tools = [t["definition"] for t in listed if isinstance(t.get("definition"), dict)]
+        # with an approved server the model may also ask for what its tools need, in any round
+        clarify_anywhere = any(approved(t.get("tool")) for t in listed)
         self.intent, asked = self._intent()
         self.emit({"type": "intent", "intent": self.intent, "asked_model": asked})
-        gate = policy.requires_tools(self.intent)
+        # a calculation must go through the math tools, so it only binds when the engine has them
+        gate = policy.requires_tools(self.intent) and any(policy.is_math(t.get("tool")) for t in listed)
         required = gate
         note, finalizing, regrounded = None, False, False
         for round_number in range(self._rounds()):
@@ -300,7 +380,7 @@ class Turn:
                 body = self._body(tools + [policy.CLARIFY_TOOL], "required", note)
             else:
                 standing = note or (policy.STANDING_NOTE if any(policy.is_math(c["name"]) for c in self.calls) else None)
-                body = self._body(tools, "auto", standing)
+                body = self._body(tools + ([policy.CLARIFY_TOOL] if clarify_anywhere else []), "auto", standing)
             note = None
             message = self._generate(body)
             content = message.get("content") or ""
@@ -310,8 +390,9 @@ class Turn:
             closing = None
             if not finalizing:
                 closing = self.guard.closing(names, arguments, self.lang)
-                if closing is None and first and gate and policy.CLARIFY in names:
-                    closing = policy.unresolved(policy._missing(arguments[names.index(policy.CLARIFY)]), self.lang)
+                if closing is None and policy.CLARIFY in names and ((first and gate) or clarify_anywhere):
+                    closing = self._clarification() or \
+                        policy.unresolved(policy._missing(arguments[names.index(policy.CLARIFY)]), self.lang)
             if calls and closing is None and not finalizing:
                 entries = [self._run_call(c) for c in calls]
                 for entry in entries:
@@ -328,7 +409,9 @@ class Turn:
                         continue
                     return policy.unresolved(lang=self.lang), "unresolved"
                 continue
-            kind, value = policy.step(self.sources, self.calls, content, closing, finalizing, regrounded, required, self.lang)
+            # what an approved server returned is a source the answer may quote, like the user's words
+            sources = self.sources + [c["result"] for c in self.calls if approved(c["name"]) and c["state"] == "completed"]
+            kind, value = policy.step(sources, self.calls, content, closing, finalizing, regrounded, required, self.lang)
             if kind == "keep":
                 final = closing if closing is not None else content
                 if closing is not None:
@@ -351,7 +434,8 @@ def _describe(call):
     except ValueError:
         arguments = call["arguments"]
     entry = {"tool": call["name"], "arguments": arguments,
-             "status": "ok" if policy.succeeded(call) else policy.error_code(reply) or "execution_error"}
+             "status": "ok" if policy.succeeded(call) or (approved(call["name"]) and call["state"] == "completed")
+             else policy.error_code(reply) or "execution_error"}
     if reply.get("interpreted_input"):
         entry["interpreted_input"] = reply["interpreted_input"]
     if reply.get("result_kind"):
@@ -369,7 +453,7 @@ def run(arguments, emit=None, register=None):
         return {"status": 400, "error": {"message": "requests with tools are answered by the raw endpoint",
                                          "type": "invalid_request_error"}}
     started = time.monotonic()
-    engine = Engine(str(arguments.get("base_url") or ""), arguments.get("api_key"))
+    engine = Engine(str(arguments.get("base_url") or ""), arguments.get("api_key"), arguments.get("agent_key"))
     if register:
         register(engine)
     try:
