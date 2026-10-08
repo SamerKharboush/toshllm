@@ -3,6 +3,33 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.87.18-beta.1] - 2026-10-08
+
+Upstream 0.87.16, 0.87.17 and 0.87.18 merged. All four earlier betas are carried forward
+unchanged. The GCN parity fix, the xdev stall and `NSMakeRange` fixes, the Metal memset
+regression test and the tensor-split fallback all survive, renumbered and, where the new
+llama.cpp release required it, regenerated.
+
+### Changed
+
+- **llama.cpp moves from `9575389609d6` to `d8123504938`** (v0.6.0).
+- **The patch series is regrouped by upstream**: one patch per feature in a folder per area, so
+  `patches/llama/{core,metal,mgpu,model,moe,quant,server,spec}/`. Upstream owns 0001-0034. This
+  fork's four patches moved to 0035 (timestep GCN parity), 0036 (xdev stall and `NSMakeRange`),
+  0037 (the Metal memset range test) and 0038 (tensor split falls back to layers). 0037 and 0038
+  were regenerated: upstream's regrouping rewrote `tests/CMakeLists.txt` and moved the
+  tensor-split abort, so the old line numbers no longer addressed the same lines. The logic in
+  both is byte-for-byte what shipped in 0.87.15-beta.5.
+- The 42 precompiled Metal libraries grew with the new kernels. One of them, `fa`, is rebuilt
+  from source on first launch because its fingerprint no longer matches, which the fingerprint
+  gate reports rather than silently running the wrong kernels.
+
+### Fixed
+
+- Carried forward unchanged: the discovery pin, the exit-86 layer-split fallback, the multi-GPU
+  default, the fit note, the peer-bridge test seam, the `#if compiler(>=6.2)` guards and the
+  `[Data]` video decode.
+
 ## [0.87.18] - 2026-10-07
 
 ### Fixed

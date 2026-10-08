@@ -94,6 +94,12 @@ Firellama runs the biggest models this Mac Pro can hold at the fastest tok/s it 
 - Precompiled Metal kernels are no longer blocked (2026-10-03): Xcode 26.3 and the Metal
   toolchain are installed on this machine, first launch is 16 s against 143 s, shipped in
   beta.3.
+- **Upstream 0.87.16/17/18 merged 2026-10-08** (0.87.18-beta.1). llama.cpp pin moved
+  9575389609d6 -> d8123504938 (v0.6.0) and upstream regrouped the series into area folders
+  (core/metal/mgpu/model/moe/quant/server/spec), so ours moved to 0035-0038 and the series is
+  38 patches. 0037 and 0038 regenerated; logic unchanged. Gates: test-backend-ops 11682/11682 on
+  MTL0, test-metal-memset all checks passed, swift test 393 tests 15 skipped 0 failures, SymPy
+  engine integration 14 tests 1 skipped 0 failures.
 - **Upstream 0.87.15 merged 2026-10-03** (0.87.15-beta.5). Math answers come from one agent in the
   engine, for the chat, the web chat and API clients. Upstream took patch 0127, so ours moved to
   0128-0131; the series is 126 patches. Gates: test-backend-ops 10721/10721 on MTL0,
