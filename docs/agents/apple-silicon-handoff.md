@@ -7,14 +7,19 @@ exactly what to work on.
 
 Written 2026-10-02, updated 2026-10-03 for `0.87.15-beta.5`.
 
-**Upstream 0.87.16, 0.87.17 and 0.87.18 are merged** (0.87.18-beta.1). The AMD indexer for
-Flash-Next, MTP drafts sampled and verified by rejection, the memory plan reading experts from
-disk, and fixes for answers that stopped mid-sentence, reasoning-off models that still reasoned,
-and the microphone entitlement are all carried forward. The math agent from 0.87.15 is still here.
+**Upstream 0.87.19 through 0.87.23 are merged** (0.87.23-beta.1). Turbo values on 64-lane cards
+get the split attention kernels so a long chat no longer aborts the engine, Qwen-Image 2.1 Turbo
+reaches its ceiling, an answer that needs no calculation streams as the model writes it, and
+Llama 4's tool calls are read in both of its formats. Everything from 0.87.15 onward is still here.
 
-**The llama.cpp pin moved to `d8123504938`** (v0.6.0) and **upstream regrouped the patch series**:
+**The llama.cpp pin is `d8123504938`** (v0.6.0) and **upstream's patch series is grouped by area**:
 one patch per feature in a folder per area, so `patches/llama/{core,metal,mgpu,model,moe,quant,server,spec}/`.
 Upstream owns 0001-0034; this fork's four sit at 0035-0038 and the series is 38 llama patches.
+
+Note the shape of the last two merges. Upstream did not move the pin and added no patch numbers
+across 0.87.19-0.87.23, so nothing of ours needed regenerating and the four patches held their
+numbers. The merge before that moved both, and two of ours had to be regenerated. Neither is the
+default: check both every time.
 
 Two things to know before citing a number or editing a patch:
 

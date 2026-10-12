@@ -3,6 +3,28 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.87.23-beta.1] - 2026-10-12
+
+Upstream 0.87.19 through 0.87.23 merged. The 0.87.18-beta.1 fork release stays as its own
+release. Every fix this fork carries is unchanged: the engine pin did not move and upstream added
+no new patch numbers, so none of the four patches needed a regeneration for the first time since
+0.87.16.
+
+### Changed
+
+- **llama.cpp stays pinned at `d8123504938`** (v0.6.0). Upstream did not move it across these five
+  releases, so the engine underneath is the same build 0.87.18-beta.1 shipped.
+- **This fork's four patches keep their numbers**: 0035 (timestep GCN parity), 0036 (xdev stall and
+  `NSMakeRange`), 0037 (the Metal memset range test), 0038 (tensor split falls back to layers).
+  Upstream rewrote four of its own patches in this range — 0013, 0022, 0029 and 0030 — none of which
+  this fork touches. All 38 patches verified to apply to a pristine worktree of `d8123504938`.
+
+### Fixed
+
+- Carried forward unchanged: the discovery pin, the exit-86 layer-split fallback, the multi-GPU
+  default, the fit note, the peer-bridge test seam, the `#if compiler(>=6.2)` guards and the
+  `[Data]` video decode.
+
 ## [0.87.23] - 2026-10-12
 
 ### Fixed
