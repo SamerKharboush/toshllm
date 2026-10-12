@@ -879,6 +879,7 @@ final class ChatStore: ObservableObject {
             var accumulator = ChatStreamAccumulator()
             var availableTools = agentRun?.tools ?? []
             var hold = holdText
+            var dropLeadingSpace = false
             var gate = false
             var agentTurn = false
             var retryWithoutAgent = false
@@ -922,7 +923,7 @@ final class ChatStore: ObservableObject {
                 for try await line in bytes.lines {
                     if Task.isCancelled { throw CancellationError() }
                     bytesReceived += line.utf8.count + 1
-                    // the agent sends no tokens until its answer is checked; its keep-alives show it is working
+                    // between the passes the agent sends keep-alives, which show it is working
                     if agentTurn, line.hasPrefix(":") {
                         let owner = self
                         await MainActor.run { owner?.lastStreamActivity = Date() }
@@ -939,11 +940,25 @@ final class ChatStore: ObservableObject {
                         if event["type"] as? String == "pass", event["state"] as? String == "end" {
                             agentPassTokens = ((event["prompt_tokens"] as? Int) ?? 0) + ((event["completion_tokens"] as? Int) ?? 0)
                         }
+                        // a pass whose answer needs no check streams; its text goes if the pass ends in tool calls
+                        if event["type"] as? String == "pass", event["state"] as? String == "start" {
+                            hold = event["live"] as? Bool != true
+                        } else if event["type"] as? String == "retract" {
+                            accumulator.visible = ""
+                            dropLeadingSpace = true
+                            lastFlush = .distantPast
+                            flush()
+                        }
                         let owner = self
                         await MainActor.run { owner?.agentEvent(event, conversation: convID) }
                         continue
                     }
                     guard let event = try accumulator.consume(line) else { continue }
+                    // the engine separates the answer from retracted text for clients that keep it
+                    if dropLeadingSpace, !accumulator.visible.isEmpty {
+                        accumulator.visible = String(accumulator.visible.drop(while: \.isWhitespace))
+                        dropLeadingSpace = accumulator.visible.isEmpty
+                    }
                     if let progress = event.progress { buffer.writeProgress(progress) }
                     if event.receivedContent {
                         let now = Date()
@@ -2944,7 +2959,7 @@ struct NativeChatView: View {
                 case .message(let msg):
                     messageRow(msg, isNewest: msg.id == newestID)
                         .flippedUpsideDown()
-                        .id(msg.id)
+                        .id(row.id)
                 case .tools(let rounds):
                     toolsRow(rounds)
                         .flippedUpsideDown()

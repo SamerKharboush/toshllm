@@ -3,6 +3,59 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.87.23] - 2026-10-12
+
+### Fixed
+
+- **LLMs: turbo values in the key-value cache no longer close the engine on Radeon Vega, RX 400/500, FirePro and their Radeon Pro versions.** The suggested q8_0 keys with turbo4 values quit once a chat passed a few thousand tokens. Reported in [#119](https://github.com/engeldlgado/toshllm/issues/119).
+- **Chat: an answer that calls a tool no longer shows up twice while the next step writes.** The step before the tool kept its bubble and repeated the new text word for word until the turn ended. Reported in [#117](https://github.com/engeldlgado/toshllm/issues/117).
+
+## [0.87.22] - 2026-10-10
+
+### Changed
+
+- **Images: Qwen-Image 2.1 Turbo now downloads Unsloth's builds.** The four sizes weigh and run the same as before; a Turbo already downloaded from AtomicChat keeps working without downloading it again.
+
+### Improved
+
+- **Images: the last stage of every image is shorter again.** On a Radeon RX 6700 XT it goes from 9.9 to 8.8 seconds for Z-Image Turbo at 1024x1024 and from 33.3 to 31.0 for Qwen-Image 2.1 Turbo at 1920x1920, with the same image.
+
+### Fixed
+
+- **Images: Qwen-Image 2.1 can be set to 1920 px on a card that also draws the desktop.** The size list stopped at 1792, one step below the size 0.87.21 made possible.
+
+## [0.87.21] - 2026-10-10
+
+### Added
+
+- **Images: Qwen-Image 2.1 Turbo, in four sizes from 8 GB up.** It draws in 8 steps instead of 25, so a 1024x1024 image takes about a minute on a Radeon RX 6700 XT; like Qwen-Image 2.1 it writes text, edits from reference images and has a non-commercial license.
+
+### Improved
+
+- **Images: large images generate faster on Radeon RX 6000 and Radeon Pro W6000.** On a Radeon RX 6700 XT each step of a 1920x1920 Qwen-Image 2.1 Turbo image takes 32.6 seconds instead of 37.1, with the same image.
+- **Images: the last stage of every image takes about half the time.** On a Radeon RX 6700 XT it goes from 12.6 to 5.7 seconds for Qwen-Image 2.1 Turbo at 1024x1024 and from 18.6 to 9.9 for Z-Image Turbo, with the same image.
+- **Video: Wan videos take less time, with the same frames.** On a Radeon RX 6700 XT a 17-frame 832x480 Wan 2.1 1.3B video at 10 steps takes 187 seconds instead of 206.
+
+### Fixed
+
+- **Images: large images no longer stop with a GPU timeout on a card that also draws the desktop.** On a Radeon RX 6700 XT, Qwen-Image 2.1 Turbo at 1920x1920 failed halfway through and now completes, at the same speed.
+
+## [0.87.20] - 2026-10-09
+
+### Improved
+
+- **LLMs: i-quant, Q2_0, MXFP4 and Q8_0 MoE models with an MTP head generate faster when experts run on the CPU.** With MoE offload on a Radeon RX 6700 XT, Qwen3.6-35B-A3B writes 8-11% faster in UD-IQ2_M and UD-IQ3_XXS; under Dynamic MoE it gains 7-10% with 42% of the experts in video memory and nothing with the whole 12 GB card.
+
+## [0.87.19] - 2026-10-08
+
+### Improved
+
+- **LLMs: with the math tools on, answers that need no calculation stream again.** Only calculations wait for their check now, in the app's chat, the web chat and API clients.
+
+### Fixed
+
+- **LLMs: Llama 4 no longer stops with an error when the chat offers it tools.** Its text answers go out as such, and its tool calls are read in either of the two formats it writes.
+
 ## [0.87.18-beta.1] - 2026-10-08
 
 Upstream 0.87.16, 0.87.17 and 0.87.18 merged. All four earlier betas are carried forward
