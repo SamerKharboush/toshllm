@@ -110,6 +110,7 @@ CMAKE_FLAGS=(
     -DBUILD_SHARED_LIBS=OFF
     -DGGML_METAL=ON
     -DGGML_METAL_EMBED_LIBRARY=ON
+    -DGGML_METAL_MGPU=ON
     # Compile the experimental MoE cache into the bundled engine. It remains
     # inert unless the app explicitly sets TOSH_MOE_MODE at process launch.
     -DTOSH_ENABLE_DYNAMIC_MOE=ON
