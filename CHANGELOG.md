@@ -3,6 +3,21 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.87.24] - 2026-10-14
+
+### Added
+
+- **Chat: the model can draw places, routes and areas on a map under its answer.** What it draws is dashed and marked as approximate; a route by road comes from Apple Maps, with its distance and time, only after you allow the internet.
+- **Chat: an extension's agent can attach a map of its data to an answer.** A click on a feature shows its attributes, and the features export as GeoJSON.
+- **Chat: a remote MCP server can be offered to the server agent, like a local one.** It works over HTTP or SSE, with its headers kept in the Keychain.
+- **Tools and agents from a folder of extensions, each with its own settings page.** An extension stays off until you approve it; docs/extensions.md has the format and two examples to copy.
+- **Ukrainian interface.** Contributed by [andruwa13](https://github.com/andruwa13) in [#121](https://github.com/engeldlgado/toshllm/pull/121).
+
+### Improved
+
+- **Chat: an answer that ends inside its reasoning keeps that reasoning under the warning instead of disappearing.** Reported in [#122](https://github.com/engeldlgado/toshllm/issues/122).
+- **Chat: the cards of MCP tool calls lay out their arguments and result line by line, with one line on what came back.**
+
 ## [0.87.23-beta.1] - 2026-10-12
 
 Upstream 0.87.19 through 0.87.23 merged. The 0.87.18-beta.1 fork release stays as its own

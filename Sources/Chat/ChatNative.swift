@@ -90,6 +90,9 @@ struct ChatMessage: Identifiable, Codable, Equatable {
     /// What the model wrote before the tool calls of this round. It is not an answer, so it is never
     /// the body; it is dropped once a math call of the round does not succeed.
     var interim: String? = nil
+    /// An agent's request for the map of this answer, sent back as it came, and the map once fetched.
+    var mapRequest: String? = nil
+    var map: ChatMap? = nil
 
     var estimatedTokens: Int {
         let text = role == "assistant" ? parts.body + (settledInterim ?? "") : wireContent
@@ -396,6 +399,8 @@ final class ChatStore: ObservableObject {
     @Published var projects: [ChatProject] = []
     @Published var currentID: UUID?
     @Published var generating = false
+    @Published var mapLoading: Set<UUID> = []
+    @Published var mapFailed: Set<UUID> = []
     /// Conversation currently streaming, so its live bubble only shows there.
     @Published var generatingConvID: UUID?
     @Published var compacting = false
@@ -443,16 +448,19 @@ final class ChatStore: ObservableObject {
             let arguments: String = {
                 if let text = call["arguments"] as? String { return text }
                 guard let value = call["arguments"], JSONSerialization.isValidJSONObject(value),
-                      let data = try? JSONSerialization.data(withJSONObject: value, options: [.sortedKeys])
+                      let data = try? JSONSerialization.data(withJSONObject: value, options: [.sortedKeys, .withoutEscapingSlashes])
                 else { return "{}" }
                 return String(decoding: data, as: UTF8.self)
             }()
             let result = call["result"] as? String ?? ""
             let serverID = call["id"] as? String ?? UUID().uuidString
             let now = Date()
+            // an agent that only reports the call's status still shows its successful calls as such
+            let completed = (call["state"] as? String).map { $0 == "completed" } ?? (call["status"] as? String == "ok")
+            let summary = (call["summary"] as? String).map { String($0.prefix(400)) }
             let toolCall = ChatToolCall(serverID: serverID, name: call["tool"] as? String ?? "", arguments: arguments,
-                                        result: result, state: call["state"] as? String == "completed" ? .completed : .failed,
-                                        startedAt: now, finishedAt: now)
+                                        result: result, state: completed ? .completed : .failed,
+                                        startedAt: now, finishedAt: now, summary: summary?.isEmpty == false ? summary : nil)
             let reply = ChatMessage(role: "tool", content: ToolResultLimit.apply(result), toolCallID: serverID)
             if let current = agentPassMessage[id], current.pass == pass,
                let j = conversations[i].messages.firstIndex(where: { $0.id == current.messageID }) {
@@ -490,8 +498,7 @@ final class ChatStore: ObservableObject {
     nonisolated let headless: Bool
 
     private var fileURL: URL {
-        let dir = storageDirectory ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("ToshLLM")
+        let dir = storageDirectory ?? AppSupport.directory
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir.appendingPathComponent("conversations.json")
     }
@@ -568,9 +575,7 @@ final class ChatStore: ObservableObject {
     /// Erases the stored conversations without a store: the settings window can
     /// outlive the chat window, and then nothing holds them in memory.
     static func eraseStoredConversations() {
-        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("ToshLLM")
-        try? FileManager.default.removeItem(at: dir.appendingPathComponent("conversations.json"))
+        try? FileManager.default.removeItem(at: AppSupport.directory.appendingPathComponent("conversations.json"))
         let slots = ServerSettings.primarySlotCacheDir
         guard let files = try? FileManager.default.contentsOfDirectory(at: slots,
                                                                       includingPropertiesForKeys: nil)
@@ -799,7 +804,8 @@ final class ChatStore: ObservableObject {
                         sampling: ChatSamplingSettings = ChatSamplingSettings(),
                         modalities: ModelModalities? = nil,
                         continuationInstruction: String? = nil,
-                        agentRun: AgentRunContext? = nil) {
+                        agentRun: AgentRunContext? = nil,
+                        agentDeclined: Bool = false) {
         generating = true
         generatingConvID = conversations[i].id
         live.reset()
@@ -817,6 +823,7 @@ final class ChatStore: ObservableObject {
         } ?? system)
         let toolsEnabled = UserDefaults.standard.bool(forKey: SettingsKeys.agentToolsEnabled)
             || SymPyToolsService.isEnabled || ScientificToolsService.isEnabled
+            || !EngineExtensions.chatToolPrefixes().isEmpty
         let javaScriptEnabled = UserDefaults.standard.bool(forKey: SettingsKeys.jsSandboxEnabled)
         let memoryToolsEnabled = ChatMemoryService.isEnabled
         let agentTurnLimit = Self.configuredAgentTurnLimit
@@ -829,7 +836,7 @@ final class ChatStore: ObservableObject {
         let request = agentRun == nil ? userTexts.last : nil
         let agentHistory = Self.agentHistory(system: systemWithCwd, summary: conversations[i].summary,
                                              messages: conversations[i].messages, from: conversations[i].summarizedCount ?? 0)
-        let agentAllowed = agentRun == nil && continuationInstruction == nil && !Self.serverAgentMissing
+        let agentAllowed = agentRun == nil && continuationInstruction == nil && !Self.serverAgentMissing && !agentDeclined
         var history = Self.requestHistory(system: systemWithCwd,
                                           summary: conversations[i].summary,
                                           messages: conversations[i].messages,
@@ -988,6 +995,8 @@ final class ChatStore: ObservableObject {
                     }
                     if javaScriptEnabled { availableTools.append(JavaScriptSandboxService.tool) }
                     if memoryToolsEnabled { availableTools.append(contentsOf: ChatMemoryService.tools) }
+                    if ChatMapTool.isEnabled { availableTools.append(ChatMapTool.tool) }
+                    if ChatMapTool.isEnabled && ChatRoadRoute.isEnabled { availableTools.append(ChatRoadRoute.tool) }
                     availableTools += await ToshMCPService.shared.discoverTools()
                     if ToolSupport.isBlocked(ToolSupport.currentModelIdentity) { availableTools = [] }
                     if let enabledToolNames {
@@ -997,13 +1006,15 @@ final class ChatStore: ObservableObject {
                 }
                 // only math tools: the server agent runs the turn. A math tool the user still approves call by
                 // call keeps it in this loop, since the server cannot ask. MCP servers shared with the engine
-                // are only reached through that agent.
-                let engineShared = !ToolSupport.isBlocked(ToolSupport.currentModelIdentity)
-                    && MCPServerStore.load().contains(where: \.sharedWithEngine)
-                agentTurn = agentAllowed && (availableTools.isEmpty ? engineShared : availableTools.allSatisfy {
-                    MathTranscriptionService.isMathTool($0.name)
-                        && ChatToolsService.isAlwaysAllowed($0.name, bundled: $0.mcpServerID == nil)
-                })
+                // are only reached through that agent, like the servers a build bundles with its own agent.
+                let toolsAllowed = !ToolSupport.isBlocked(ToolSupport.currentModelIdentity)
+                let active = EngineExtensions.active()
+                let engineShared = toolsAllowed
+                    && (MCPServerStore.load().contains(where: \.sharedWithEngine) || active.contains { !($0.manifest.servers ?? [:]).isEmpty })
+                // an extension that brings its own agent gets every turn first; it may hand back those that are not its own
+                let extensionAgent = toolsAllowed && active.contains(where: \.hasAgent)
+                agentTurn = agentAllowed
+                    && (extensionAgent || (availableTools.isEmpty ? engineShared : !Self.hasOwnTools(availableTools)))
                 if agentTurn { hold = true }
 
                 var req = URLRequest(url: URL(string: "http://127.0.0.1:\(port)/v1/chat/completions")!)
@@ -1058,7 +1069,9 @@ final class ChatStore: ObservableObject {
                 // a request for a computed result may not be answered before a math tool is called
                 if agentTurn {
                     body["messages"] = agentHistory
-                    body["tosh"] = ["max_rounds": agentTurnLimit]
+                    var tosh: [String: Any] = ["max_rounds": agentTurnLimit]
+                    if Self.hasOwnTools(availableTools) { tosh["client_tools"] = true }
+                    body["tosh"] = tosh
                 } else if let request, availableTools.contains(where: { MathTranscriptionService.isMathTool($0.name) }) {
                     let (intent, asked) = await MathIntent.decide(request, context: Array(userTexts.dropLast()), port: port)
                     AppLog.chat.notice("math intent \(intent.rawValue, privacy: .public)\(asked ? " (model)" : "", privacy: .public)")
@@ -1191,7 +1204,9 @@ final class ChatStore: ObservableObject {
             }
             let ttft: Double? = tFirst.map { $0.timeIntervalSince(tSent) * 1000 }
             let hasVisibleAnswer = !accumulator.visible.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            let streamedText = hasVisibleAnswer ? composed() : ""
+            // a turn that ended inside its reasoning keeps it, under the warning, instead of losing it
+            let keepsReasoning = !accumulator.reasoning.isEmpty && !cancelled && !reportedError
+            let streamedText = hasVisibleAnswer || keepsReasoning ? composed() : ""
             let finalUsage = accumulator.usage
             let finalAccept = accumulator.mtpAccept
             let finalTimings: ChatTimings? = {
@@ -1233,12 +1248,16 @@ final class ChatStore: ObservableObject {
             let wasAgentTurn = agentTurn
             let passTokens = agentPassTokens
             let finalMeta = agentMeta
+            let declined = wasAgentTurn && !wasCancelled && !didReportError && !hasVisibleAnswer
+                && finalToolCalls.isEmpty && Self.agentDeclined(finalMeta)
             let (shouldDeliverQueued, followed): (Bool, Bool) = await MainActor.run {
-                if retry, let index = store?.conversations.firstIndex(where: { $0.id == convID }) {
-                    Self.serverAgentMissing = true
+                if retry || declined, let index = store?.conversations.firstIndex(where: { $0.id == convID }) {
+                    if retry { Self.serverAgentMissing = true }
+                    else { AppLog.chat.notice("the agent left this turn to the chat's own tools") }
                     store?.finish(conversation: convID, text: "", speed: nil)
                     store?.stream(into: index, port: port, temperature: temperature, maxTokens: maxTokens,
-                                  system: system, thinking: thinking, sampling: sampling, modalities: modalities)
+                                  system: system, thinking: thinking, sampling: sampling, modalities: modalities,
+                                  agentDeclined: declined)
                     return (false, true)
                 }
                 if !wasCancelled && !didReportError && hadReasoning && !hasVisibleAnswer
@@ -1293,6 +1312,9 @@ final class ChatStore: ObservableObject {
                 store?.finish(conversation: convID, text: shown, speed: finalSpeed,
                               mtpAccept: finalAccept, timings: finalTimings,
                               toolCalls: finalToolCalls, interim: round.interim)
+                if wasAgentTurn, followUp == nil, let request = finalMeta?["map_request"] as? [String: Any] {
+                    store?.attachMapRequest(request, conversation: convID, port: port)
+                }
                 if shouldDeliverQueued {
                     if !finalToolCalls.isEmpty { store?.interruptPendingToolCalls(conversation: convID) }
                 } else if !wasCancelled && !didReportError && !finalToolCalls.isEmpty {
@@ -1339,6 +1361,7 @@ final class ChatStore: ObservableObject {
                     conversations[i].messages[j].timings = timings
                     conversations[i].messages[j].toolCalls = toolCalls.isEmpty ? nil : toolCalls
                     conversations[i].messages[j].model = ServerSettings.activeRouterModel()
+                    if toolCalls.isEmpty { Self.carryDrawnMap(&conversations[i], to: j) }
                 }
             }
             conversations[i].updated = Date()
@@ -1504,7 +1527,7 @@ final class ChatStore: ObservableObject {
         guard let request = pendingToolPermission else { return }
         pendingToolPermission = nil
         if decision == .deny {
-            let result = "Tool execution was denied by the user."
+            let result = request.name == ChatRoadRoute.toolName ? ChatRoadRoute.declined : "Tool execution was denied by the user."
             completeToolCall(request, result: result, state: .denied)
             advanceToolPermissions(conversation: request.conversationID)
             return
@@ -1534,6 +1557,15 @@ final class ChatStore: ObservableObject {
                         self?.runMemoryTool(request.name, arguments: arguments)
                             ?? ToolExecutionResult(content: "No open conversation.", isError: true)
                     }
+                } else if request.name == ChatMapTool.toolName {
+                    result = await MainActor.run {
+                        self?.drawMap(arguments: arguments, for: request)
+                            ?? ToolExecutionResult(content: "No open conversation.", isError: true)
+                    }
+                } else if request.name == ChatRoadRoute.toolName {
+                    let routed = await ChatRoadRoute.route(arguments: arguments, loc: Localizer())
+                    await MainActor.run { self?.attachMap(routed.map, for: request) }
+                    result = routed.result
                 } else if request.name == "exec_shell_command" {
                     result = try await ChatToolsService.executeStreaming(
                         name: request.name, arguments: arguments, port: context.port,
@@ -1717,6 +1749,20 @@ final class ChatStore: ObservableObject {
         "El motor dejó de responder y se detuvo para liberar memoria. Suele pasar con modelos MoE grandes en GPU AMD: usa un modelo denso (8B) o sube 'Expertos MoE en CPU'. / The engine stopped responding and was stopped to free memory. This happens with large MoE models on AMD GPUs: use a dense model (8B) or raise 'MoE experts on CPU'."
     }
 
+    /// Tools the chat runs itself, beyond the math ones the agent covers; the map tools never count, so turning
+    /// them on takes no turn away from the server agent.
+    nonisolated static func hasOwnTools(_ tools: [BuiltinToolInfo]) -> Bool {
+        tools.contains {
+            ![ChatMapTool.toolName, ChatRoadRoute.toolName].contains($0.name)
+                && !(MathTranscriptionService.isMathTool($0.name) && ChatToolsService.isAlwaysAllowed($0.name, bundled: $0.mcpServerID == nil))
+        }
+    }
+
+    /// The agent ran nothing and left the turn to the chat.
+    nonisolated static func agentDeclined(_ meta: [String: Any]?) -> Bool {
+        meta?["version"] as? Int == 1 && meta?["outcome"] as? String == "declined"
+    }
+
     // MARK: auto-compaction
 
     /// The conversation as the server agent takes it: what the user and the answers said. Tool calls
@@ -1830,6 +1876,38 @@ final class ChatStore: ObservableObject {
         return cutoff
     }
 
+
+    /// A map a tool call of this turn drew goes under the answer: the call itself is shown in a block of tools,
+    /// which draws no map.
+    nonisolated static func carryDrawnMap(_ conversation: inout Conversation, to answer: Int) {
+        let start = (conversation.messages[..<answer].lastIndex { $0.role == "user" } ?? -1) + 1
+        var layers: [ChatMap.Layer] = []
+        for k in start..<answer where conversation.messages[k].role == "assistant" {
+            if let map = conversation.messages[k].map {
+                layers += map.layers
+                conversation.messages[k].map = nil
+            }
+        }
+        guard !layers.isEmpty else { return }
+        conversation.messages[answer].map = ChatMap(layers: (conversation.messages[answer].map?.layers ?? []) + layers)
+    }
+
+    /// Draws the map the model asked for on the message that asked for it; the answer takes it when it ends.
+    private func drawMap(arguments: [String: Any], for request: PendingToolPermission) -> ToolExecutionResult {
+        let conversation = conversations.first(where: { $0.id == request.conversationID })
+        let asked = conversation?.messages.last(where: { $0.role == "user" })?.content ?? ""
+        let drawn = ChatMapTool.draw(arguments: arguments, loc: Localizer(), request: asked)
+        attachMap(drawn.map, for: request)
+        return drawn.result
+    }
+
+    /// Adds a tool's layers to the message that called it, beside those of another call of the same message.
+    private func attachMap(_ map: ChatMap?, for request: PendingToolPermission) {
+        guard let map, let i = conversations.firstIndex(where: { $0.id == request.conversationID }),
+              let j = conversations[i].messages.firstIndex(where: { $0.id == request.messageID }) else { return }
+        conversations[i].messages[j].map = ChatMap(layers: (conversations[i].messages[j].map?.layers ?? []) + map.layers)
+        save()
+    }
 
     func runMemoryTool(_ name: String, arguments: [String: Any]) -> ToolExecutionResult {
         guard ChatMemoryService.isEnabled else {
@@ -2083,10 +2161,13 @@ final class ChatStore: ObservableObject {
     }
 
     nonisolated static func emptyResponseMessage(finishReason: String?) -> String {
+        let loc = Localizer()
         if finishReason == "length" {
-            return "El modelo agotó el máximo de tokens durante el razonamiento; aumenta Máx. o desactiva Razonamiento / the model used all max tokens while reasoning; raise Max or disable Reasoning"
+            return loc.t("El modelo agotó el máximo de tokens durante el razonamiento; aumenta Máx. o desactiva Razonamiento.",
+                         "The model used all max tokens while reasoning; raise Max or turn Reasoning off.")
         }
-        return "El modelo terminó el razonamiento sin producir una respuesta visible; intenta regenerar o desactiva Razonamiento / the model finished reasoning without a visible answer; regenerate or disable Reasoning"
+        return loc.t("El modelo terminó el razonamiento sin producir una respuesta visible; intenta regenerar o desactiva Razonamiento.",
+                     "The model finished reasoning without a visible answer; regenerate or turn Reasoning off.")
     }
 
     func stop() {
@@ -3071,6 +3152,11 @@ struct NativeChatView: View {
                         chat.deleteMessageAndFollowing(msg.id)
                     })
                     .equatable()
+                if msg.role == "assistant", msg.map != nil || msg.mapRequest != nil {
+                    ChatMapSection(message: msg, loading: chat.mapLoading.contains(msg.id),
+                                   failed: chat.mapFailed.contains(msg.id),
+                                   onShow: { chat.loadMap(for: msg.id, port: port) })
+                }
             }
         }
     }
@@ -3992,6 +4078,14 @@ struct NativeChatView: View {
                 }
                 .buttonStyle(.borderless)
             }
+            if let agent = EngineExtensions.active().first(where: \.hasAgent) {
+                Label(loc.t("%@ recibe cada mensaje primero; los que no son de lo suyo pueden volver a estas herramientas.",
+                            "%@ gets every message first; the ones outside its own field can come back to these tools.",
+                            agent.manifest.name.pick(spanish: loc.isSpanish)),
+                      systemImage: "puzzlepiece.extension")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             Divider()
             ForEach(availableTools) { tool in
                 let enabled = chat.current?.enabledToolNames.map { $0.contains(tool.name) } ?? true
@@ -4787,7 +4881,7 @@ struct ConversationListView: View {
             .listStyle(.sidebar)
             .scrollContentBackground(.hidden)
 
-            Text("ToshLLM · macOS")
+            Text("\(AppInfo.name) · macOS")
                 .font(.system(size: 10, weight: .medium))
                 .tracking(1.5)
                 .foregroundStyle(.tertiary)
@@ -4952,7 +5046,7 @@ struct ConversationListView: View {
     private func exportArchive() {
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.json]
-        panel.nameFieldStringValue = "ToshLLM-conversations.json"
+        panel.nameFieldStringValue = "\(AppInfo.name)-conversations.json"
         guard panel.runModal() == .OK, let url = panel.url else { return }
         do {
             try chat.exportArchiveData().write(to: url, options: .atomic)
@@ -4966,7 +5060,7 @@ struct ConversationListView: View {
     private func exportJSONL() {
         let panel = NSSavePanel()
         if let jsonl = UTType(filenameExtension: "jsonl") { panel.allowedContentTypes = [jsonl] }
-        panel.nameFieldStringValue = "ToshLLM-conversations.jsonl"
+        panel.nameFieldStringValue = "\(AppInfo.name)-conversations.jsonl"
         guard panel.runModal() == .OK, let url = panel.url else { return }
         do {
             try chat.exportJSONLData().write(to: url, options: .atomic)
