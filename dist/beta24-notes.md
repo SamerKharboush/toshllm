@@ -89,19 +89,36 @@ a sloppy measurement.
 
 The reason is **not** peer-to-peer copies. `peer share 0.0%` and `peer bytes 0` in both runs,
 because both cards report `peer group 0`, `not bridged`. The tensor split instead splits each matvec
-across both cards and pays for it: 35520 allreduce exchanges and fused boundaries over 221 tokens,
-about 160 collectives per token per card, all host-staged (1.59 GB). Collective GPU time is 54.8 s
-against 2.8 s of encode CPU — the collective dominates the run. The layer split by contrast shows 0
-collectives and 222 plain cross-device copies.
+across both cards and pays for it in host-staged collectives: 35520 allreduce exchanges over 221
+tokens, exactly 160.01 per token per card, 1.59 GB through host memory. The layer split by contrast
+shows 0 collectives and 222 plain cross-device copies in total.
 
-The practical reading: 8.40 tok/s is a real number but far from what these cards could do, and the
-cost is on the collective path, not on the weights. Anyone tempted to spend time here should start
-by attacking that collective cost.
+**How much do those 160 collectives actually cost?** Less than the raw counters suggest. The
+`collective GPU` figure in the trace sums GPU-occupancy time per command buffer across both cards,
+and those intervals overlap each other, so it is not wall-clock and must not be read as a share of
+runtime. Two measurements bound it properly:
+
+- `TOSH_MGPU_NOWAIT=1` removes the partner wait entirely. Throughput was **8.40 tok/s**, identical
+  to the real run. The stall at the wait is not the cost.
+- The layer split does zero collectives at 5.12 tok/s. If the tensor split halved compute for free it
+  would run at about 10.2 tok/s. It runs at 8.40, so the whole collective path costs roughly **18%**
+  of decode, about 133 us per exchange.
+
+So the tensor split pays for 160 host-staged exchanges per token and still comes out 1.64x ahead.
+The collective path is worth attacking, but the ceiling on that is about 18%, and each exchange
+already issues its own command buffer with merge reuse already at 100%. The larger remaining cost
+is elsewhere: this engine runs wave64 mode, where decode mat-vecs go to the GPU but reductions are
+routed to the CPU, and prompt eval at 15.23 tok/s against decode at 8.40 shows the decode path is
+where the time is.
 
 One caveat worth knowing before benchmarking on this machine: a KeepAlive launchd agent
 (`com.user.llama-server`, `-ngl 0`, 12 threads, port 8080) runs in the background. It was unloaded
 for these measurements and reloaded afterwards. Its effect on the numbers turned out to be within
 noise, but it is there.
+
+Nothing above claims these are the last words on multi-GPU throughput for this hardware. It is one
+measured configuration on two unbridged D700s, recorded so the next person starts from a number
+rather than an impression.
 
 ## Install
 
