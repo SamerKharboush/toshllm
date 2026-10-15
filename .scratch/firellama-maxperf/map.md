@@ -97,20 +97,27 @@ Firellama runs the biggest models this Mac Pro can hold at the fastest tok/s it 
 - **Meta-backend tensor split measured against the layer split, 2026-10-15.** Qwen3-14B-Q4_K_M,
   -ngl 99 -c 16384 -t 10, both D700s, seed 42 temp 0, TOSH_MGPU_TRACE=1 + XDEV_COUNT=1.
   Parity PASSES: identical 20 token IDs on "The capital of France is" for both split modes.
-  Throughput: tensor 8.49 tok/s decode vs layer 5.02 — tensor wins by 1.69x, so criterion 2
-  passes; the expected flat-GCN outcome did not occur. But peer share is 0.0% and peer bytes 0 on
-  both, so the win is not from peer copies: tensor does 41920 allreduce exchanges and 41920 fused
-  boundaries over 261 tokens (160 collectives/token/card) at 1600.7 us per exchange, versus layer's
-  0 collectives and 222 plain xdev copies. All cross-device traffic is host-staged (1.96 GB).
-  Collective GPU time 67.1 s against encode CPU 3.4 s — the collective dominates the tensor run.
-  TOSH_XDEV was never printed because the atexit report only fires on the xdev path.
-  The first pass ran with a KeepAlive launchd agent (com.user.llama-server, -ngl 0, 12 threads,
-  port 8080) alive, which competes for CPU with the wave64 decode path. Re-ran both arms with it
-  unloaded to check whether it mattered. It does not: layer 5.02 -> 5.12, tensor 8.49 -> 8.40.
-  Within noise, and the 1.69x gap is unchanged. Clean figures are layer 5.12, tensor 8.40.
-  Trace on the clean tensor run: 35520 exchanges, 35520 fused boundaries, 221 tokens,
-  160.01 collectives per token per card, host-staged 1.59 GB, peer bytes 0, peer share 0.0%,
-  collective GPU 54.8 s against encode CPU 2.8 s.
+  Throughput: tensor 8.40 tok/s decode vs layer 5.12. Parity held across four runs.
+  RETRACTED: an earlier entry here read the 1.64x gap as "tensor beats layer", and derived an
+  18% collective cost and 133 us per exchange from it. Both are void. Per-card work is identical
+  in the two modes (layer split 20 full layers, tensor split 40 layers at half width), so the gap
+  is not a collective measurement at all: a layer split is sequential by construction and a
+  single-token decode gives it nothing to overlap. bench-baseline 2026-09-30 line 6 vs 11 shows
+  Qwen3-4B-Q6_K at 12.00 tok/s single card and 11.96 on layer dual, i.e. 0.997x. The second card
+  contributes no concurrency. Collective cost is NOT MEASURED.
+  Also retracted: TOSH_MGPU_NOWAIT=1 was used as a control and returned an identical 8.40, which
+  was read as "the wait costs nothing". The flag is inert on this path. Its only call sites are the
+  peer-fused, peer-push and one-shot paths; the staged host-block path taken by decode on an
+  unbridged pair consults only TOSH_MGPU_WAIT_SATISFIED and TOSH_MGPU_BP_SATISFIED
+  (ggml-metal-context.m 3891-3898, 3939-3947). It was a null experiment, not a null result.
+  SETTLED: the exchange count. AllReduce fires only at GGML_BACKEND_SPLIT_AXIS_PARTIAL
+  (ggml-backend-meta.cpp 2539-2546, one per subgraph cut, 2866-2877), which requires both mul_mat
+  sources axis-0 split; for a dense transformer that is attn_output.weight and ffn_down.weight only
+  (llama-model.cpp 543, 584). Two collectives per layer is the design, matching Megatron TP. The
+  trace's 160.01 per token per card over 40 layers is those two seen as four directed exchanges,
+  since one AllReduce at TP2 issues two directed exchanges (ggml-metal.cpp 1486-1493). No surplus.
+  First pass ran with a KeepAlive launchd agent (com.user.llama-server, -ngl 0, 12 threads) alive.
+  Re-ran with it unloaded: layer 5.02 -> 5.12, tensor 8.49 -> 8.40, within noise.
 - **Upstream 0.87.24 merged 2026-10-15** (0.87.24-beta.1). Extensions framework (tools,
   agents and settings from folders, off until approved), maps in chat from Apple Maps, Ukrainian
   translation, a remote MCP server reachable through a local relay, and make-app.sh able to

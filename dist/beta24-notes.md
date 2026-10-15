@@ -93,23 +93,29 @@ across both cards and pays for it in host-staged collectives: 35520 allreduce ex
 tokens, exactly 160.01 per token per card, 1.59 GB through host memory. The layer split by contrast
 shows 0 collectives and 222 plain cross-device copies in total.
 
-**How much do those 160 collectives actually cost?** Less than the raw counters suggest. The
-`collective GPU` figure in the trace sums GPU-occupancy time per command buffer across both cards,
-and those intervals overlap each other, so it is not wall-clock and must not be read as a share of
-runtime. Two measurements bound it properly:
+**What the 1.64x does and does not mean.** It is not a measurement of collective efficiency, and
+it must not be read as one. Layer parallelism and tensor parallelism are not two settings of the same
+thing. A layer split assigns whole layers to cards and then runs them in sequence, because layer 20
+cannot start until layer 19 finishes. For a single-token decode there is nothing to overlap with, so a
+layer split over two cards delivers roughly what one card delivers, and
+`docs/bench-baseline-2026-09-30.md` measures exactly that: Qwen3-4B-Q6_K generates 12.00 tok/s on a
+single card and 11.96 tok/s on a layer split across two. The second card contributes no concurrency.
 
-- `TOSH_MGPU_NOWAIT=1` removes the partner wait entirely. Throughput was **8.40 tok/s**, identical
-  to the real run. The stall at the wait is not the cost.
-- The layer split does zero collectives at 5.12 tok/s. If the tensor split halved compute for free it
-  would run at about 10.2 tok/s. It runs at 8.40, so the whole collective path costs roughly **18%**
-  of decode, about 133 us per exchange.
+So the 8.40 against 5.12 gap measures the difference between a scheme that does not parallelise and
+one that does. It is not evidence that tensor parallelism is cheap, and the collective path's cost
+is **not yet measured**.
 
-So the tensor split pays for 160 host-staged exchanges per token and still comes out 1.64x ahead.
-The collective path is worth attacking, but the ceiling on that is about 18%, and each exchange
-already issues its own command buffer with merge reuse already at 100%. The larger remaining cost
-is elsewhere: this engine runs wave64 mode, where decode mat-vecs go to the GPU but reductions are
-routed to the CPU, and prompt eval at 15.23 tok/s against decode at 8.40 shows the decode path is
-where the time is.
+Two earlier readings of this data were wrong and are recorded here so they are not repeated. The
+trace's `collective GPU` figure sums GPU-occupancy per command buffer across both cards, and those
+intervals overlap, so it is not wall-clock and is not a share of runtime. And an attempt to derive a
+collective cost from it assumed a layer split halves per-card work; it does not, because per-card work
+is identical in both modes. Any percentage built on that assumption is void.
+
+One thing that is settled: the exchange count. The design is two AllReduce per layer, one after the
+attention output projection and one after the FFN down projection, because those are the only two
+axis-0 row-parallel matmuls. The trace's 160.01 per token per card over 40 layers is those two
+collectives seen as four directed exchanges each way, since with no peer group every crossing stages
+through host memory. There is no surplus to remove.
 
 One caveat worth knowing before benchmarking on this machine: a KeepAlive launchd agent
 (`com.user.llama-server`, `-ngl 0`, 12 threads, port 8080) runs in the background. It was unloaded
