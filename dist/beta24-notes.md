@@ -67,60 +67,66 @@ because `ggml-backend-meta.cpp` is in ggml's source list unconditionally. The `-
 flag that briefly appeared in this release's build script reads nothing in the tree and has been
 removed.
 
-## Tensor split vs layer split, measured properly
+## Split modes on two FirePro D700s
 
-Since the 8.21 figure raised the question, both split modes were run back to back on this engine
-and hardware: Qwen3-14B-Q4_K_M, `-ngl 99 -c 16384 -t 10`, both D700s, seed 42, temperature 0.
+On the same unbridged pair, Qwen3-14B (40 layers, batch-1 decode) sustains 8.40 tok/s with tensor
+split and 5.12 tok/s with layer split. Both modes emitted identical first 256 greedy token IDs and
+identical text; chosen-token logprobs agree to a max absolute delta of 2.0e-03 with a mean of
+1.5e-04, which is float summation order, not a difference in results. This is a throughput
+difference, not a results difference.
 
-**Output is identical.** Both modes return the same 20 token IDs on the same prompt, so the tensor
-split is correct on wave64 hardware:
-
-    12095 13 576 6722 315 15344 374 21718 13 576 6722 315 17689 374 24081 13 576 6722 315 9856
-
-**Throughput, tensor vs layer:**
+These are two placements of one model, not two implementations of one placement. Tensor split needs
+both cards at every layer. Layer split runs whole layers in sequence on one card and is therefore a
+capacity mode: it is what lets a model too large for one 6 GB card run at all. Both modes do the same
+per-card work. The difference is that tensor split overlaps the two cards and layer split does not.
+No percentage overhead is reported for either, because none is measured.
 
 | | tensor split | layer split |
 |---|---|---|
-| decode | **8.40 tok/s** | 5.12 tok/s |
+| decode | 8.40 tok/s | 5.12 tok/s |
 | prompt eval | 15.23 tok/s | 10.16 tok/s |
 
-So the tensor split is genuinely faster here, by 1.64x, and the 8.21 figure was not an artifact of
-a sloppy measurement.
+Method: engine 0.87.24-beta.1 (llama.cpp pinned `d8123504938` plus 38 fork patches), model
+Qwen3-14B-Q4_K_M, `-ngl 99 -c 16384 -t 10 -fa auto`, both cards via `GGML_METAL_DEVICES=2`,
+seed 42, temperature 0, batch-1 decode. Parity is N=1 per mode on a 256-token greedy continuation
+with no warmup discarded. Throughput is N=1 per mode over 200 decoded tokens. Single runs, so treat
+the throughput figures as indicative rather than settled. A KeepAlive launchd agent
+(`com.user.llama-server`, `-ngl 0`, 12 threads) was unloaded for these runs and reloaded after;
+its effect on the numbers was within noise.
 
-The reason is **not** peer-to-peer copies. `peer share 0.0%` and `peer bytes 0` in both runs,
-because both cards report `peer group 0`, `not bridged`. The tensor split instead splits each matvec
-across both cards and pays for it in host-staged collectives: 35520 allreduce exchanges over 221
-tokens, exactly 160.01 per token per card, 1.59 GB through host memory. The layer split by contrast
-shows 0 collectives and 222 plain cross-device copies in total.
+**There is no single-card baseline for 14B.** The model is about 9 GB and one D700 has 6 GB, so
+8.40 tok/s cannot be checked against a one-card run of the same model on this hardware, ever, and
+is not checked against one anywhere above. Note also that 14B tensor-split decode at 8.40 tok/s is
+slower than 4B on a single card at 12.00 tok/s: a larger model on two unbridged PCIe cards does not
+buy back what the extra traffic costs.
 
-**What the 1.64x does and does not mean.** It is not a measurement of collective efficiency, and
-it must not be read as one. Layer parallelism and tensor parallelism are not two settings of the same
-thing. A layer split assigns whole layers to cards and then runs them in sequence, because layer 20
-cannot start until layer 19 finishes. For a single-token decode there is nothing to overlap with, so a
-layer split over two cards delivers roughly what one card delivers, and
-`docs/bench-baseline-2026-09-30.md` measures exactly that: Qwen3-4B-Q6_K generates 12.00 tok/s on a
-single card and 11.96 tok/s on a layer split across two. The second card contributes no concurrency.
+### What is settled about the collective
 
-So the 8.40 against 5.12 gap measures the difference between a scheme that does not parallelise and
-one that does. It is not evidence that tensor parallelism is cheap, and the collective path's cost
-is **not yet measured**.
+The trace shows 160.01 exchanges per token per card over 40 layers. That is not surplus. The design
+is two AllReduce per layer, one after the attention output projection and one after the FFN down
+projection, because those are the only two axis-0 row-parallel matmuls; the exchange count is those
+two collectives seen as four directed exchanges each way, since with no peer group every crossing
+stages through host memory. Both cards report `peer group 0`, `not bridged`, so peer-direct copies
+cannot engage and `peer share` is 0.0% in every run.
 
-Two earlier readings of this data were wrong and are recorded here so they are not repeated. The
+### What is not measured
+
+The collective path's cost is **not yet measured**, and no figure is offered for it here.
+
+Two earlier readings of this data were wrong and are recorded so they are not repeated. The
 trace's `collective GPU` figure sums GPU-occupancy per command buffer across both cards, and those
 intervals overlap, so it is not wall-clock and is not a share of runtime. And an attempt to derive a
 collective cost from it assumed a layer split halves per-card work; it does not, because per-card work
-is identical in both modes. Any percentage built on that assumption is void.
+is identical in both modes. Any percentage built on that assumption is void, and so would be any
+percentage quoted against a modelled "2x the single-card number" ideal. A control that appeared to
+work, `TOSH_MGPU_NOWAIT=1`, returned a bit-identical result because the flag is inert on this path:
+decode on an unbridged pair takes the staged host-block route, which consults only
+`TOSH_MGPU_WAIT_SATISFIED` and `TOSH_MGPU_BP_SATISFIED`. A control that changes nothing proves
+nothing.
 
-One thing that is settled: the exchange count. The design is two AllReduce per layer, one after the
-attention output projection and one after the FFN down projection, because those are the only two
-axis-0 row-parallel matmuls. The trace's 160.01 per token per card over 40 layers is those two
-collectives seen as four directed exchanges each way, since with no peer group every crossing stages
-through host memory. There is no surplus to remove.
-
-One caveat worth knowing before benchmarking on this machine: a KeepAlive launchd agent
-(`com.user.llama-server`, `-ngl 0`, 12 threads, port 8080) runs in the background. It was unloaded
-for these measurements and reloaded afterwards. Its effect on the numbers turned out to be within
-noise, but it is there.
+When a model has no valid tensor split, the engine exits 86 and the app relaunches once by layers.
+That is a correctness fallback for arithmetic that cannot be divided, not a performance choice; no
+code path anywhere picks layer split because it is expected to be quicker.
 
 Nothing above claims these are the last words on multi-GPU throughput for this hardware. It is one
 measured configuration on two unbridged D700s, recorded so the next person starts from a number

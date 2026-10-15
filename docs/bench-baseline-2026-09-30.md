@@ -18,3 +18,12 @@ Notes:
 - Tensor engages both GPUs; events +8pct prefill, peer inert (cards not bridged, peer group 0).
 - tg flat across sync configs (wave64 CPU decode by design).
 - maxBufferLength 3.5 GiB per D700.
+- Host CPU is Xeon E5-2697 v2: Ivy Bridge-E, 22nm, 12c/24t at 2.7 GHz, 30 MB L3, DDR3-1866.
+  AVX and F16C only, no AVX2 and no FMA3, confirmed from machdep.cpu.features and leaf7_features.
+  TOSH_NO_AVX2=1 is required; building without it SIGILLs.
+
+Standing guard (re-measure, do not optimise):
+- layer dual must not fall below single MTL on any model that fits one card. Qwen3-4B-Q6_K is the
+  witness row: 11.96 tg dual against 12.00 single. A layer split is sequential by construction at
+  batch-1 decode, so one card's throughput is the ceiling, not a target to beat. Layer split is a
+  capacity mode. If this row ever drops below single MTL, that is a regression to fix.

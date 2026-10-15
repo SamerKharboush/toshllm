@@ -118,6 +118,21 @@ Firellama runs the biggest models this Mac Pro can hold at the fastest tok/s it 
   since one AllReduce at TP2 issues two directed exchanges (ggml-metal.cpp 1486-1493). No surplus.
   First pass ran with a KeepAlive launchd agent (com.user.llama-server, -ngl 0, 12 threads) alive.
   Re-ran with it unloaded: layer 5.02 -> 5.12, tensor 8.49 -> 8.40, within noise.
+  WIDENED PARITY 2026-10-15: 256 greedy tokens on a fixed prefix, one card-pair, sequential model
+  loads. Token IDs identical, text identical. Chosen-token logprobs max abs delta 1.96e-03, mean
+  1.53e-04, 166 of 256 positions above 1e-6. That is float summation order, not a results
+  difference. N=1 per mode, no warmup discarded. This build returns logprobs as
+  completion_probabilities, not logprobs.chosen_token_logprob.
+  Q3 CLOSED: 0038 is a correctness fallback only. It converts exactly one GGML_ABORT into exit 86
+  when a tensor's per-device slice width does not divide its full width times its repeat ratio
+  (ggml-backend-meta.cpp 1227-1256). No branch anywhere measures speed or memory. The app relaunches
+  once by layers on exit 86 (Server.swift 2093-2102) and pre-downgrades on an expert-scale tensor
+  (Server.swift 1269-1272). Note it converted only that one abort; sibling aborts at 741, 787, 1205,
+  1269 still kill the process.
+  ISA: host is Ivy Bridge-E (Xeon E5-2697 v2), 22nm, 12c/24t at 2.7 GHz, 30 MB L3, DDR3-1866.
+  Confirmed by feature bits, not brand string: machdep.cpu.features tops out at AVX1.0 RDRAND F16C,
+  leaf7_features carries no ISA extensions. No AVX2, no FMA3, so TOSH_NO_AVX2=1 is required.
+  Note build-engines.sh defaults to AVX2+FMA+BMI2 when neither knob is set, which SIGILLs here.
 - **Upstream 0.87.24 merged 2026-10-15** (0.87.24-beta.1). Extensions framework (tools,
   agents and settings from folders, off until approved), maps in chat from Apple Maps, Ukrainian
   translation, a remote MCP server reachable through a local relay, and make-app.sh able to
