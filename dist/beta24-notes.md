@@ -109,9 +109,31 @@ two collectives seen as four directed exchanges each way, since with no peer gro
 stages through host memory. Both cards report `peer group 0`, `not bridged`, so peer-direct copies
 cannot engage and `peer share` is 0.0% in every run.
 
-### What is not measured
+### What the collective costs, measured against a control
 
-The collective path's cost is **not yet measured**, and no figure is offered for it here.
+This is the counterfactual rather than a derivation. The engine has
+`TOSH_MGPU_ALLREDUCE_NOOP=1`, which keeps the split graph and every subgraph submission but performs
+no reduction and no cross-device synchronisation. Same partitioning, same model, same context, same
+thread count, one variable changed. The flag was confirmed to take effect before its numbers were
+read: it prints a warning at startup, its output differs from the real run, and the exchange count
+drops to zero.
+
+N=20 per arm, 3 warmup runs discarded, 50 decoded tokens each, medians:
+
+| | median | min | spread |
+|---|---|---|---|
+| tensor split, collectives on | 8.472 tok/s | 8.285 | 3.5% |
+| tensor split, reduction skipped | 8.894 tok/s | 8.890 | 0.1% |
+
+Removing the reduction and its synchronisation is worth **5.6 ms per token**, about 4.7% of the
+real token time. Treat that as an upper bound on the collective itself: the no-op also removes the
+cross-device sync, so the true collective cost is somewhat below it. The real arm's own 3.5% spread
+puts the resolution of this measurement at roughly 2 ms per token, so the effect is a little over
+twice the noise.
+
+That is the whole headroom on this path, and it is not worth an optimisation project. The honest
+summary is that host-staged collectives over unbridged PCIe on this pair cost single-digit percent
+of decode, not a multiple.
 
 Two earlier readings of this data were wrong and are recorded so they are not repeated. The
 trace's `collective GPU` figure sums GPU-occupancy per command buffer across both cards, and those

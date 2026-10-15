@@ -129,6 +129,18 @@ Firellama runs the biggest models this Mac Pro can hold at the fastest tok/s it 
   once by layers on exit 86 (Server.swift 2093-2102) and pre-downgrades on an expert-scale tensor
   (Server.swift 1269-1272). Note it converted only that one abort; sibling aborts at 741, 787, 1205,
   1269 still kill the process.
+  COLLECTIVE COST MEASURED 2026-10-15, by counterfactual not derivation.
+  TOSH_MGPU_ALLREDUCE_NOOP=1 (ggml-metal.cpp 1184-1186) keeps the split graph and every subgraph
+  submission but does no reduction and no cross-device sync. Flag confirmed effective first: startup
+  warning printed, output differs, exchanges drop to 0. Same partitioning both arms.
+  N=20 per arm, 3 warmup discarded, 50 decoded tokens, medians:
+    real  8.472 tok/s (min 8.285, spread 3.5%) -> 118.04 ms/token
+    noop  8.894 tok/s (min 8.890, spread 0.1%) -> 112.44 ms/token
+  Difference 5.6 ms/token, 4.7% of real token time. UPPER BOUND: the no-op also drops the sync.
+  Real-arm spread puts resolution at about 2 ms/token, so the effect is ~2x noise.
+  Conclusion: host-staged collectives on this unbridged pair are single-digit percent, not a
+  multiple. No optimisation project warranted. Exchanges confirmed on the path (fused boundaries
+  35520 = 160/token/card x 221 tokens), so this is NOT another inert control.
   ISA: host is Ivy Bridge-E (Xeon E5-2697 v2), 22nm, 12c/24t at 2.7 GHz, 30 MB L3, DDR3-1866.
   Confirmed by feature bits, not brand string: machdep.cpu.features tops out at AVX1.0 RDRAND F16C,
   leaf7_features carries no ISA extensions. No AVX2, no FMA3, so TOSH_NO_AVX2=1 is required.
