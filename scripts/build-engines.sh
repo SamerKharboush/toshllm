@@ -110,7 +110,11 @@ CMAKE_FLAGS=(
     -DBUILD_SHARED_LIBS=OFF
     -DGGML_METAL=ON
     -DGGML_METAL_EMBED_LIBRARY=ON
-    -DGGML_METAL_MGPU=ON
+    # NOTE: -DGGML_METAL_MGPU=ON was here from 2650d68 and has been removed. No source
+    # file, no patch and no cmake option in llama.cpp reads it; cmake cached it as
+    # UNINITIALIZED and it compiled nothing. The multi-GPU meta backend is built because
+    # ggml-backend-meta.cpp is in ggml's source list unconditionally, not because of any
+    # flag. Do not re-add it without a gate in the tree that actually reads it.
     # Compile the experimental MoE cache into the bundled engine. It remains
     # inert unless the app explicitly sets TOSH_MOE_MODE at process launch.
     -DTOSH_ENABLE_DYNAMIC_MOE=ON

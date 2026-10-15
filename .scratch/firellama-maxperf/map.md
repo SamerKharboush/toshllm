@@ -101,8 +101,9 @@ Firellama runs the biggest models this Mac Pro can hold at the fastest tok/s it 
   `patches/llama/metal/0013-vram-budget-and-private-mirror.patch` could not apply (placeholder index
   hashes) and collided with `quant/0013-turbo-kv.patch`, so it was removed and the series failed at
   position 14 until then. It arrived with 7b05cc1 on `origin/phase1-metal-d700-optimization`
-  (2026-10-14) — the sibling commit 2650d68 there adds `-DGGML_METAL_MGPU=ON` and was kept. Not in
-  any release: beta.1 verified on 10-12, two days before 7b05cc1 landed.
+  (2026-10-14) — the sibling commit 2650d68 there added `-DGGML_METAL_MGPU=ON`, now removed as
+  inert (nothing in the tree reads it). Not in any release: beta.1 verified on 10-12, two days
+  before 7b05cc1 landed. The private-mirror work itself was never real: zero read sites.
 - **Upstream 0.87.19-0.87.23 merged 2026-10-12** (0.87.23-beta.1). Pin stayed at d8123504938
   and upstream added no patch numbers, so ours held 0035-0038 and none needed regenerating — the
   first no-op merge for our patches since 0.87.16. Upstream rewrote its own 0013, 0022, 0029, 0030.

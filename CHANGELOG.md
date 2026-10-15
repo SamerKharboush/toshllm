@@ -18,8 +18,11 @@ fork carries is unchanged: the engine pin did not move and upstream added no new
   longer in the series. It arrived with 7b05cc1 on `origin/phase1-metal-d700-optimization` on
   2026-10-14; its diff headers carry placeholder index hashes, which `git apply` rejects as a corrupt
   patch, and its number collides with `quant/0013-turbo-kv.patch`. The sibling commit on that
-  branch, 2650d68, adds `-DGGML_METAL_MGPU=ON` and is kept. The VRAM budget and private mirror work
-  the patch describes is not in any build.
+  branch, 2650d68, added `-DGGML_METAL_MGPU=ON`, which has since been removed: no source file or
+  cmake option in llama.cpp reads it, so it compiled nothing. Neither the patch nor that flag is in
+  any build. The VRAM budget and private mirror work was never real — the patch wrote a private
+  mirror nothing ever read, and `0001-amd-backend-host.patch` already allocates
+  `MTLResourceStorageModePrivate` on the non-shared path, so weights are in VRAM regardless.
 - **Upstream extensions are off until approved.** Extension folders the person picks stay off
   until approved in Settings. The bundled Integrations page lists what the app ships with.
 - **make-app.sh can package another product** from this tree with its own name, bundle id, data
