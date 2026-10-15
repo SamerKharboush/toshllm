@@ -1,8 +1,31 @@
+Subject: [PATCH] engine: every unsatisfiable tensor split exits 86, not just one
+
+Only one of the ways a tensor split can fail to describe a tensor was graceful.
+The other 38 still aborted, so a model hitting any of them died with a bare assert
+after the weights had loaded and the app had no chance to recover.
+
+All of them now go through one helper that reports the reason and exits 86, which
+is what Server.swift watches for, so the app retries once with --split-mode layer.
+TOSH_TENSOR_SPLIT_STRICT=1 keeps every one of them as an abort.
+
+Converted: unsupported mul_mat split states, shape mismatch, unimplemented op,
+inconsistent split ratio, unresolved split axis, unresolvable source axis, permuted
+view, segmented reshape/permute/transpose, matmul operands split differently,
+batched matmul operands split differently, split width not a block multiple,
+split widths not summing to the tensor, multi-segment state, add with a non-mirrored
+id source, concat along the split axis, per-row op on a column-split tensor,
+set_rows, rope with a split position tensor, pad with a non-zero offset,
+flash attention mirrors, lightning indexer mirrors, ssm_conv sources and state.
+
+set_rows was not hypothetical: GGML_METAL_WAVE64_DECODE_DISABLE=1 changed the graph
+shape enough to reach the set_rows assert and kill llama-bench.
+
 diff --git a/ggml/src/ggml-backend-meta.cpp b/ggml/src/ggml-backend-meta.cpp
-index add02abb1..cbedb0852 100644
+index add02ab..e968946 100644
 --- a/ggml/src/ggml-backend-meta.cpp
 +++ b/ggml/src/ggml-backend-meta.cpp
-@@ -6,16 +6,17 @@
+@@ -5,17 +5,20 @@
+ #include "ggml-alloc.h"
  #include "ggml-cpp.h"
  
  #include <atomic>
@@ -10,7 +33,9 @@ index add02abb1..cbedb0852 100644
  #include <algorithm>
  #include <cassert>
  #include <cmath>
++#include <cstdarg>
  #include <cstddef>
++#include <cstdio>
 +#include <cstdlib>
  #include <cstdint>
  #include <cstring>
@@ -20,7 +45,474 @@ index add02abb1..cbedb0852 100644
  #include <string>
  #include <tuple>
  #include <utility>
-@@ -1221,21 +1222,43 @@ static struct ggml_backend_meta_split_state ggml_backend_meta_get_split_state(
+@@ -574,16 +577,40 @@ static struct ggml_tensor * ggml_backend_meta_buffer_simple_tensor(const struct
+     if (it == stc.simple_tensors.end()) {
+         return nullptr;
+     }
+     return it->second[index];
+ }
+ 
+ static struct ggml_backend_meta_split_state ggml_backend_meta_get_split_state(const struct ggml_tensor * tensor, bool assume_sync);
+ 
++// Every way a tensor split can fail to describe a tensor means the same thing to a caller: this
++// model cannot be split the way it was asked for. Aborting makes that read as a crash, after the
++// weights have usually already loaded. Report the reason and exit 86, which the app recognises and
++// retries once with --split-mode layer. TOSH_TENSOR_SPLIT_STRICT=1 keeps the abort for anyone
++// debugging the scheduler. This function does not return.
++GGML_NORETURN static void ggml_backend_meta_no_tensor_split(const char * fmt, ...);
++
++GGML_NORETURN static void ggml_backend_meta_no_tensor_split(const char * fmt, ...) {
++    char msg[512];
++    va_list args;
++    va_start(args, fmt);
++    vsnprintf(msg, sizeof(msg), fmt, args);
++    va_end(args);
++
++    const char * strict = getenv("TOSH_TENSOR_SPLIT_STRICT");
++    if (strict != NULL && atoi(strict) != 0) {
++        ggml_abort(__FILE__, __LINE__, "%s", msg);
++    }
++    fprintf(stderr, "ggml_backend_meta: %s\n", msg);
++    fprintf(stderr, "This model has no two-way tensor split. Restart with --split-mode layer.\n");
++    fflush(stderr);
++    exit(86);
++}
++
+ static struct ggml_backend_meta_split_state ggml_backend_meta_get_split_state(
+         ggml_backend_meta_simple_tensor_container & stc, const struct ggml_tensor * tensor, bool assume_sync) {
+     // FIXME Currently this function preserves/erases the information in n_segments and nr in an inconsistent way.
+     // Since the operations in question are developed specifically for llama.cpp this currently does not manifest as a bug there.
+     // However, in a broader ggml context with arbitrary ggml graphs this can lead to unexpected results.
+     const size_t n_bufs = ggml_backend_meta_buffer_n_bufs(tensor->buffer);
+     ggml_backend_meta_buffer_context * buf_ctx = (ggml_backend_meta_buffer_context *) tensor->buffer->context;
+ 
+@@ -644,37 +671,43 @@ static struct ggml_backend_meta_split_state ggml_backend_meta_get_split_state(
+             }
+         }
+         if (ret.axis == GGML_BACKEND_SPLIT_AXIS_NONE) {
+             ret = {GGML_BACKEND_SPLIT_AXIS_UNKNOWN, {0}, {1}, 1};
+         }
+         if (scalar_only && ret.axis >= 0 && ret.axis < GGML_MAX_DIMS) {
+             ret = {GGML_BACKEND_SPLIT_AXIS_UNKNOWN, {0}, {1}, 1};
+         }
+-        GGML_ASSERT(ret.axis != GGML_BACKEND_SPLIT_AXIS_UNKNOWN);
++        if (ret.axis == GGML_BACKEND_SPLIT_AXIS_UNKNOWN) {
++            ggml_backend_meta_no_tensor_split("no split axis for %s", tensor->name);
++        }
+         return ret;
+     };
+ 
+     // Some ops process data on a per-row bases:
+     auto handle_per_row = [&](const std::vector<ggml_backend_meta_split_state> & src_ss) -> ggml_backend_meta_split_state {
+-        GGML_ASSERT(src_ss[0].axis != GGML_BACKEND_SPLIT_AXIS_0);
++        if (src_ss[0].axis == GGML_BACKEND_SPLIT_AXIS_0) {
++            ggml_backend_meta_no_tensor_split("per-row op on a column-split tensor (%s)", tensor->name);
++        }
+         return src_ss[0];
+     };
+ 
+     // Some ops broadcast the src1 data across src0:
+     auto handle_bin_bcast = [&](const std::vector<ggml_backend_meta_split_state> & src_ss) -> ggml_backend_meta_split_state {
+         if (src_ss[0].axis >= 0 && src_ss[0].axis < GGML_MAX_DIMS &&
+                 tensor->src[1]->ne[src_ss[0].axis] == 1 && src_ss[1].axis == GGML_BACKEND_SPLIT_AXIS_MIRRORED) {
+             return src_ss[0];
+         }
+         if (src_ss[2].axis == GGML_BACKEND_SPLIT_AXIS_MIRRORED && (src_ss[0].axis == src_ss[1].axis ||
+            (src_ss[0].axis == GGML_BACKEND_SPLIT_AXIS_MIRRORED && (src_ss[1].axis == GGML_BACKEND_SPLIT_AXIS_PARTIAL)))) {
+             return src_ss[0]; // GGML_OP_ADD_ID
+         }
+-        GGML_ASSERT(tensor->src[2] == nullptr || src_ss[2].axis == GGML_BACKEND_SPLIT_AXIS_MIRRORED);
++        if (tensor->src[2] != nullptr && src_ss[2].axis != GGML_BACKEND_SPLIT_AXIS_MIRRORED) {
++            ggml_backend_meta_no_tensor_split("add with an id source that is not mirrored (%s)", tensor->name);
++        }
+         return handle_generic(src_ss, /*scalar_only =*/ false);
+     };
+ 
+     // the attention mask is mirrored and broadcast over the heads, so a soft max keeps
+     // whatever split its scores arrived with.
+     auto handle_soft_max = [&](const std::vector<ggml_backend_meta_split_state> & src_ss) -> ggml_backend_meta_split_state {
+         if (tensor->src[1] != nullptr && src_ss[1].axis == GGML_BACKEND_SPLIT_AXIS_MIRRORED &&
+                 src_ss[0].axis >= GGML_BACKEND_SPLIT_AXIS_2 && src_ss[0].axis < GGML_MAX_DIMS &&
+@@ -682,21 +715,25 @@ static struct ggml_backend_meta_split_state ggml_backend_meta_get_split_state(
+             return src_ss[0];
+         }
+         return handle_generic(src_ss, /*scalar_only =*/ false);
+     };
+ 
+     auto handle_concat = [&](const std::vector<ggml_backend_meta_split_state> & src_ss) -> ggml_backend_meta_split_state {
+         const ggml_backend_meta_split_axis concat_axis = ggml_backend_meta_split_axis(ggml_get_op_params_i32(tensor, 0));
+         if (src_ss[0].axis == GGML_BACKEND_SPLIT_AXIS_MIRRORED && src_ss[1].axis >= 0 && src_ss[1].axis < GGML_MAX_DIMS) {
+-            GGML_ASSERT(concat_axis != src_ss[1].axis);
++            if (concat_axis == src_ss[1].axis) {
++                ggml_backend_meta_no_tensor_split("concat along the split axis (%s)", tensor->name);
++            }
+             return src_ss[1];
+         }
+         if (src_ss[1].axis == GGML_BACKEND_SPLIT_AXIS_MIRRORED && src_ss[0].axis >= 0 && src_ss[0].axis < GGML_MAX_DIMS) {
+-            GGML_ASSERT(concat_axis != src_ss[0].axis);
++            if (concat_axis == src_ss[0].axis) {
++                ggml_backend_meta_no_tensor_split("concat along the split axis (%s)", tensor->name);
++            }
+             return src_ss[0];
+         }
+         if (src_ss[0].axis == src_ss[1].axis && src_ss[0].axis != concat_axis) {
+             return src_ss[0];
+         }
+         return handle_generic(src_ss, /*scalar_only =*/ true);
+     };
+ 
+@@ -710,40 +747,44 @@ static struct ggml_backend_meta_split_state ggml_backend_meta_get_split_state(
+             ret.nr[0] = 1;
+             ret.n_segments = 1;
+             return ret;
+         }
+         if (src_ss[1].axis == GGML_BACKEND_SPLIT_AXIS_1 && src_ss[0].axis == GGML_BACKEND_SPLIT_AXIS_MIRRORED) {
+             return src_ss[1];
+         }
+         if (src_ss[0].axis == GGML_BACKEND_SPLIT_AXIS_0 && src_ss[1].axis == GGML_BACKEND_SPLIT_AXIS_0) {
+-            GGML_ASSERT(split_states_equal(src_ss[0], src_ss[1]));
++            if (!split_states_equal(src_ss[0], src_ss[1])) {
++                ggml_backend_meta_no_tensor_split("matmul operands are split differently (%s)", tensor->name);
++            }
+             return {assume_sync ? GGML_BACKEND_SPLIT_AXIS_MIRRORED : GGML_BACKEND_SPLIT_AXIS_PARTIAL, {0}, {1}, 1};
+         }
+         if (src_ss[0].axis == src_ss[1].axis && src_ss[0].axis >= GGML_BACKEND_SPLIT_AXIS_2 &&
+                 src_ss[0].axis < GGML_MAX_DIMS) {
+             // src0 broadcasts over src1 along the batch axis (grouped-query attention, where
+             // the unfused K*Q appears once the batch is too big to fuse into flash attention):
+             // the two are split in proportion, not identically, and the result follows src1.
+             const int64_t ne_src0 = tensor->src[0]->ne[src_ss[0].axis];
+             const int64_t ne_src1 = tensor->src[1]->ne[src_ss[1].axis];
+             if (ne_src0 > 0 && ne_src1 > ne_src0 && ne_src1 % ne_src0 == 0 &&
+                     split_states_proportional(src_ss[0], src_ss[1], ne_src1/ne_src0)) {
+                 return src_ss[1];
+             }
+-            GGML_ASSERT(split_states_equal(src_ss[0], src_ss[1]));
++            if (!split_states_equal(src_ss[0], src_ss[1])) {
++                ggml_backend_meta_no_tensor_split("batched matmul operands are split differently (%s)", tensor->name);
++            }
+             return src_ss[0];
+         }
+         // batched matmul with the batches split across devices and a replicated activation
+         if (src_ss[0].axis >= GGML_BACKEND_SPLIT_AXIS_2 && src_ss[0].axis < GGML_MAX_DIMS &&
+                 src_ss[1].axis == GGML_BACKEND_SPLIT_AXIS_MIRRORED) {
+             return src_ss[0];
+         }
+-        GGML_ABORT("unsupported mul_mat split states: node=%s src0=%s axis=%d src1=%s axis=%d",
+-            tensor->name, tensor->src[0]->name, (int) src_ss[0].axis, tensor->src[1]->name, (int) src_ss[1].axis);
++        ggml_backend_meta_no_tensor_split("unsupported mul_mat split states: node=%s src0=%s axis=%d src1=%s axis=%d",
++                    tensor->name, tensor->src[0]->name, (int) src_ss[0].axis, tensor->src[1]->name, (int) src_ss[1].axis);
+         //return {GGML_BACKEND_SPLIT_AXIS_UNKNOWN, {0}, {1}, 1};
+     };
+ 
+     auto handle_reshape = [&](const std::vector<ggml_backend_meta_split_state> & src_ss) -> ggml_backend_meta_split_state {
+         switch (src_ss[0].axis) {
+             case GGML_BACKEND_SPLIT_AXIS_0:
+             case GGML_BACKEND_SPLIT_AXIS_1:
+             case GGML_BACKEND_SPLIT_AXIS_2:
+@@ -773,29 +814,30 @@ static struct ggml_backend_meta_split_state ggml_backend_meta_get_split_state(
+                 // Reshape outputs use one segment; split-state propagation merges source segments.
+                 int64_t base_ne_out = 1;
+                 for (int dim = 0; dim < GGML_MAX_DIMS; dim++) {
+                     base_ne_out *= tensor->ne[dim];
+                     if (base_ne_out % base_ne_in == 0) {
+                         return {ggml_backend_meta_split_axis(dim), {0}, {uint32_t(base_ne_out/base_ne_in)}, 1};
+                     }
+                     if (base_ne_out > base_ne_in) {
+-                        GGML_ASSERT(src_ss[0].n_segments == 1);
+-                        GGML_ASSERT(src_ss[0].nr[0]      == 1);
++                        if (src_ss[0].n_segments != 1 || src_ss[0].nr[0] != 1) {
++                            ggml_backend_meta_no_tensor_split("broadcasting reshape of a segmented split (%s)", tensor->name);
++                        }
+                         return {ggml_backend_meta_split_axis(dim), {0}, {1}, 1};
+                     }
+                 }
+-                GGML_ABORT("shape mismatch for %s", ggml_op_name(tensor->op));
++                ggml_backend_meta_no_tensor_split("shape mismatch for %s", ggml_op_name(tensor->op));
+             }
+             case GGML_BACKEND_SPLIT_AXIS_MIRRORED:
+             case GGML_BACKEND_SPLIT_AXIS_PARTIAL: {
+                 return src_ss[0];
+             }
+             default: {
+-                GGML_ABORT("fatal error");
++                ggml_backend_meta_no_tensor_split("no split state for %s", tensor->name);
+                 //return {GGML_BACKEND_SPLIT_AXIS_UNKNOWN, {0}, {1}, 1};
+             }
+         }
+     };
+ 
+     auto handle_cpy = [&](const std::vector<ggml_backend_meta_split_state> & src_ss) -> ggml_backend_meta_split_state {
+         if (src_ss[0].axis >= 0 && src_ss[0].axis < GGML_MAX_DIMS) {
+             return handle_reshape(src_ss);
+@@ -824,116 +866,140 @@ static struct ggml_backend_meta_split_state ggml_backend_meta_get_split_state(
+             }
+         }
+         if (!ggml_is_permuted(tensor) && !ggml_is_permuted(tensor->src[0]) && axis >= 0 && axis < GGML_MAX_DIMS-1) {
+             for (int dim = 0; dim < GGML_MAX_DIMS-1; dim++) {
+                 if (tensor->nb[dim+1] == tensor->src[0]->nb[axis+1]) {
+                     return {ggml_backend_meta_split_axis(dim), {0}, {1}, 1};
+                 }
+             }
+-            GGML_ABORT("fatal error");
++            ggml_backend_meta_no_tensor_split("fatal error in view split state for %s", tensor->name);
+         }
+         if (src_ss[0].axis == GGML_BACKEND_SPLIT_AXIS_MIRRORED || src_ss[0].axis == GGML_BACKEND_SPLIT_AXIS_PARTIAL) {
+             return src_ss[0];
+         }
+-        GGML_ABORT("view of permuted tensor not implemented");
++        ggml_backend_meta_no_tensor_split("view of permuted tensor not implemented for %s", tensor->name);
+         //return {GGML_BACKEND_SPLIT_AXIS_UNKNOWN, {0}, {1}, 1};
+     };
+ 
+     auto handle_permute = [&](const std::vector<ggml_backend_meta_split_state> & src_ss) -> ggml_backend_meta_split_state {
+         switch (src_ss[0].axis) {
+             case GGML_BACKEND_SPLIT_AXIS_0:
+             case GGML_BACKEND_SPLIT_AXIS_1:
+             case GGML_BACKEND_SPLIT_AXIS_2:
+             case GGML_BACKEND_SPLIT_AXIS_3: {
+-                GGML_ASSERT(src_ss[0].n_segments == 1 || src_ss[0].nr[0] == 1);
++                if (src_ss[0].n_segments != 1 && src_ss[0].nr[0] != 1) {
++                    ggml_backend_meta_no_tensor_split("permuted tensor has a segmented split (%s)", tensor->name);
++                }
+                 return {ggml_backend_meta_split_axis(tensor->op_params[src_ss[0].axis]), {0}, {src_ss[0].nr[0]}, 1};
+             }
+             case GGML_BACKEND_SPLIT_AXIS_MIRRORED:
+             case GGML_BACKEND_SPLIT_AXIS_PARTIAL: {
+                 return src_ss[0];
+             }
+             default: {
+-                GGML_ABORT("fatal error");
++                ggml_backend_meta_no_tensor_split("no split state for %s", tensor->name);
+                 //return {GGML_BACKEND_SPLIT_AXIS_UNKNOWN, {0}, {1}, 1};
+             }
+         }
+     };
+ 
+     auto handle_transpose = [&](const std::vector<ggml_backend_meta_split_state> & src_ss) -> ggml_backend_meta_split_state {
+         switch (src_ss[0].axis) {
+             case GGML_BACKEND_SPLIT_AXIS_0:
+             case GGML_BACKEND_SPLIT_AXIS_1: {
+-                GGML_ASSERT(src_ss[0].n_segments == 1 || src_ss[0].nr[0] == 1);
++                if (src_ss[0].n_segments != 1 && src_ss[0].nr[0] != 1) {
++                    ggml_backend_meta_no_tensor_split("transposed tensor has a segmented split (%s)", tensor->name);
++                }
+                 return {ggml_backend_meta_split_axis(int(src_ss[0].axis) ^ 1), {0}, {src_ss[0].nr[0]}, 1};
+             }
+             case GGML_BACKEND_SPLIT_AXIS_2:
+             case GGML_BACKEND_SPLIT_AXIS_3:
+             case GGML_BACKEND_SPLIT_AXIS_MIRRORED:
+             case GGML_BACKEND_SPLIT_AXIS_PARTIAL: {
+                 return src_ss[0];
+             }
+             default: {
+-                GGML_ABORT("fatal error");
++                ggml_backend_meta_no_tensor_split("no split state for %s", tensor->name);
+                 //return {GGML_BACKEND_SPLIT_AXIS_UNKNOWN, {0}, {1}, 1};
+             }
+         }
+     };
+ 
+     auto handle_get_rows = [&](const std::vector<ggml_backend_meta_split_state> & src_ss) -> ggml_backend_meta_split_state {
+         if (src_ss[0].axis == GGML_BACKEND_SPLIT_AXIS_0 && src_ss[1].axis == GGML_BACKEND_SPLIT_AXIS_MIRRORED) {
+             return src_ss[0];
+         }
+         return handle_generic(src_ss, /*scalar_only =*/ true);
+     };
+ 
+     auto handle_set_rows = [&](const std::vector<ggml_backend_meta_split_state> & src_ss) -> ggml_backend_meta_split_state {
+-        GGML_ASSERT(src_ss[0].axis != GGML_BACKEND_SPLIT_AXIS_1);
+-        GGML_ASSERT(src_ss[1].axis == GGML_BACKEND_SPLIT_AXIS_MIRRORED);
+-        GGML_ASSERT(split_states_equal(src_ss[0], src_ss[2]));
++        if (src_ss[0].axis == GGML_BACKEND_SPLIT_AXIS_1) {
++            ggml_backend_meta_no_tensor_split("set_rows on a row-split tensor is not supported (%s)", tensor->name);
++        }
++        if (src_ss[1].axis != GGML_BACKEND_SPLIT_AXIS_MIRRORED) {
++            ggml_backend_meta_no_tensor_split("set_rows needs a mirrored index tensor (%s)", tensor->name);
++        }
++        if (!split_states_equal(src_ss[0], src_ss[2])) {
++            ggml_backend_meta_no_tensor_split("set_rows source and destination are split differently (%s)", tensor->name);
++        }
+         return src_ss[0];
+     };
+ 
+     auto handle_rope = [&](const std::vector<ggml_backend_meta_split_state> & src_ss) -> ggml_backend_meta_split_state {
+-        GGML_ASSERT(src_ss[1].axis == GGML_BACKEND_SPLIT_AXIS_MIRRORED);
++        if (src_ss[1].axis != GGML_BACKEND_SPLIT_AXIS_MIRRORED) {
++            ggml_backend_meta_no_tensor_split("rope needs a mirrored position tensor (%s)", tensor->name);
++        }
+         return src_ss[0];
+     };
+ 
+     auto handle_pad = [&](const std::vector<ggml_backend_meta_split_state> & src_ss) -> ggml_backend_meta_split_state {
+-        if (src_ss[0].axis >= 0 && src_ss[0].axis < GGML_MAX_DIMS) {
+-            GGML_ASSERT(tensor->op_params[2*src_ss[0].axis + 0] == 0);
+-            GGML_ASSERT(tensor->op_params[2*src_ss[0].axis + 1] == 0);
++        if (src_ss[0].axis >= 0 && src_ss[0].axis < GGML_MAX_DIMS &&
++            (tensor->op_params[2*src_ss[0].axis + 0] != 0 || tensor->op_params[2*src_ss[0].axis + 1] != 0)) {
++            ggml_backend_meta_no_tensor_split("pad with a non-zero offset on a split tensor (%s)", tensor->name);
+         }
+         return src_ss[0];
+     };
+ 
+     auto handle_flash_attn_ext = [&](const std::vector<ggml_backend_meta_split_state> & src_ss) -> ggml_backend_meta_split_state {
+-        GGML_ASSERT(tensor->src[3] == nullptr || src_ss[3].axis == GGML_BACKEND_SPLIT_AXIS_MIRRORED);
++        if (tensor->src[3] != nullptr && src_ss[3].axis != GGML_BACKEND_SPLIT_AXIS_MIRRORED) {
++            ggml_backend_meta_no_tensor_split("flash attention needs a mirrored mask (%s)", tensor->name);
++        }
+ 
+         if (src_ss[0].axis == GGML_BACKEND_SPLIT_AXIS_MIRRORED) {
+-            GGML_ASSERT(src_ss[1].axis == GGML_BACKEND_SPLIT_AXIS_MIRRORED);
+-            GGML_ASSERT(src_ss[2].axis == GGML_BACKEND_SPLIT_AXIS_MIRRORED);
+-            GGML_ASSERT(tensor->src[4] == nullptr || src_ss[4].axis == GGML_BACKEND_SPLIT_AXIS_MIRRORED);
++            if (src_ss[1].axis != GGML_BACKEND_SPLIT_AXIS_MIRRORED ||
++                src_ss[2].axis != GGML_BACKEND_SPLIT_AXIS_MIRRORED ||
++                (tensor->src[4] != nullptr && src_ss[4].axis != GGML_BACKEND_SPLIT_AXIS_MIRRORED)) {
++                ggml_backend_meta_no_tensor_split("flash attention needs mirrored Q, K and V together (%s)", tensor->name);
++            }
+             return {GGML_BACKEND_SPLIT_AXIS_MIRRORED, {0}, {1}, 1};
+         }
+ 
+-        GGML_ASSERT(src_ss[0].axis == GGML_BACKEND_SPLIT_AXIS_2);
++        if (src_ss[0].axis != GGML_BACKEND_SPLIT_AXIS_2) {
++            ggml_backend_meta_no_tensor_split("flash attention query is not split along the sequence (%s)", tensor->name);
++        }
+         const bool kv_split = src_ss[1].axis == GGML_BACKEND_SPLIT_AXIS_2 &&
+                 src_ss[2].axis == GGML_BACKEND_SPLIT_AXIS_2;
+         const bool kv_mirrored = src_ss[1].axis == GGML_BACKEND_SPLIT_AXIS_MIRRORED &&
+                 src_ss[2].axis == GGML_BACKEND_SPLIT_AXIS_MIRRORED;
+-        GGML_ASSERT(kv_split || kv_mirrored);
+-        GGML_ASSERT(tensor->src[4] == nullptr || src_ss[4].axis == GGML_BACKEND_SPLIT_AXIS_0);
++        if (!kv_split && !kv_mirrored) {
++            ggml_backend_meta_no_tensor_split("flash attention K and V are split inconsistently (%s)", tensor->name);
++        }
++        if (tensor->src[4] != nullptr && src_ss[4].axis != GGML_BACKEND_SPLIT_AXIS_0) {
++            ggml_backend_meta_no_tensor_split("flash attention logit softcap is not split (%s)", tensor->name);
++        }
+         return {GGML_BACKEND_SPLIT_AXIS_1, {0}, {1}, 1};
+     };
+ 
+     auto handle_lightning_indexer = [&](
+             const std::vector<ggml_backend_meta_split_state> & src_ss) -> ggml_backend_meta_split_state {
+         for (size_t i = 0; i < 4; i++) {
+-            GGML_ASSERT(src_ss[i].axis == GGML_BACKEND_SPLIT_AXIS_MIRRORED);
++            if (src_ss[i].axis != GGML_BACKEND_SPLIT_AXIS_MIRRORED) {
++                ggml_backend_meta_no_tensor_split("lightning indexer needs all four sources mirrored (%s)", tensor->name);
++            }
+         }
+         return {GGML_BACKEND_SPLIT_AXIS_MIRRORED, {0}, {1}, 1};
+     };
+ 
+     auto handle_ssm_conv = [&](const std::vector<ggml_backend_meta_split_state> & src_ss) -> ggml_backend_meta_split_state {
+         if (src_ss[0].axis == src_ss[1].axis) {
+             if (src_ss[0].axis == GGML_BACKEND_SPLIT_AXIS_0) {
+                 return {GGML_BACKEND_SPLIT_AXIS_1, {0}, {1}, 1};
+@@ -946,60 +1012,74 @@ static struct ggml_backend_meta_split_state ggml_backend_meta_get_split_state(
+     };
+ 
+     auto handle_gated_delta_net = [&](const std::vector<ggml_backend_meta_split_state> & src_ss) -> ggml_backend_meta_split_state {
+         if (src_ss[0].axis == GGML_BACKEND_SPLIT_AXIS_MIRRORED && src_ss[1].axis == GGML_BACKEND_SPLIT_AXIS_MIRRORED &&
+                 src_ss[2].axis == GGML_BACKEND_SPLIT_AXIS_MIRRORED && src_ss[3].axis == GGML_BACKEND_SPLIT_AXIS_MIRRORED &&
+                 src_ss[4].axis == GGML_BACKEND_SPLIT_AXIS_MIRRORED && src_ss[5].axis == GGML_BACKEND_SPLIT_AXIS_MIRRORED) {
+             return src_ss[0];
+         }
+-        GGML_ASSERT(src_ss[0].axis == GGML_BACKEND_SPLIT_AXIS_1);
+-        GGML_ASSERT(src_ss[1].axis == GGML_BACKEND_SPLIT_AXIS_1);
+-        GGML_ASSERT(src_ss[2].axis == GGML_BACKEND_SPLIT_AXIS_1);
+-        GGML_ASSERT(src_ss[3].axis == GGML_BACKEND_SPLIT_AXIS_1);
+-        GGML_ASSERT(src_ss[4].axis == GGML_BACKEND_SPLIT_AXIS_1);
++        for (size_t i = 0; i <= 4; i++) {
++            if (src_ss[i].axis != GGML_BACKEND_SPLIT_AXIS_1) {
++                ggml_backend_meta_no_tensor_split("ssm_conv source %zu is not split along its rows (%s)", i, tensor->name);
++            }
++        }
+         // state shape is [S_v, S_v, H_v, n_seqs] (s0 only); the heads dim is its own axis 2,
+         // so a head-aligned split on the input cache lands on axis 2 here.
+-        GGML_ASSERT(src_ss[5].axis == GGML_BACKEND_SPLIT_AXIS_2 || src_ss[5].axis == GGML_BACKEND_SPLIT_AXIS_1 || src_ss[5].axis == GGML_BACKEND_SPLIT_AXIS_0);
++        if (src_ss[5].axis != GGML_BACKEND_SPLIT_AXIS_2 && src_ss[5].axis != GGML_BACKEND_SPLIT_AXIS_1 &&
++            src_ss[5].axis != GGML_BACKEND_SPLIT_AXIS_0) {
++            ggml_backend_meta_no_tensor_split("ssm_conv state is split along an unusable axis (%s)", tensor->name);
++        }
+         return {GGML_BACKEND_SPLIT_AXIS_0, {0}, {1}, 1};
+     };
+ 
+     auto calculate_split_state = [&]() -> ggml_backend_meta_split_state {
+         if (ggml_nelements(tensor) == 0) {
+             return {GGML_BACKEND_SPLIT_AXIS_UNKNOWN, {0}, {1}, 1};
+         }
+         if (ggml_backend_buffer_get_usage(tensor->buffer) != GGML_BACKEND_BUFFER_USAGE_COMPUTE && tensor->view_src == nullptr) {
+             ggml_backend_dev_t dev = ggml_backend_buft_get_device(ggml_backend_buffer_get_type(tensor->buffer));
+             const ggml_backend_meta_device_context * dev_ctx = (const ggml_backend_meta_device_context *) dev->context;
+             ggml_backend_meta_split_state ret = dev_ctx->get_split_state(tensor, dev_ctx->get_split_state_ud);
+             if (ret.axis >= 0 && ret.axis < GGML_MAX_DIMS) {
+                 const int64_t granularity = ret.axis == GGML_BACKEND_SPLIT_AXIS_0 ? ggml_blck_size(tensor->type) : 1;
+                 int64_t ne_sum = 0;
+                 for (size_t s = 0; s < ret.n_segments; s++) {
+                     for (size_t j = 0; j < n_bufs; j++) {
+-                        GGML_ASSERT(ret.ne[s*n_bufs + j] % granularity == 0);
++                        if (ret.ne[s*n_bufs + j] % granularity != 0) {
++                            ggml_backend_meta_no_tensor_split(
++                                "split width %lld is not a multiple of the block size %lld for %s",
++                                (long long) ret.ne[s*n_bufs + j], (long long) granularity, tensor->name);
++                        }
+                         ne_sum += ret.ne[s*n_bufs + j] * ret.nr[s];
+                     }
+                 }
+-                GGML_ASSERT(ne_sum == tensor->ne[ret.axis]);
++                if (ne_sum != tensor->ne[ret.axis]) {
++                    ggml_backend_meta_no_tensor_split(
++                        "split widths sum to %lld but the tensor is %lld along that axis (%s)",
++                        (long long) ne_sum, (long long) tensor->ne[ret.axis], tensor->name);
++                }
+             } else if (ret.axis == GGML_BACKEND_SPLIT_AXIS_PARTIAL) {
+-                GGML_ASSERT(ret.n_segments == 1);
+-                GGML_ASSERT(ret.nr[0] == 1);
++                if (ret.n_segments != 1 || ret.nr[0] != 1) {
++                    ggml_backend_meta_no_tensor_split("multi-segment split state is not supported here (%s)", tensor->name);
++                }
+             }
+             return ret;
+         }
+ 
+         std::vector<ggml_backend_meta_split_state> src_ss(GGML_MAX_SRC, {GGML_BACKEND_SPLIT_AXIS_NONE, {0}, {1}, 1});
+         for (size_t i = 0; i < GGML_MAX_SRC; i++) {
+             if (tensor->src[i] == nullptr || tensor->src[i] == tensor) {
+                 src_ss[i] = {GGML_BACKEND_SPLIT_AXIS_UNKNOWN, {0}, {1}, 1};
+                 continue;
+             }
+             src_ss[i] = ggml_backend_meta_get_split_state(stc, tensor->src[i], /*assume_sync =*/ true);
+-            GGML_ASSERT(src_ss[i].axis != GGML_BACKEND_SPLIT_AXIS_UNKNOWN);
++            if (src_ss[i].axis == GGML_BACKEND_SPLIT_AXIS_UNKNOWN) {
++                ggml_backend_meta_no_tensor_split("source %zu of %s has no resolvable split axis", i, tensor->name);
++            }
+         }
+ 
+         ggml_backend_meta_split_state split_state;
+         switch (tensor->op) {
+             case GGML_OP_NONE: {
+                 split_state = {GGML_BACKEND_SPLIT_AXIS_MIRRORED, {0}, {1}, 1};
+             } break;
+             case GGML_OP_DUP: {
+@@ -1196,17 +1276,17 @@ static struct ggml_backend_meta_split_state ggml_backend_meta_get_split_state(
+                 split_state = handle_per_row(src_ss);
+             } break;
+             case GGML_OP_OPT_STEP_ADAMW:
+             case GGML_OP_OPT_STEP_SGD:
+             case GGML_OP_GLU: {
+                 split_state = handle_generic(src_ss, /*scalar_only =*/ false);
+             } break;
+             default: {
+-                GGML_ABORT("ggml op not implemented: %s", ggml_op_name(tensor->op));
++                ggml_backend_meta_no_tensor_split("ggml op not implemented: %s", ggml_op_name(tensor->op));
+                 split_state = {GGML_BACKEND_SPLIT_AXIS_UNKNOWN, {0}, {1}, 1};
+             } break;
+         }
+         if (split_state.axis >= 0 && split_state.axis < GGML_MAX_DIMS) {
+             bool first_src_split_by_axis = true;
+             const size_t n_bufs = ggml_backend_meta_buffer_n_bufs(tensor->buffer);
+ 
+             for (size_t i = 0; i < GGML_MAX_SRC; i++) {
+@@ -1221,40 +1301,52 @@ static struct ggml_backend_meta_split_state ggml_backend_meta_get_split_state(
                          }
                          for (size_t s = 0; s < src_ss[i].n_segments; s++) {
                              split_state.ne[j] += src_ss[i].ne[s*n_bufs + j] * src_ss[i].nr[s];
@@ -31,33 +523,13 @@ index add02abb1..cbedb0852 100644
                              if (split_state.ne[j] % div != 0) {
 -                                GGML_ABORT("%s: %s cannot be tensor-split: src %d ne[%d]=%lld x ratio %lld does not divide ne[%d]=%lld (axis %d)",
 -                                    __func__, ggml_op_name(tensor->op), (int) i,
-+                                // Some models carry an SSM/recurrent state tensor whose width does
-+                                // not divide evenly, so no two-way tensor split of it exists. Aborting
-+                                // here used to kill the server with a bare assert after the weights
-+                                // had already loaded, which reads like a crash rather than a setting.
-+                                // Report it and exit with a code the app recognises, so it can fall back
-+                                // to a layer split by itself. TOSH_TENSOR_SPLIT_STRICT=1 keeps the
-+                                // abort for anyone debugging the scheduler.
-+                                const char * strict = getenv("TOSH_TENSOR_SPLIT_STRICT");
-+                                if (strict != NULL && atoi(strict) != 0) {
-+                                    GGML_ABORT("%s: %s cannot be tensor-split: src %d ne[%d]=%lld x ratio %lld does not divide ne[%d]=%lld (axis %d)",
-+                                        __func__, ggml_op_name(tensor->op), (int) i,
-+                                        (int) src_ss[i].axis, (long long) tensor->src[i]->ne[src_ss[i].axis],
-+                                        (long long) split_state.nr[0], (int) j, (long long) split_state.ne[j],
-+                                        (int) split_state.axis);
-+                                }
-+                                fprintf(stderr,
-+                                    "ggml_backend_meta: %s cannot be tensor-split: src %d ne[%d]=%lld x ratio %lld "
-+                                    "does not divide ne[%d]=%lld (axis %d)\n"
-+                                    "This model has no two-way tensor split. Restart with --split-mode layer.\n",
++                                ggml_backend_meta_no_tensor_split(
++                                    "%s cannot be tensor-split: src %d ne[%d]=%lld x ratio %lld "
++                                    "does not divide ne[%d]=%lld (axis %d)",
 +                                    ggml_op_name(tensor->op), (int) i,
                                      (int) src_ss[i].axis, (long long) tensor->src[i]->ne[src_ss[i].axis],
                                      (long long) split_state.nr[0], (int) j, (long long) split_state.ne[j],
                                      (int) split_state.axis);
-+                                fflush(stderr);
-+                                // Distinct from SIGABRT (134) and SIGSEGV (139) so the app can tell
-+                                // "this split mode cannot work" apart from a real crash.
-+                                exit(86);
                              }
                              split_state.ne[j] /= div;
                          }
@@ -66,3 +538,56 @@ index add02abb1..cbedb0852 100644
                      GGML_ASSERT(split_state.n_segments == 1);
                      for (size_t j = 0; j < n_bufs; j++) {
                          // Assert that ratio is consistent:
+                         int64_t sum = 0;
+                         for (size_t s = 0; s < src_ss[i].n_segments; s++) {
+                             sum += src_ss[i].ne[s*n_bufs + j] * src_ss[i].nr[s];
+                         }
+-                        GGML_ASSERT(split_state.ne[j]*split_state.nr[0] * tensor->src[i]->ne[src_ss[i].axis]
+-                                                                 == sum * tensor->ne[split_state.axis]);
++                        if (split_state.ne[j]*split_state.nr[0] * tensor->src[i]->ne[src_ss[i].axis]
++                                                                 != sum * tensor->ne[split_state.axis]) {
++                            ggml_backend_meta_no_tensor_split(
++                                "split ratio is inconsistent for %s: src %d ne[%d]=%lld x ratio %lld "
++                                "against summed %lld over ne[%d]=%lld (axis %d)",
++                                tensor->name, i, (int) src_ss[i].axis,
++                                (long long) split_state.ne[j], (long long) split_state.nr[0],
++                                (long long) sum, (int) split_state.axis,
++                                (long long) tensor->ne[split_state.axis]);
++                        }
+                     }
+                 }
+                 first_src_split_by_axis = false;
+             }
+-            GGML_ASSERT(!first_src_split_by_axis);
++            if (first_src_split_by_axis) {
++                ggml_backend_meta_no_tensor_split("no axis-split source found for %s", tensor->name);
++            }
+         }
+         return split_state;
+     };
+ 
+     const std::pair key = std::make_pair(tensor, assume_sync);
+     auto it = buf_ctx->split_state_cache.find(key);
+     if (it != buf_ctx->split_state_cache.end() && memcmp(it->second.second, (const char *) tensor, sizeof(it->second.second)) != 0) {
+         buf_ctx->split_state_cache.clear();
+@@ -1295,17 +1387,19 @@ static struct ggml_backend_meta_split_state ggml_backend_meta_get_split_state(
+                 ne_info += std::to_string(ss.ne[j]) + "x" + std::to_string(ss.nr[0]);
+             }
+             GGML_LOG_DEBUG("SPLIT_STATE: {%s} -> %s[%s, %s, {%s}]\n", srcs_info.c_str(), tensor->name, ggml_op_name(tensor->op),
+                 ggml_backend_meta_split_axis_name(buf_ctx->split_state_cache[key].first.axis), ne_info.c_str());
+         }
+     }
+ 
+     ggml_backend_meta_split_state ret = buf_ctx->split_state_cache[key].first;
+-    GGML_ASSERT(ret.axis != GGML_BACKEND_SPLIT_AXIS_NONE);
++    if (ret.axis == GGML_BACKEND_SPLIT_AXIS_NONE) {
++        ggml_backend_meta_no_tensor_split("no split axis resolved for %s", tensor->name);
++    }
+ #ifndef NDEBUG
+     if (ret.axis >= 0 && ret.axis < GGML_MAX_DIMS) {
+         int64_t ne_ret = 0;
+         for (size_t s = 0; s < ret.n_segments; s++) {
+             for (size_t j = 0; j < n_bufs; j++) {
+                 ne_ret += ret.ne[s*n_bufs + j] * ret.nr[s];
+             }
+         }
