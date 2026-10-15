@@ -167,6 +167,19 @@ Firellama runs the biggest models this Mac Pro can hold at the fastest tok/s it 
   COLLECTIVE STATS CORRECTED: mean 5.41 ms/token, se 0.24 ms, 95% CI [4.93, 5.88], one-sided 95%
     upper bound 5.81 ms. The earlier "twice noise" was not a test. The jitter is the better half:
     CV 0.85% real vs 0.04% no-op, a 525x variance ratio. Collectives inject variance, not just cost.
+  E1 QUANT GRID 2026-10-16, llama-bench -p 2048 -n 128 -r 3, dual D700, -t 12 -fa 1:
+      4B Q4_K_M (requantized from Q6_K, so it is NOT a native Q4_K_M) layer pp100.65 tg14.34
+                                                 tensor pp121.23 tg19.66
+      4B Q6_K (native)                        layer pp 95.77 tg12.33
+                                                 tensor pp116.18 tg17.90
+    tensor/layer on decode: 1.37 at Q4_K_M, 1.45 at Q6_K. The quantisation barely moves the
+    SPLIT RATIO, so the earlier cross-quant comparisons were not invalidated by quant alone.
+  PER-CARD STREAMING, Q4_K_M both, tensor split, 2 cards:
+      4B  2.32 GiB total, 1.16 GiB/card, 19.66 tok/s -> 24.5 GB/s per card
+      14B 8.38 GiB total, 4.19 GiB/card,  8.58 tok/s -> 38.6 GB/s per card
+    14B is 3.61x the size of 4B and only 2.29x slower, so per-card utilisation RISES with model
+    size. The audit claimed ~38-40 GB/s in every config; the 4B at Q4_K_M is 24.5, not 38. The
+    direction of the claim (no inversion) holds; the "flat rate" part does not.
   ISA: host is Ivy Bridge-E (Xeon E5-2697 v2), 22nm, 12c/24t at 2.7 GHz, 30 MB L3, DDR3-1866.
   Confirmed by feature bits, not brand string: machdep.cpu.features tops out at AVX1.0 RDRAND F16C,
   leaf7_features carries no ISA extensions. No AVX2, no FMA3, so TOSH_NO_AVX2=1 is required.
