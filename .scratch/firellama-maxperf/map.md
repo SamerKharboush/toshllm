@@ -104,9 +104,13 @@ Firellama runs the biggest models this Mac Pro can hold at the fastest tok/s it 
   0 collectives and 222 plain xdev copies. All cross-device traffic is host-staged (1.96 GB).
   Collective GPU time 67.1 s against encode CPU 3.4 s — the collective dominates the tensor run.
   TOSH_XDEV was never printed because the atexit report only fires on the xdev path.
-  Caveat: a KeepAlive launchd agent (com.user.llama-server, -ngl 0, 12 threads, port 8080) was
-  running for both runs, so absolute tok/s is depressed. It was present for A and B alike, so the
-  comparison holds; the absolute numbers are not clean.
+  The first pass ran with a KeepAlive launchd agent (com.user.llama-server, -ngl 0, 12 threads,
+  port 8080) alive, which competes for CPU with the wave64 decode path. Re-ran both arms with it
+  unloaded to check whether it mattered. It does not: layer 5.02 -> 5.12, tensor 8.49 -> 8.40.
+  Within noise, and the 1.69x gap is unchanged. Clean figures are layer 5.12, tensor 8.40.
+  Trace on the clean tensor run: 35520 exchanges, 35520 fused boundaries, 221 tokens,
+  160.01 collectives per token per card, host-staged 1.59 GB, peer bytes 0, peer share 0.0%,
+  collective GPU 54.8 s against encode CPU 2.8 s.
 - **Upstream 0.87.24 merged 2026-10-15** (0.87.24-beta.1). Extensions framework (tools,
   agents and settings from folders, off until approved), maps in chat from Apple Maps, Ukrainian
   translation, a remote MCP server reachable through a local relay, and make-app.sh able to
