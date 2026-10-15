@@ -3,6 +3,35 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.87.24-beta.1] - 2026-10-15
+
+Upstream 0.87.24 merged. The 0.87.23-beta.1 fork release stays as its own release. Every fix this
+fork carries is unchanged: the engine pin did not move and upstream added no new patch numbers.
+
+### Changed
+
+- **llama.cpp stays pinned at `d8123504938`** (v0.6.0). Upstream did not move it.
+- **This fork's four patches keep their numbers**: 0035 (timestep GCN parity), 0036 (xdev stall and
+  `NSMakeRange`), 0037 (the Metal memset range test), 0038 (tensor split falls back to layers).
+  All 38 patches verified to apply to a pristine worktree of `d8123504938`.
+- **`patches/llama/metal/0013-vram-budget-and-private-mirror.patch` does not apply** and is no
+  longer in the series. It arrived with 7b05cc1 on `origin/phase1-metal-d700-optimization` on
+  2026-10-14; its diff headers carry placeholder index hashes, which `git apply` rejects as a corrupt
+  patch, and its number collides with `quant/0013-turbo-kv.patch`. The sibling commit on that
+  branch, 2650d68, adds `-DGGML_METAL_MGPU=ON` and is kept. The VRAM budget and private mirror work
+  the patch describes is not in any build.
+- **Upstream extensions are off until approved.** Extension folders the person picks stay off
+  until approved in Settings. The bundled Integrations page lists what the app ships with.
+- **make-app.sh can package another product** from this tree with its own name, bundle id, data
+  folder, version and icon, and the app takes that identity from its bundle. ToshLLM's identity is
+  the default, so this fork's builds are unaffected.
+
+### Fixed
+
+- Carried forward unchanged: the discovery pin, the exit-86 layer-split fallback, the multi-GPU
+  default, the fit note, the peer-bridge test seam, the `#if compiler(>=6.2)` guards and the
+  `[Data]` video decode.
+
 ## [0.87.24] - 2026-10-14
 
 ### Added

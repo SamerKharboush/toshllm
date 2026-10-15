@@ -7,10 +7,21 @@ exactly what to work on.
 
 Written 2026-10-02, updated 2026-10-03 for `0.87.15-beta.5`.
 
-**Upstream 0.87.19 through 0.87.23 are merged** (0.87.23-beta.1). Turbo values on 64-lane cards
-get the split attention kernels so a long chat no longer aborts the engine, Qwen-Image 2.1 Turbo
-reaches its ceiling, an answer that needs no calculation streams as the model writes it, and
-Llama 4's tool calls are read in both of its formats. Everything from 0.87.15 onward is still here.
+**Upstream 0.87.24 is merged** (0.87.24-beta.1). Extensions framework: tools, agents and
+settings pages come from extension folders in a documented format, the ones a person picks stay
+off until approved, and MCP servers can be bundled with secrets in the Keychain. Maps render in
+chat, and Ukrainian was added. Everything from 0.87.15 onward is still here.
+
+Two things about the patch tree that cost real time here:
+
+- **Numbers are unique across all folders, not per folder.** `patch_series()` sorts by basename,
+  so two patches with the same number in different folders interleave by the rest of the name.
+- **A tracked patch can fail to apply.** `metal/0013-vram-budget-and-private-mirror.patch` arrived
+  with 7b05cc1 on `origin/phase1-metal-d700-optimization` (2026-10-14). Its diff headers carry
+  placeholder index hashes, so `git apply` rejects it as corrupt, and its number collides with
+  `quant/0013-turbo-kv.patch`. It is not in the series; the VRAM budget and private mirror work it
+  describes is not in any build. `git log -- <path>` would have shown where it came from before it
+  was pushed. Check that before trusting anything under `patches/`.
 
 **The llama.cpp pin is `d8123504938`** (v0.6.0) and **upstream's patch series is grouped by area**:
 one patch per feature in a folder per area, so `patches/llama/{core,metal,mgpu,model,moe,quant,server,spec}/`.
@@ -33,8 +44,8 @@ Two things to know before citing a number or editing a patch:
 Run `./scripts/build-sympy.sh` before packaging or the DMG ships without the math runtime; the
 math tools are off by default, so an unbuilt runtime costs the feature, not the release.
 
-Gates at `0.87.18-beta.1`: `test-backend-ops` 11682/11682 on MTL0, `test-metal-memset` all checks
-passed, `swift test` 393 tests 15 skipped 0 failures, and the SymPy engine integration tests 14
+Gates at `0.87.24-beta.1`: `test-backend-ops` 11682/11682 on MTL0, `test-metal-memset` all checks
+passed, `swift test` 424 tests 15 skipped 0 failures, and the SymPy engine integration tests 14
 with 1 skipped and 0 failures against a real model.
 
 ---
