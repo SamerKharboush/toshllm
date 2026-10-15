@@ -141,6 +141,32 @@ Firellama runs the biggest models this Mac Pro can hold at the fastest tok/s it 
   Conclusion: host-staged collectives on this unbridged pair are single-digit percent, not a
   multiple. No optimisation project warranted. Exchanges confirmed on the path (fused boundaries
   35520 = 160/token/card x 221 tokens), so this is NOT another inert control.
+  PREFILL SCALE, 2026-10-16, llama-bench -p 2048 -r 2, N=2, -t 12 -fa 1 -b 2048 -ub 512, dual D700:
+      4B Q6_K   layer  pp 95.77  tg 12.33   tensor pp 116.18  tg 17.90
+      14B Q4_KM layer  pp 29.45  tg  5.15   tensor pp  37.84  tg  8.60
+    4B->14B param ratio 3.674x, observed pp ratio 3.070x. 14B prefill is 1.20x BETTER than a
+    parameter-proportional prediction (31.62). The "17x prefill collapse" claim is dead: it came
+    from the server's prompt-eval counter reporting 1068ms/16 TOKENS, which is fixed overhead with
+    no batch to amortise, not prefill. The "260.9 pp predicted" figure in that claim requires a
+    3.7x LARGER model to prefill FASTER, which is not a prediction of anything.
+  THREAD SWEEP, 14B tensor, llama-bench -n 128 -r 3:
+      -t 8 -> 8.60 tg    -t 12 -> 8.60    -t 16 -> 8.58    -t 24 -> 7.99
+    Flat 8 to 16 threads, drops at 24 from SMT. Confirms the existing docs/ session-summary finding.
+    Prefill is flat across the same sweep (38.06/38.07/38.07/38.05).
+  BANDWIDTH SETTLED: D700 is 384-bit GDDR5 at 1370 MHz ref = 5480 MT/s eff = 263.0 GB/s per card.
+    Apple's Mac Pro tech specs say 264 GB/s. 179 GB/s is a 256-bit-class figure (it is the
+    R9 270X / R9 280X-class number) and got attached to the D700 because the card enumerates at
+    PCI 1002:6798 as "Tahiti XT [Radeon HD 7970/8970 OEM / R9 280X]". Runtime confirms 384-bit
+    ("RAM width 384bits DDR") and 1370 MHz. No %-of-peak is published anywhere.
+  GGML_METAL_WAVE64_DECODE_DISABLE=1 on a tensor split CRASHED the engine at
+    ggml-backend-meta.cpp:892 (set_rows assert) before the 0038 rework. That is what prompted
+    converting all 39 aborts in the split-state function to exit(86), now commit b8ad861.
+  N=20 BOTH ARMS on the rebuilt engine, 50 tokens per run, 3 warmups discarded:
+      tensor median 8.584 (CV 0.04%)    layer median 5.146 (CV 0.02%)
+    paired difference 77.8 ms/token, se 0.01 ms. Headline is no longer N=1.
+  COLLECTIVE STATS CORRECTED: mean 5.41 ms/token, se 0.24 ms, 95% CI [4.93, 5.88], one-sided 95%
+    upper bound 5.81 ms. The earlier "twice noise" was not a test. The jitter is the better half:
+    CV 0.85% real vs 0.04% no-op, a 525x variance ratio. Collectives inject variance, not just cost.
   ISA: host is Ivy Bridge-E (Xeon E5-2697 v2), 22nm, 12c/24t at 2.7 GHz, 30 MB L3, DDR3-1866.
   Confirmed by feature bits, not brand string: machdep.cpu.features tops out at AVX1.0 RDRAND F16C,
   leaf7_features carries no ISA extensions. No AVX2, no FMA3, so TOSH_NO_AVX2=1 is required.

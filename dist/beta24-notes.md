@@ -69,8 +69,8 @@ removed.
 
 ## Split modes on two FirePro D700s
 
-On the same unbridged pair, Qwen3-14B (40 layers, batch-1 decode) sustains 8.40 tok/s with tensor
-split and 5.12 tok/s with layer split. Both modes emitted identical first 256 greedy token IDs and
+On the same unbridged pair, Qwen3-14B (40 layers, batch-1 decode) sustains a median of 8.584
+tok/s with tensor split and 5.146 tok/s with layer split, N=20 per arm. Both modes emitted identical first 256 greedy token IDs and
 identical text; chosen-token logprobs agree to a max absolute delta of 2.0e-03 with a mean of
 1.5e-04, which is float summation order, not a difference in results. This is a throughput
 difference, not a results difference.
@@ -83,22 +83,40 @@ No percentage overhead is reported for either, because none is measured.
 
 | | tensor split | layer split |
 |---|---|---|
-| decode | 8.40 tok/s | 5.12 tok/s |
-| prompt eval | 15.23 tok/s | 10.16 tok/s |
+| decode, median of N=20 | 8.584 tok/s | 5.146 tok/s |
+| decode, spread | 0.04% CV | 0.02% CV |
+| prompt eval, pp2048 | 37.84 tok/s | 29.45 tok/s |
+
+Both decode arms were measured on the same engine build, one model load per arm, 50 decoded tokens
+per run, 3 warmup runs discarded. The paired per-token difference is 77.8 ms, standard error 0.01 ms.
 
 Method: engine 0.87.24-beta.1 (llama.cpp pinned `d8123504938` plus 38 fork patches), model
 Qwen3-14B-Q4_K_M, `-ngl 99 -c 16384 -t 10 -fa auto`, both cards via `GGML_METAL_DEVICES=2`,
-seed 42, temperature 0, batch-1 decode. Parity is N=1 per mode on a 256-token greedy continuation
-with no warmup discarded. Throughput is N=1 per mode over 200 decoded tokens. Single runs, so treat
-the throughput figures as indicative rather than settled. A KeepAlive launchd agent
-(`com.user.llama-server`, `-ngl 0`, 12 threads) was unloaded for these runs and reloaded after;
-its effect on the numbers was within noise.
+seed 42, temperature 0, batch-1 decode. Parity is a single 256-token greedy continuation per mode.
+Decode throughput is N=20 per mode with 3 warmups discarded. Prompt eval is `llama-bench -p 2048
+-r 2`. A KeepAlive launchd agent (`com.user.llama-server`, `-ngl 0`, 12 threads) was unloaded for
+these runs and reloaded after; its effect was within noise.
+
+Prefill is measured with `llama-bench -p 2048`, not with the server's prompt-eval counter. The server
+reports prompt throughput over however many tokens the prompt happened to contain, and on a short
+prompt that is fixed overhead with no batch to amortise, which reads as a much lower number than
+prefill actually is.
 
 **There is no single-card baseline for 14B.** The model is about 9 GB and one D700 has 6 GB, so
-8.40 tok/s cannot be checked against a one-card run of the same model on this hardware, ever, and
-is not checked against one anywhere above. Note also that 14B tensor-split decode at 8.40 tok/s is
-slower than 4B on a single card at 12.00 tok/s: a larger model on two unbridged PCIe cards does not
-buy back what the extra traffic costs.
+8.584 tok/s cannot be checked against a one-card run of the same model on this hardware, ever, and
+is not checked against one anywhere above.
+
+Do not compare this figure against 4B numbers from a different quantisation. A 4B model here is
+about 3.3 GB and the 14B model is about 9.0 GB, so a 4B model on one card and a 14B model on two
+are not comparable quantities. Every comparison in this section is same model, same quantisation,
+same hardware.
+
+Prefill on this pair scales close to what the parameter count predicts. 4B (4.02B parameters)
+reaches 116.18 tok/s prompt eval on a tensor split and 14B (14.77B parameters) reaches 37.84 tok/s.
+The observed ratio is 3.07x for a 3.67x parameter increase, so 14B prefill is slightly ahead of a
+parameter-proportional prediction rather than far below it. An earlier claim that 14B prefill was
+17x off came from reading the server's prompt-eval counter on a 16-token prompt, which measures
+fixed overhead, not prefill.
 
 ### What is settled about the collective
 
@@ -125,11 +143,16 @@ N=20 per arm, 3 warmup runs discarded, 50 decoded tokens each, medians:
 | tensor split, collectives on | 8.472 tok/s | 8.285 | 3.5% |
 | tensor split, reduction skipped | 8.894 tok/s | 8.890 | 0.1% |
 
-Removing the reduction and its synchronisation is worth **5.6 ms per token**, about 4.7% of the
-real token time. Treat that as an upper bound on the collective itself: the no-op also removes the
-cross-device sync, so the true collective cost is somewhat below it. The real arm's own 3.5% spread
-puts the resolution of this measurement at roughly 2 ms per token, so the effect is a little over
-twice the noise.
+Removing the reduction and its synchronisation costs **5.41 ms per token** (mean, N=17 per arm,
+standard error 0.24 ms, 95% CI 4.93 to 5.88 ms). Treat that as an upper bound on the collective
+itself: the no-op also removes the cross-device sync, so the true collective cost is below it. The
+one-sided 95% upper bound is 5.81 ms.
+
+The more useful half of this result is the jitter. The real arm has a coefficient of variation of
+0.85%, the no-op arm 0.04%. That is a **525x difference in variance**, not a difference in mean cost.
+The collectives inject variance into decode, roughly 0.8% run to run, on top of their few-ms cost.
+That is what a host-staged, event-synchronised path does to a batch-1 decode loop, and it is the
+reason to distrust any single 14B decode measurement on this pair.
 
 That is the whole headroom on this path, and it is not worth an optimisation project. The honest
 summary is that host-staged collectives over unbridged PCIe on this pair cost single-digit percent
@@ -153,6 +176,19 @@ code path anywhere picks layer split because it is expected to be quicker.
 Nothing above claims these are the last words on multi-GPU throughput for this hardware. It is one
 measured configuration on two unbridged D700s, recorded so the next person starts from a number
 rather than an impression.
+
+## Hardware note
+
+Each FirePro D700 is specified at 263 GB/s (384-bit GDDR5, 1370 MHz reference clock, 5480 MT/s
+effective), which Apple's own Mac Pro technical specifications round to 264 GB/s. That is a paper
+figure, not a measurement, and no fraction of peak is quoted anywhere in this document. The
+179 GB/s figure that circulates for these cards is a 256-bit-class number belonging to a different
+part; the D700 enumerates over PCI as a consumer Tahiti XT, which is how the mix-up happens.
+
+The host is an Intel Xeon E5-2697 v2: Ivy Bridge-E, 12 cores and 24 threads at 2.7 GHz, 30 MB of
+L3, DDR3-1866. It has AVX and F16C and no AVX2 and no FMA3, which is why this build ships with
+`TOSH_NO_AVX2=1`. Decode throughput is flat from 8 to 16 threads (8.60 tok/s at each) and falls at
+24 threads (7.99 tok/s) from SMT contention.
 
 ## Install
 
