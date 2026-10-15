@@ -94,6 +94,19 @@ Firellama runs the biggest models this Mac Pro can hold at the fastest tok/s it 
 - Precompiled Metal kernels are no longer blocked (2026-10-03): Xcode 26.3 and the Metal
   toolchain are installed on this machine, first launch is 16 s against 143 s, shipped in
   beta.3.
+- **Meta-backend tensor split measured against the layer split, 2026-10-15.** Qwen3-14B-Q4_K_M,
+  -ngl 99 -c 16384 -t 10, both D700s, seed 42 temp 0, TOSH_MGPU_TRACE=1 + XDEV_COUNT=1.
+  Parity PASSES: identical 20 token IDs on "The capital of France is" for both split modes.
+  Throughput: tensor 8.49 tok/s decode vs layer 5.02 — tensor wins by 1.69x, so criterion 2
+  passes; the expected flat-GCN outcome did not occur. But peer share is 0.0% and peer bytes 0 on
+  both, so the win is not from peer copies: tensor does 41920 allreduce exchanges and 41920 fused
+  boundaries over 261 tokens (160 collectives/token/card) at 1600.7 us per exchange, versus layer's
+  0 collectives and 222 plain xdev copies. All cross-device traffic is host-staged (1.96 GB).
+  Collective GPU time 67.1 s against encode CPU 3.4 s — the collective dominates the tensor run.
+  TOSH_XDEV was never printed because the atexit report only fires on the xdev path.
+  Caveat: a KeepAlive launchd agent (com.user.llama-server, -ngl 0, 12 threads, port 8080) was
+  running for both runs, so absolute tok/s is depressed. It was present for A and B alike, so the
+  comparison holds; the absolute numbers are not clean.
 - **Upstream 0.87.24 merged 2026-10-15** (0.87.24-beta.1). Extensions framework (tools,
   agents and settings from folders, off until approved), maps in chat from Apple Maps, Ukrainian
   translation, a remote MCP server reachable through a local relay, and make-app.sh able to
