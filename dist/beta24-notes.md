@@ -175,6 +175,34 @@ When a model has no valid tensor split, the engine exits 86 and the app relaunch
 That is a correctness fallback for arithmetic that cannot be divided, not a performance choice; no
 code path anywhere picks layer split because it is expected to be quicker.
 
+### The flag sweep, run deliberately
+
+The 39th unsatisfiable-split failure mode was found by accident: someone set
+`GGML_METAL_WAVE64_DECODE_DISABLE=1` on a tensor split to see what would happen, and the engine
+aborted in the KV-cache `set_rows` path. An abort found by accident implies the others are latent,
+so all eight combinations of the three knobs that can be varied were run on purpose, on the 14B, and
+each was required to either reach a listening server or exit 86 with a named reason.
+
+| split mode | `GGML_METAL_WAVE64_DECODE_DISABLE=1` | `GGML_METAL_CONCURRENCY_DISABLE=1` | result |
+|---|---|---|---|
+| tensor | off | off | reached server |
+| tensor | off | on | reached server |
+| tensor | **on** | off | **exit 86**: `set_rows source and destination are split differently (cache_k_l0 (view))` |
+| tensor | **on** | on | **exit 86**, same reason |
+| layer | off | off | reached server |
+| layer | off | on | reached server |
+| layer | on | off | reached server |
+| layer | on | on | reached server |
+
+Every combination has a defined outcome. None of the eight produced a bare `GGML_ASSERT`, a
+segfault, or a hang, so no combination is silently broken.
+
+The wave64 flag is fatal on a tensor split and harmless on a layer split, which is consistent rather
+than surprising: the failure is a KV-cache tensor whose rows cannot be divided across two cards, and
+a layer split does not divide any tensor's rows. Concurrency is a pure scheduling choice and is inert
+on both. Both flags are therefore safe to leave in their default state and neither is a workaround for
+anything.
+
 Nothing above claims these are the last words on multi-GPU throughput for this hardware. It is one
 measured configuration on two unbridged D700s, recorded so the next person starts from a number
 rather than an impression.
