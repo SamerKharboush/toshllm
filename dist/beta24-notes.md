@@ -274,6 +274,32 @@ Nothing above claims these are the last words on multi-GPU throughput for this h
 measured configuration on two unbridged D700s, recorded so the next person starts from a number
 rather than an impression.
 
+### Speculative decoding: nothing to draft with
+
+Decode here is slow enough that speculation is worth a look, so it was looked at. There is no draft
+model to run against this target. Qwen3-14B has no MTP head: its `config.json` carries no MTP keys
+and the GGUF holds 443 tensors, none of them `nextn`. No Qwen3-14B DFlash exists either; that family
+skips 14B at every generation. The one ready-to-run EAGLE-3 speculator for this target is an 855 MB
+GGUF, and the fork's own memory planner returns negative room for it on this pair before accounting
+for the planner being 7.4x optimistic on KV for a dense model.
+
+There is also a quantisation gate on any future gain. The wave64 multi-token kernels exist only for
+`q6_K` and `q8_0`, and Qwen3-14B-Q4_K_M is 75.7% Q4_K by per-token weight bytes. The upstream 27B
+figure cited in this fork's changelog was measured on UD-Q6_K, where the whole of the weight traffic
+takes the fast path. No percentage is projected from the byte fraction, because a byte fraction is
+not a time fraction.
+
+One trial was run anyway, because it needed no model, no download and no VRAM:
+`--spec-type ngram-mod`, which shares the multi-token verify path a learned draft would use. On a
+single fresh 500-token generation the engine drafted nothing — it printed no acceptance line at all
+and ran at 8.36 tok/s against a plain 8.42. An earlier protocol that re-sent the same prompt across
+five cached segments reported an acceptance rate of 1.00000 (95 accepted of 95, mean draft length
+24.75) and 22.1 tok/s. **That figure is withdrawn before publication.** Re-sending one prompt keeps
+the model's own earlier output in context, so the n-gram matcher had a literal 24-token string to
+copy; it measured a copy loop, not a conversation. It is recorded here because it is the third
+measurement artifact this session, and the pattern is what matters: two of the three came from the
+apparatus rather than the machine.
+
 ## Hardware note
 
 Each FirePro D700 is specified at 263 GB/s (384-bit GDDR5, 1370 MHz reference clock, 5480 MT/s
