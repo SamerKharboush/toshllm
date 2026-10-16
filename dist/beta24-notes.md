@@ -207,6 +207,73 @@ runs, and an even earlier one reported a 525x variance ratio between the arms. B
 The 525x came from measuring two arms as contiguous blocks, and the mechanism is worth recording
 because it is the same mistake in both cases; see the state section below.
 
+### Where a token's time actually goes
+
+This section replaces an earlier claim that most of the GPU's headroom was unaccounted for. That
+claim compared a measured rate against the card's spec-sheet bandwidth, and a spec-sheet number
+is a modelled denominator, not a measurement. It is withdrawn. What follows compares the engine
+against itself, on cells measured the same way with the same binary.
+
+Method: engine 0.87.24-beta.1 at `d81235049`, one binary for all three cells, tensor split,
+`-ngl 99 -t 12 -fa 1 -b 2048 -ub 512 -p 512`, `r=3`, generation windows as listed, warmups
+discarded by `llama-bench`'s own protocol. `TOSH_FA_AMD=1` is set throughout: on the tensor
+split, `-fa 1` requires it, and without it the build refuses this configuration outright (see
+below).
+
+| model | weights | tg64 | tg128 | ms per token |
+|---|---:|---:|---:|---:|
+| Qwen3 4B Q4_K_M | 2.497 GB | 19.49 | 19.48 | 51.3 |
+| Qwen3 4B Q6_K | 3.306 GB | 17.84 | 17.84 | 56.1 |
+| Qwen3 14B Q4_K_M | 9.002 GB | 8.44 | 8.43 | 118.6 |
+
+The 64-token and 128-token windows agree to within 0.1%, so window length is not a factor in
+these cells.
+
+Fitting the three cells gives **10.57 ms per GB** as the marginal cost of weight traffic — 94.6
+GB/s — plus a **23.1 ms cost per token that does not depend on model size** at all. The fit
+reproduces the measurements to +3.6%, −3.5% and +0.2%.
+
+So at 14B, and this is the whole of it: **95 ms of a 119 ms token is weight traffic, and 23 ms
+is a fixed per-token cost.** The traffic term has no obvious lever — it is the weights being
+read, once each, at a rate this machine sustains. The 23 ms is where any remaining work lives,
+and the collective is only part of it: the ablation above puts the collective at 4.5–5.5 ms,
+about a fifth of the fixed term and a bit over 4% of a token.
+
+The denominator here is a **marginal** rate from a fit across three models of different depth,
+not an independently measured bandwidth. There is no bandwidth microbenchmark on this machine
+(`clpeak`, `STREAM` and friends are all absent), so 94.6 GB/s should be read as "the rate this
+build actually charges per additional GB", not as the card's ceiling. It is, however, close to
+the 94–110 GB/s that the same class of hardware sustains in practice, and it is measured here
+rather than assumed.
+
+One thing this does not settle: a 30-second stack sample during decode finds the main thread
+blocked roughly three-quarters of the time in a Metal command-buffer wait, with every other
+thread idle. That wait is where the traffic time *appears* — it absorbs queued GPU work — so it
+does not prove the transfer is the cost. It does establish that the host is waiting rather than
+computing, which is why host-side thread counts can still move decode even when the bandwidth
+term looks saturated.
+
+### A required variable that fails confusingly, and a stale benchmark binary
+
+`-fa 1` on the tensor split requires `TOSH_FA_AMD=1`. Without it, the standard flash-attention
+path builds a `mul_mat` whose operands carry split axes the meta backend cannot reconcile, and
+this build stops. `llama-server` stops correctly, with the reason and the remedy:
+
+```
+ggml_backend_meta: unsupported mul_mat split states: ...
+This model has no two-way tensor split. Restart with --split-mode layer.
+```
+
+and exits 86. `llama-bench` in this bundle does **not**: it reports a bare abort with a
+backtrace, because the binary shipped in `build-static/bin` predates the patch that introduced
+those named exits. Rebuild before using `llama-bench` as an independent timing gate, and set
+`TOSH_FA_AMD=1` when comparing against the numbers above.
+
+Every log on this machine also carries a non-fatal Metal shader compilation failure ("exceed the
+local data storage limit") at startup, four occurrences per server start. It predates this
+release and does not block anything, but it means at least one kernel in the AMD path is not
+compiling and something is substituting for it. That is noted rather than resolved.
+
 ### The machine sits in discrete states, and that is why the first CVs were impossible
 
 Two arms measured as contiguous blocks will each land inside whatever state the machine is in, and

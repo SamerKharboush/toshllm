@@ -41,7 +41,12 @@ collapse decode (tg 17.4 to 11.7, measured 2026-09-30). Never logical count.
 - Qwen3-14B-Q4_K_M (8.4GB): runs layer-split; target is best measured
   config, tensor-or-layer. Measured 2026-10-02: layer split 21.25 pp512 /
   5.10 tg64 (14B needs both cards; 8.38GiB will not fit one 6GB card).
-  Tensor split 41.40-43.09 pp512 / 8.55-8.56 tg64.
+  Tensor split 41.40-43.09 pp512 / 8.55-8.56 tg64, **engine 0.87.11 + patch 0114**.
+  These are not the same cell as the 8.406 tok/s tensor figure measured later on
+  engine 0.87.24-beta.1. Different engine and a different window (tg64 there, 500
+  generated tokens here), and the 1.7% between them sits inside the 2-3% band the
+  machine moves in on its own, so it is evidence of neither a regression nor parity.
+  Do not compare the two without saying which engine produced which.
 - Ternary-Bonsai-27B: loads and generates coherently. Measured
   2026-10-02 on a **layer split with events off**: 11.54 pp512 / 6.22 tg64,
   end-to-end chat coherent at 6.16 tok/s. Not Dynamic MoE — arch

@@ -247,3 +247,40 @@ Firellama runs the biggest models this Mac Pro can hold at the fastest tok/s it 
 
 See `docs/agents/apple-silicon-handoff.md` for the full open-work list and the gates.
 
+
+## The llama-bench abort was a stale binary, and the real finding is a required env var
+
+The three-model fit sweep aborted at `ggml-backend-meta.cpp:742`, bare, with a backtrace.
+Isolated with single-model runs (pp-only, tg-only, both) -- **all three aborted, exit 134**.
+The same binary had run `-sm tensor` on the same model earlier in the session. The difference
+was the environment. One variable at a time:
+
+    GGML_METAL_DEVICES=2                      -> exit 134
+    GGML_METAL_SIMDGROUP_REDUCTION_DISABLE=1  -> exit 134
+    GGML_METAL_VRAM_RESERVE_MB=1024           -> exit 134
+    TOSH_FA_AMD=1                             -> exit 0
+
+**`-fa 1` on the tensor split requires `TOSH_FA_AMD=1`.** Without it the standard FA path
+builds a `mul_mat` whose operands carry split axes the meta backend cannot reconcile
+(`node_30 src0=blk.0.attn_output.weight axis=0 src1=Meta(MTL0)#kqv_out-0#0 axis=10`).
+
+`llama-server` handles that configuration correctly and cleanly: **exit 86**, with the reason
+and the remedy printed --
+
+    ggml_backend_meta: unsupported mul_mat split states: ...
+    This model has no two-way tensor split. Restart with --split-mode layer.
+
+`llama-bench` takes the bare abort instead, because `build-static/bin/llama-bench`
+(mtime Oct 15 21:49:58) **predates** `ggml-backend-meta.cpp` (Oct 16 01:23:35) and so predates
+the 0038 hardening: it reports line 742 where the source has 781. Rebuild before using
+llama-bench as the independent timing gate.
+
+Why the 8-way flag sweep never caught this: `/tmp/ab/flagsweep.sh:19-20` sets
+`TOSH_FA_AMD=1` on every run, matching what the app does. The sweep was structurally blind to
+it. A sweep is only as wide as the environment it holds fixed.
+
+Also seen in every log on the box, including the sample and the ablation runs, 4 occurrences
+per server start: a Metal `SC compilation failure` -- "exceed the local data storage limit",
+"Linking two modules of different data layouts". It is non-fatal and predates this session,
+but it means at least one kernel in the AMD path never compiles and something substitutes.
+Unresolved; do not cite the AMD kernel path as verified present until it is.
