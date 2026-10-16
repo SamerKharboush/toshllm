@@ -61,7 +61,8 @@ would be wrong. Different configuration:
 - both D700s report `peer group 0`, `not bridged` — peer copies cannot engage on this flat pair
 - no cross-device handoff was confirmed for this run
 
-It is a valid figure for the configuration it was taken in, and nothing more. Nothing in this
+It is a valid figure for the configuration it was taken in, and nothing more. A single launch point
+inside the range the longer measurement below reports (8.227 to 8.454 tok/s, median 8.406). Nothing in this
 release is a fork-authored Metal speedup: the multi-GPU meta backend is upstream's, compiled
 because `ggml-backend-meta.cpp` is in ggml's source list unconditionally. The `-DGGML_METAL_MGPU=ON`
 flag that briefly appeared in this release's build script reads nothing in the tree and has been
@@ -83,21 +84,49 @@ No percentage overhead is reported for either, because none is measured.
 
 | | tensor split | layer split |
 |---|---|---|
+| decode, N=20, min | 8.227 tok/s | 5.021 tok/s |
+| decode, N=20, median | 8.406 tok/s | 5.112 tok/s |
+| decode, N=20, max | 8.454 tok/s | 5.138 tok/s |
+| decode, N=20, coefficient of variation | 1.01% | 0.90% |
 | prompt eval, pp2048 | 37.84 tok/s | 29.45 tok/s |
 
-Decode throughput for the two modes is not quoted here. An earlier N=20 measurement reported
-coefficients of variation of 0.04% and 0.02%, which is not physically plausible on dual 274 W cards
-in a 2013 chassis, so it is being re-measured under a longer interleaved protocol before any figure
-is published. The spread of that run was too tight to be real, and a confidence interval resting on
-an implausible standard deviation is worse than a loose one, because it invites the same retraction
-as the figures it replaced.
+The tensor series, in run order: 8.442 8.411 8.407 8.405 8.407 8.405 8.338 8.375 8.454 8.411
+8.415 8.436 8.445 8.452 8.342 8.227 8.232 8.231 8.246 8.231.
+
+The layer series, in run order: 5.113 5.114 5.115 5.117 5.115 5.115 5.137 5.138 5.137 5.138
+5.099 5.096 5.101 5.112 5.025 5.023 5.022 5.027 5.027 5.021.
+
+The paired per-token difference over the same 20 blocks is **77.0 ms, range 74.7 to 79.1 ms**
+(tensor mean 119.5 ms/token, layer 196.5 ms/token). The range is the observed spread of the 20
+paired differences, not an interval computed from a standard deviation.
+
+### Why an earlier version of this table was withdrawn
+
+The first version of this measurement reported 8.584 and 5.146 tok/s with coefficients of variation
+of 0.04% and 0.02%, or about 0.003 tok/s of standard deviation. On dual 274 W cards in a 2013
+chassis that is not a plausible amount of variation, and it was not. It was two artifacts at once:
+50-token generations with no warmup between them, and two arms measured as contiguous blocks rather
+than interleaved.
+
+Running the arms as contiguous blocks is the interesting mistake, because the data shows exactly what
+it costs. This pair does not drift smoothly. It sits in a state, jumps to another state roughly every
+five to ten runs, and both arms ride the same jump. Inside a single state the spread really is tiny:
+runs 1 to 6 of the layer arm have a CV of **0.026%**, and runs 16 to 20 of the tensor arm have 0.087%.
+Pool the whole session and the CVs become 1.01% and 0.90%. A short contiguous block inside one state
+is what produced the withdrawn numbers, and a longer run would have produced them again.
+
+So the session-level CV is quoted, not the block-level one, and the paired difference is quoted as a
+range rather than as a confidence interval. The ratio between the arms is much more stable than
+either arm alone (CV 0.55% across the same twenty blocks, against 1.01% and 0.90%), which is the
+same fact seen sideways: the machine changes state, and both modes ride the change together.
 
 Method: engine 0.87.24-beta.1 (llama.cpp pinned `d8123504938` plus 38 fork patches), model
-Qwen3-14B-Q4_K_M, `-ngl 99 -c 16384 -t 10 -fa auto`, both cards via `GGML_METAL_DEVICES=2`,
-seed 42, temperature 0, batch-1 decode. Parity is a single 256-token greedy continuation per mode.
-Decode throughput is N=20 per mode with 3 warmups discarded. Prompt eval is `llama-bench -p 2048
--r 2`. A KeepAlive launchd agent (`com.user.llama-server`, `-ngl 0`, 12 threads) was unloaded for
-these runs and reloaded after; its effect was within noise.
+Qwen3-14B-Q4_K_M, `-ngl 99 -c 4096 -t 12 -fa auto`, both cards via `GGML_METAL_DEVICES=2`,
+seed 42, temperature 0, batch-1 decode. Each block is a fresh server process, a 200-token warmup
+generation that is discarded, then 500 generated tokens timed by the server. Arms alternate block
+by block (A/B then B/A). Parity is a single 256-token greedy continuation per mode. Prompt eval is
+`llama-bench -p 2048 -r 2`. A KeepAlive launchd agent (`com.user.llama-server`, `-ngl 0`,
+12 threads) was unloaded for these runs and reloaded after; its effect was within noise.
 
 Prefill is measured with `llama-bench -p 2048`, not with the server's prompt-eval counter. The server
 reports prompt throughput over however many tokens the prompt happened to contain, and on a short
@@ -105,7 +134,7 @@ prompt that is fixed overhead with no batch to amortise, which reads as a much l
 prefill actually is.
 
 **There is no single-card baseline for 14B.** The model is about 9 GB and one D700 has 6 GB, so
-8.584 tok/s cannot be checked against a one-card run of the same model on this hardware, ever, and
+8.406 tok/s cannot be checked against a one-card run of the same model on this hardware, ever, and
 is not checked against one anywhere above.
 
 Do not compare this figure against 4B numbers from a different quantisation. A 4B model here is
@@ -119,6 +148,25 @@ The observed ratio is 3.07x for a 3.67x parameter increase, so 14B prefill is sl
 parameter-proportional prediction rather than far below it. An earlier claim that 14B prefill was
 17x off came from reading the server's prompt-eval counter on a 16-token prompt, which measures
 fixed overhead, not prefill.
+
+Prompt length has to be stated with any prefill number on this pair, because prefill is not
+length-invariant and it falls after a peak. Swept with `llama-bench -n 0 -r 2` on 4B Q6_K:
+
+| prompt length | layer pp | tensor pp |
+|---|---|---|
+| 512 | 78.30 | 141.37 |
+| 1024 | 94.09 | 131.38 |
+| 2048 | 95.62 | 115.76 |
+| 4096 | 76.10 | 93.19 |
+
+Tensor split peaks at 512 tokens and declines steadily from there, reaching 93 tok/s at 4096. Layer
+split peaks near 2048. No figure in this section is quoted against a modelled peak, and none of
+these is a fraction of one.
+
+This also closes a conflict that had two tables disagreeing by 22%: a published baseline of 78.45 /
+141.71 was pp512 and a later re-measure of 95.77 / 116.18 was pp2048. Both were correct. The pp512
+re-measure lands within 0.2% of the published pair, so nothing had regressed; the two tables simply
+were not measuring the same thing. Every prefill figure in this document now names its prompt length.
 
 ### What is settled about the collective
 
@@ -135,30 +183,49 @@ This is the counterfactual rather than a derivation. The engine has
 `TOSH_MGPU_ALLREDUCE_NOOP=1`, which keeps the split graph and every subgraph submission but performs
 no reduction and no cross-device synchronisation. Same partitioning, same model, same context, same
 thread count, one variable changed. The flag was confirmed to take effect before its numbers were
-read: it prints a warning at startup, its output differs from the real run, and the exchange count
-drops to zero.
+read: on an explicit `--split-mode tensor` run it takes the traced exchange count from **10560 to 0**
+over 64 generated tokens, so the control is live on the path being measured.
 
-N=20 per arm, 3 warmup runs discarded, 50 decoded tokens each, medians:
+N=20 blocks per arm, arms alternating block by block (A/B then B/A), each block a fresh server
+process, a 200-token warmup generation discarded, then 500 generated tokens. Two sessions, run on
+different days:
 
-| | median | min | spread |
+| machine state | collectives on | reduction skipped | cost |
 |---|---|---|---|
-| tensor split, collectives on | 8.472 tok/s | 8.285 | 3.5% |
-| tensor split, reduction skipped | 8.894 tok/s | 8.890 | 0.1% |
+| session 1, one state throughout | 8.406 tok/s | 8.813 tok/s | **5.49 ms/token** (range 5.20 to 5.67) |
+| session 2, low state, 15 pairs | 8.229 tok/s | 8.545 tok/s | **4.50 ms/token** (range 4.36 to 4.62) |
+| session 2, high state, 5 pairs | 8.410 tok/s | 8.800 tok/s | **5.26 ms/token** (range 5.00 to 5.51) |
 
-An earlier version of this measurement gave 5.41 ms per token with a standard error of 0.24 ms. That
-interval is withheld. It rests on a standard deviation measured over 50-token runs with no warmup
-between them, and the same protocol produced coefficient-of-variation figures tight enough to be
-physically implausible on this hardware. A bound computed from an implausible spread is not a bound.
+The cost is **between 4.5 and 5.5 ms per token**, and that is the whole headroom on this path. Within
+any single machine state the paired difference is reproducible to about ±0.15 ms; across states it
+moves by around 20%, which is why the range is quoted rather than one number to two decimal places.
+It is not worth an optimisation project. Host-staged collectives over unbridged PCIe on this pair
+cost a few percent of decode, not a multiple of it.
 
-What did survive that run is the direction, not the magnitude: the no-op arm was much less variable
-than the real arm. Collectives inject run-to-run variance into batch-1 decode, not only cost. The
-size of that variance is being re-measured with 500-token generations, a 200-token warmup, and
-interleaved A/B/A/B ordering, and the raw distribution will be published rather than a summary
-statistic.
+An earlier version of this measurement gave 5.41 ms with a standard error of 0.24 ms over 50-token
+runs, and an even earlier one reported a 525x variance ratio between the arms. Both are withdrawn.
+The 525x came from measuring two arms as contiguous blocks, and the mechanism is worth recording
+because it is the same mistake in both cases; see the state section below.
 
-That is the whole headroom on this path, and it is not worth an optimisation project. The honest
-summary is that host-staged collectives over unbridged PCIe on this pair cost single-digit percent
-of decode, not a multiple.
+### The machine sits in discrete states, and that is why the first CVs were impossible
+
+Two arms measured as contiguous blocks will each land inside whatever state the machine is in, and
+inside a state the spread is genuinely tiny: the layer arm's first six runs have a coefficient of
+variation of 0.026% and the tensor arm's last five have 0.087%. Pool a whole session and the same
+data gives 0.90% and 1.01%. The withdrawn 0.04% and 0.02% were real measurements of one state, not
+noise and not a bug.
+
+The pair flips state about every five to fifteen runs. In session 2 it stepped at block 16 and the
+step is visible in both arms at once: real went 8.228 to 8.417 tok/s, and the reduction-skipped arm
+went 8.545 to 8.787. Both moved about 2-3% in the same direction in the same block. Session 2's
+real arm shows a 2.21% gap between states, its no-op arm 2.98%.
+
+The arm that does *less* host work moved further, which points at the GPU rather than at the CPU, but
+the cause is not identified and no cause is claimed. `machdep.xcpm.gpu_thermal_level` reads 0 and
+`pmset -g therm` reports no thermal or performance warning at either state, so this is not the
+machine reporting a throttle. What can be said with confidence is that the states are discrete, that
+both arms ride the same one, and that a protocol which does not interleave will report a spread that
+describes one state as though it described the hardware.
 
 Two earlier readings of this data were wrong and are recorded so they are not repeated. The
 trace's `collective GPU` figure sums GPU-occupancy per command buffer across both cards, and those
@@ -218,7 +285,9 @@ part; the D700 enumerates over PCI as a consumer Tahiti XT, which is how the mix
 The host is an Intel Xeon E5-2697 v2: Ivy Bridge-E, 12 cores and 24 threads at 2.7 GHz, 30 MB of
 L3, DDR3-1866. It has AVX and F16C and no AVX2 and no FMA3, which is why this build ships with
 `TOSH_NO_AVX2=1`. Decode throughput is flat from 8 to 16 threads (8.60 tok/s at each) and falls at
-24 threads (7.99 tok/s) from SMT contention.
+24 threads (7.99 tok/s) from SMT contention. Those are `llama-bench -n 128 -r 3` figures, which are
+short runs and land wherever the machine happens to be; they are for comparing thread counts against
+each other, not for comparing against the interleaved numbers above.
 
 ## Install
 
