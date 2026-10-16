@@ -180,6 +180,27 @@ Firellama runs the biggest models this Mac Pro can hold at the fastest tok/s it 
     14B is 3.61x the size of 4B and only 2.29x slower, so per-card utilisation RISES with model
     size. The audit claimed ~38-40 GB/s in every config; the 4B at Q4_K_M is 24.5, not 38. The
     direction of the claim (no inversion) holds; the "flat rate" part does not.
+  PP CONFLICT RESOLVED 2026-10-16. Two pp sets were sitting in two tables and disagreeing by 22%.
+  Swept prompt length with llama-bench -n 0 -r 2, 4B Q6_K, dual D700:
+      length    layer     tensor
+       512     78.30     141.37
+      1024     94.09     131.38
+      2048     95.62     115.76
+      4096     76.10      93.19
+  The published 2026-09-30 baseline is pp512 (78.45 / 141.71 published, 78.30 / 141.37 now, both
+  within 0.2%). The 95.77 / 116.18 pair I recorded was pp2048. Neither was wrong. Nothing regressed.
+  CANONICAL: pp2048 for the 2026-10-16 table, pp512 for the 2026-09-30 table, each labelled.
+  FINDING: pp on this pair is NOT prompt-length-invariant and DECLINES past a peak. Tensor peaks at
+  512 (141) and falls to 93 at 4096. Layer peaks near 2048. A pp figure without its prompt length is
+  not a comparable quantity, on either mode.
+  CVs WITHHELD: N=20 gave CV 0.04% tensor / 0.02% layer, implying sd 0.003 and 0.001 tok/s. Not
+  physically plausible on dual 274 W cards in a 2013 chassis. Both that headline and the 5.41 ms
+  collective interval are held out of the release notes until re-measured with 500-token generations,
+  200-token warmup, ABAB interleaving, raw distribution published.
+  WAVE64 ESCAPE HATCH was the 39th failure mode, found by accident: GGML_METAL_WAVE64_DECODE_DISABLE=1
+  on a tensor split hit the set_rows assert. Both that and GGML_METAL_CONCURRENCY_DISABLE=1 surfaced
+  incidentally, which implies others are latent. Deliberate 8-way sweep (2 split modes x wave64 x
+  concurrency) run 2026-10-16; see docs for which combinations still fail.
   ISA: host is Ivy Bridge-E (Xeon E5-2697 v2), 22nm, 12c/24t at 2.7 GHz, 30 MB L3, DDR3-1866.
   Confirmed by feature bits, not brand string: machdep.cpu.features tops out at AVX1.0 RDRAND F16C,
   leaf7_features carries no ISA extensions. No AVX2, no FMA3, so TOSH_NO_AVX2=1 is required.

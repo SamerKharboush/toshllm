@@ -69,8 +69,8 @@ removed.
 
 ## Split modes on two FirePro D700s
 
-On the same unbridged pair, Qwen3-14B (40 layers, batch-1 decode) sustains a median of 8.584
-tok/s with tensor split and 5.146 tok/s with layer split, N=20 per arm. Both modes emitted identical first 256 greedy token IDs and
+On the same unbridged pair, Qwen3-14B (40 layers, batch-1 decode) sustains more throughput with a
+tensor split than with a layer split. The exact decode figures are not published yet; see below. Both modes emitted identical first 256 greedy token IDs and
 identical text; chosen-token logprobs agree to a max absolute delta of 2.0e-03 with a mean of
 1.5e-04, which is float summation order, not a difference in results. This is a throughput
 difference, not a results difference.
@@ -83,12 +83,14 @@ No percentage overhead is reported for either, because none is measured.
 
 | | tensor split | layer split |
 |---|---|---|
-| decode, median of N=20 | 8.584 tok/s | 5.146 tok/s |
-| decode, spread | 0.04% CV | 0.02% CV |
 | prompt eval, pp2048 | 37.84 tok/s | 29.45 tok/s |
 
-Both decode arms were measured on the same engine build, one model load per arm, 50 decoded tokens
-per run, 3 warmup runs discarded. The paired per-token difference is 77.8 ms, standard error 0.01 ms.
+Decode throughput for the two modes is not quoted here. An earlier N=20 measurement reported
+coefficients of variation of 0.04% and 0.02%, which is not physically plausible on dual 274 W cards
+in a 2013 chassis, so it is being re-measured under a longer interleaved protocol before any figure
+is published. The spread of that run was too tight to be real, and a confidence interval resting on
+an implausible standard deviation is worse than a loose one, because it invites the same retraction
+as the figures it replaced.
 
 Method: engine 0.87.24-beta.1 (llama.cpp pinned `d8123504938` plus 38 fork patches), model
 Qwen3-14B-Q4_K_M, `-ngl 99 -c 16384 -t 10 -fa auto`, both cards via `GGML_METAL_DEVICES=2`,
@@ -143,16 +145,16 @@ N=20 per arm, 3 warmup runs discarded, 50 decoded tokens each, medians:
 | tensor split, collectives on | 8.472 tok/s | 8.285 | 3.5% |
 | tensor split, reduction skipped | 8.894 tok/s | 8.890 | 0.1% |
 
-Removing the reduction and its synchronisation costs **5.41 ms per token** (mean, N=17 per arm,
-standard error 0.24 ms, 95% CI 4.93 to 5.88 ms). Treat that as an upper bound on the collective
-itself: the no-op also removes the cross-device sync, so the true collective cost is below it. The
-one-sided 95% upper bound is 5.81 ms.
+An earlier version of this measurement gave 5.41 ms per token with a standard error of 0.24 ms. That
+interval is withheld. It rests on a standard deviation measured over 50-token runs with no warmup
+between them, and the same protocol produced coefficient-of-variation figures tight enough to be
+physically implausible on this hardware. A bound computed from an implausible spread is not a bound.
 
-The more useful half of this result is the jitter. The real arm has a coefficient of variation of
-0.85%, the no-op arm 0.04%. That is a **525x difference in variance**, not a difference in mean cost.
-The collectives inject variance into decode, roughly 0.8% run to run, on top of their few-ms cost.
-That is what a host-staged, event-synchronised path does to a batch-1 decode loop, and it is the
-reason to distrust any single 14B decode measurement on this pair.
+What did survive that run is the direction, not the magnitude: the no-op arm was much less variable
+than the real arm. Collectives inject run-to-run variance into batch-1 decode, not only cost. The
+size of that variance is being re-measured with 500-token generations, a 200-token warmup, and
+interleaved A/B/A/B ordering, and the raw distribution will be published rather than a summary
+statistic.
 
 That is the whole headroom on this path, and it is not worth an optimisation project. The honest
 summary is that host-staged collectives over unbridged PCIe on this pair cost single-digit percent
