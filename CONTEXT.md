@@ -53,6 +53,26 @@ collapse decode (tg 17.4 to 11.7, measured 2026-09-30). Never logical count.
   `qwen35` has no expert tensors, so the planner is inert on it.
 - 35B-class: fog. 27B passed; nothing above it has been measured.
 
+## Performance denominators
+
+- **Modelled denominator**: a quantity from a spec sheet, a datasheet, or
+  arithmetic on the two. Not a measurement, and never the divisor in a
+  published percentage.
+- **Measured denominator**: a quantity observed on this machine, by this
+  build, with the method stated. The only admissible divisor.
+- **Marginal rate**: the slope of a cost fit over configurations that differ
+  in one quantity, in ms per unit. A property of the fit, not of the card.
+  It is not a bandwidth and must never be quoted as one.
+- **Bandwidth**: the rate at which the card reads bytes, established by a
+  measurement whose only work is reading bytes. Stands on its own; does not
+  depend on any fit.
+- **Collinear regressors**: two quantities that move together across every
+  configuration measured, so no fit can separate their costs. Bytes, depth and
+  width are collinear when only whole models are measured against each other.
+- **Intervention test**: a set of configurations that changes the quantity of
+  interest while holding the collinear partners fixed. The only way to break
+  collinearity; a third point on the same collinear path is not one.
+
 ## Split flags that must be earned
 
 Both multi-GPU hand-off flags are now gated on topology or split mode,
