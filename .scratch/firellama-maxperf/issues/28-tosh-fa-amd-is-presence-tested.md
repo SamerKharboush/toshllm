@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** open 2026-10-17 — semantics verified from source; consequence not yet searched for.
+**Status:** done 2026-10-17 — the trap is latent, not actual. The app gets it right.
 
 ## The finding
 
@@ -34,3 +34,27 @@ The natural experiment for this kernel family is on-versus-off. Any run that use
 - [ ] Any comparison whose off arm set the variable to 0 is identified, and its result marked as measuring the AMD path in both arms
 - [ ] The flag's actual semantics are written next to the flag wherever it is documented
 - [ ] Whether the gate should be corrected to a value test is decided, and if yes, that is a separate change with its own evidence
+
+## Result: the trap is latent, the app is correct
+
+**The app sets the variable only when the toggle is on.** `Sources/Servers/Server.swift:728`:
+
+```swift
+if effectiveFaAmd { env["TOSH_FA_AMD"] = "1" }
+```
+
+When the toggle is off it leaves the variable unset, which is the only thing that actually disables the AMD path. So the app's off arm is a real off arm, and the finding above has caused no measurement error in anything recorded here.
+
+**No recorded use of `TOSH_FA_AMD=0` exists** anywhere in the repo or in the scratch data.
+
+The other callers are unconditional and therefore also safe: the video, image and speech paths each set it to `"1"` when they need the kernel.
+
+## What remains, and why it is still worth writing down
+
+The flag stays a trap for the next person: it is presence-tested where its siblings are value-tested, so `TOSH_FA_AMD=0` means on. A future on/off comparison is one keystroke from a null result about nothing, which is the `TOSH_MGPU_NOWAIT` shape. The semantics are now recorded next to the flag's other documentation, which is the whole of what this ticket can achieve without changing behaviour.
+
+Whether the gate *should* be value-tested is a code change, deliberately not made here: the flag works as the app uses it, and correcting it changes runtime behaviour for any user who has set it to 0 in Extra arguments.
+
+## Note
+
+`Sources/Servers/EngineCheck.swift:164` already carries a comment acknowledging the dependency ("without TOSH_FA_AMD the attention kernels are..."), so the app's authors saw this; what was missing was the value-versus-presence distinction.
