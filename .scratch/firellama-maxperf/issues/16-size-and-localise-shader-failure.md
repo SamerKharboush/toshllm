@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** done 2026-10-17 — the failing kernel is named.
+**Status:** partial 2026-10-17 — the failing kernel is named and located on the decode path. Two acceptance criteria are not met: its share of a decode window has not been measured, and whether published figures must be re-flagged is therefore undecided. Do not treat this ticket as closed.
 
 - [ ] The failure is localised from the compiler's own error text, giving a source file and line, rather than inferred from the engine's flattened error string
 - [ ] The kernel that fails to compile is named, and whether something substitutes for it at runtime is stated
