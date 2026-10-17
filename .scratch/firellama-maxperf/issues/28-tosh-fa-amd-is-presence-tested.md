@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** done 2026-10-17 — the trap is latent, not actual. The app gets it right.
+**Status:** REOPENED 2026-10-17 — right severity, wrong disposition.
 
 ## The finding
 
@@ -58,3 +58,19 @@ Whether the gate *should* be value-tested is a code change, deliberately not mad
 ## Note
 
 `Sources/Servers/EngineCheck.swift:164` already carries a comment acknowledging the dependency ("without TOSH_FA_AMD the attention kernels are..."), so the app's authors saw this; what was missing was the value-versus-presence distinction.
+
+## Reopened: the disposition was wrong
+
+"Latent trap, no actual error" understates it because it treats the app as the only caller. The app is one caller. A knob whose **zero value turns the feature on** is a defect on its own terms: it will be set to 0 in a shell profile, a launchd environment, a plist, or a reproduction script by someone who means "off", and it will silently enable the AMD kernel.
+
+Presence-tested at four sites, to be re-verified individually before this closes:
+`ggml-metal-device.m:2185`, `ggml-metal-ops.cpp:3963`, `ggml-metal-ops.cpp:4271`, `src/llama-graph.cpp:2755`.
+
+Either value-test it, or state the presence semantics in a comment at the wrapper so the next reader cannot mistake it. Ten minutes.
+
+**Note on making the change:** the fix belongs in the patch series under `patches/`, not in the working tree. Editing the tree in place would break the provenance proved in ticket 14 — the tree would no longer equal pin plus series. Apply to the series, then re-replay.
+
+- [ ] Each of the four sites re-verified by reading it, not from this list
+- [ ] Decision taken: value-test, or document at the wrapper
+- [ ] If value-tested, the change is made in the series and the replay re-run
+- [ ] The exposure list is written down: every shell profile, plist, and reproduction script on this machine that writes TOSH_FA_AMD

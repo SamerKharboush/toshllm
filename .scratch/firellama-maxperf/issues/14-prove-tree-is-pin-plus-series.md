@@ -18,3 +18,18 @@
       — Clean checkout at the pin, then apply `patches/llama/**/*.patch` in numeric order with `git apply`, then add `wtchk` if it is needed. That is the whole recipe.
 
 **Note on the earlier void result.** A `git apply --reverse --check` run against the final tree reported 25 of 38 patches failing. That test cannot pass for any patch a later patch touches, so it carried no information about drift. It is superseded by the forward replay above and must not be cited.
+
+## Re-anchored to identifiers
+
+A provenance closure that does not name what it proved is the failure it claims to end.
+
+- **Pin:** `d81235049384534c167caea52b85a694f6103d14`
+- **Series:** `patches/llama/**` as committed in firellama at `7f464c3`, **38 patches**
+- **Replay worktree:** `/tmp/pristine-llamacpp`, detached at the pin, 0 porcelain before the run
+- **Result:** 38 applied, 0 failed; tracked content identical to the live tree (122 files, +28,370/−3,027 on both sides); reset returns to 0 porcelain
+
+## Corrected: the "39 patches with 0013 reused" claim does not hold for this series
+
+`patches/llama` holds **38** patches and **no duplicate numbers**; `0013` appears once, as `quant/0013-turbo-kv.patch`. The number 0013 *is* reused, but **across different series** — `diag/diag-0013-...` and `llama/quant/0013-...` — which is a per-directory numbering convention, not a collision. `patches/` as a whole holds 88 patch files across `diag`, `image`, `llama`, `shared-metal` and `whisper`.
+
+The replay applies `patches/llama` only, and that is sufficient to reproduce the tree.
