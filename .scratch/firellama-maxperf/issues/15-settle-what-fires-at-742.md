@@ -2,7 +2,7 @@
 
 **What to build:** One rebuild and one reproduction turn a two-way uncertainty into a fact. The binary aborts claiming line 742 of the tensor-split backend; the pin has the mul_mat abort at 609 and a reshape abort at 744; the working tree routes the mul_mat message through a naming helper at 781. Whichever literal the rebuilt binary prints decides whether the deployed binary was a partially patched build or whether an unpatched site fires in the product. Until this settles, llama-bench is not usable as the second timing arm.
 
-**Blocked by:** 14.
+**Blocked by:** 14 (done 2026-10-17 — the tree is the pin plus the series).
 
 **Status:** ready-for-agent
 
