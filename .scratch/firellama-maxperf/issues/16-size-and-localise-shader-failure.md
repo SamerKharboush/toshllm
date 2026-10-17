@@ -48,3 +48,34 @@ Established: which kernel, which two failure modes, and that the variant is the 
 ## Handover
 
 `metallib-fingerprint-2026-10-17.txt` records SHA-256 for all 41 embedded metallibs, including `fa_w64.metallib`, `fa_vec_f16.metallib` and `mul_mv_w64.metallib`. That is the fingerprint every number in this record was measured against.
+
+## Follow-on: what happens instead, from the code
+
+`ggml_metal_library_compile_pipeline` (ggml-metal-device.m) initialises its result with `pipeline = nil` and every threadgroup field zero, then:
+
+```
+res.pipeline = ggml_metal_pipelines_get(lib->pipelines, name);
+if (res.pipeline) { unlock; return res; }        // cache hit
+...
+id<MTLComputePipelineState> obj = [device newComputePipelineStateWithFunction:mtl_function error:&error];
+if (!obj) {
+    [lib->lock unlock];
+    GGML_LOG_ERROR("... failed to create pipeline state: base = '%s', name = '%s'", ...);
+    if (error) GGML_LOG_ERROR("%s: %s", __func__, [[error description] UTF8String]);
+    return res;                                   // <-- pipeline still nil, dims still zero
+}
+```
+
+Three facts follow directly:
+
+1. **Failure is returned in the shape of success.** The caller receives a struct with a nil pipeline and zero threadgroup dimensions, with no error flag. Nothing distinguishes it from a valid return except the log line.
+2. **The failure is not cached.** The early-return happens before the pipeline is inserted into the library, so every subsequent request for this kernel recompiles it and re-fails. That is why the same failure appears more than once per start — probably one kernel requested repeatedly, not several kernels.
+3. **There is no fallback.** The log announces none, and the code attempts none: it does not retry another variant, does not disable the path, and does not substitute a generic kernel.
+
+The fork warns about exactly this pattern elsewhere in the same tree. In `ggml-metal-context.m`, guarding the optional peer copy, it says: *"a success that silently returns wrong data has no fallback."* The compile path does the thing that comment rules out.
+
+## Still not established
+
+**Which kernel actually executes decode attention.** Candidates, none yet eliminated: the dispatch site guards on a nil pipeline and takes another path (a different variant, or a host-side attention); or the nil pipeline is encoded against and does nothing. The engine produces coherent output and passed the 256-token logprob parity check, so *something* computes attention correctly — which is evidence for a guard, not proof of one.
+
+This is now ticket 27.
