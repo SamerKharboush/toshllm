@@ -74,3 +74,26 @@ runs are void and are not evidence for anything.
 Whether 4.64 with one top-1 flip is acceptable for the fork, given the
 alternative on this hardware is not using the GPU at all. Needs a decision, not
 more measurement.
+
+## Disposition (decided)
+
+1. Accept the divergence as the cost of GPU acceleration on this hardware.
+   Record the measured floor rather than a threshold that nothing passes. The
+   0.6B top-1 flip stays a tracked risk, not a blocker.
+2. Park the Vulkan-on-Linux pivot. Reopening conditions: a D700 Metal path
+   that cannot be made correct AND a working RADV configuration that survives
+   long contexts, verified on this machine rather than reported from another.
+   Note that on macOS there is no native Vulkan, MoltenVK translates to Metal.
+3. The maintainer's "validated bit-for-bit" claim is not reproduced here. Kept
+   in the repo, not posted upstream.
+
+## The numbers to use from here on
+
+| build | max abs | cosine | note |
+|---|---|---|---|
+| fork CPU path | 0 | 1.0000 | the patches do not touch CPU numerics |
+| pin Metal | 1.28788 | 0.9982 | this is the floor a stock build sets here |
+| fork Metal | 4.63766 | 0.9389 | 0.6B |
+| fork Metal | 1.16017 | 0.9976 | 14B |
+
+Report the fork against the stock Metal number, never against 1e-5.
