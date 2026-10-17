@@ -1,0 +1,17 @@
+common/parsers/llama4.cpp
+common/tosh-plan.cpp
+common/tosh-plan.h
+ggml/src/ggml-metal/kernels/fa.metal
+ggml/src/ggml-metal/kernels/fa_w64.metal
+ggml/src/ggml-metal/kernels/mul_mm_w64.metal
+ggml/src/ggml-metal/kernels/mul_mv_w64.metal
+ggml/src/ggml-metal/kernels/tosh_moe.metal
+ggml/src/ggml-metal/kernels/turbo.metal
+ggml/src/ggml-turbo-quant.c
+models/templates/unsloth-Llama-4-Scout-17B-16E-Instruct.jinja
+src/llama-tosh-dmoe.cpp
+src/llama-tosh-dmoe.h
+tests/test-metal-memset.cpp
+tests/test-turbo-quant.c
+tosh-moe/
+wtchk/
