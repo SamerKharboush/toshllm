@@ -108,3 +108,50 @@ Claims that failed verification: 6, 7, 10.
 3. PR #19527 upstream, open and unmerged since February, touches Metal
    performance on AMD discrete GPUs. Unread. If it contains anything this fork
    already solved independently, that is worth knowing in both directions.
+
+### PR #19527 reviewed, mechanism by mechanism
+
+Open since 2026-02-11, one commit (`e4597961`), 3 files, +78/-9, all inside
+`ggml/src/ggml-metal/`. Head not rebased in eight months. **Zero maintainer
+reviews or comments ever**; the only comment is a third-party hardware report.
+Labelled `vibe-coded` three minutes after opening.
+
+**It does not touch the `has_simdgroup_reduction` gate at all.** The string
+`simdgroup` does not occur in the diff; `ggml_metal_supports_mul_mat_op` and the
+flag initialisation are untouched. It works entirely inside the gate. Its test
+hardware is a Radeon Pro 5300M (RDNA 1), where the gate is already satisfied.
+It never mentions the D700, GCN, Tahiti or pre-Metal3 anywhere.
+
+Two mechanisms:
+1. Serial dispatch for non-Apple GPUs, keyed on `!supports_gpu_family_apple7`.
+2. `use_managed_buffers = !has_unified_memory` with
+   `MTLResourceStorageModeManaged`, `didModifyRange:`, `synchronizeResource`,
+   and a changed `clear()` guard.
+
+Mechanism 1 **already exists in this fork**, same stated cause, different
+predicate: `patches/llama/metal/0001-amd-backend-host.patch:249-254` keys on
+`has_unified_memory` instead of `!supports_gpu_family_apple7`. The fork's comment
+names the cause outright: "discrete GPUs (AMD) corrupt their output with a
+concurrent encoder: the driver does not honour the memory barrier."
+
+Mechanism 2 is absent from the fork entirely: `MTLResourceStorageModeManaged`
+has zero matches across `patches/`. The fork uses `Shared` plus write-combined
+staging instead. If it ever binds, it binds only on the deferred
+`buffer_from_host_ptr` path, which the fork already disables for the D700.
+
+**Consequence: nothing actionable.** The PR cannot substitute for the fork's
+kernel work, and its one shared mechanism is already present.
+
+### The line that actually lifts the gate
+
+Worth recording, because it is the fork's central claim:
+
+    patches/llama/metal/0003-wave64-reductions-and-quant-loads.patch:404-406
+    -            return has_simdgroup_reduction && ggml_is_contiguous(op->src[0]);
+    +            // wave64: nsg and shmem are sized by the real width, so the reduction is width-agnostic.
+    +            return (has_simdgroup_reduction || wave64_decode) && ggml_is_contiguous(op->src[0]);
+
+`wave64_decode` is the mechanism. That single disjunct is the difference between
+this fork doing matrix multiply on the GPU and stock llama.cpp assigning it to
+the CPU, which is what the 1.28788-versus-1e-5 parity result and the 7-versus-19
+kernel-compile count both measure.
