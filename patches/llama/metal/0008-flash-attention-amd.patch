@@ -9,7 +9,7 @@ index a8a8bdde3..a19dccd70 100644
              const bool fa_amd_width_ok = dev->props.simd_width == 32
                  ? has_simdgroup_reduction
                  : wave64_decode;
-             if (TOSH_ENV("TOSH_FA_AMD") != NULL &&
+             if (TOSH_ENV("TOSH_FA_AMD_DISABLE") == NULL &&
                  !has_simdgroup_mm && fa_amd_width_ok &&
 +                (op->src[0]->ne[0] % 32 == 0 || op->src[0]->ne[0] == 72 ||
 +                 op->src[0]->ne[0] == 40 || op->src[0]->ne[0] == 80 || op->src[0]->ne[0] == 160)) {
@@ -124,7 +124,7 @@ index 11da1cf21..72f5f7d76 100644
  
      // AMD discrete GPUs miscompile the templated vec kernel, so route attention (decode
      // and prefill) to the dedicated AMD kernel for the standard K/V pairs it covers.
-     // Keeps quantized KV on the GPU instead of the CPU fallback. Gated by TOSH_FA_AMD.
+     // Keeps quantized KV on the GPU instead of the CPU fallback. On by default on wave64; disable with TOSH_FA_AMD_DISABLE=1.
      char fa_amd_pipeline[80] = {0};
      // dk 72 is instantiated for f16 K/V only (vision towers); see the .metal side.
 +    const bool fa_amd_f16_kv =
@@ -159,7 +159,7 @@ index 11da1cf21..72f5f7d76 100644
      const bool fa_amd_width_ok = props_dev->simd_width == 32
          ? props_dev->has_simdgroup_reduction
          : props_dev->wave64_decode;
-     if (TOSH_ENV("TOSH_FA_AMD") != NULL && fa_amd_pipeline[0] != '\0' &&
+     if (TOSH_ENV("TOSH_FA_AMD_DISABLE") == NULL && fa_amd_pipeline[0] != '\0' &&
          !props_dev->has_simdgroup_mm && fa_amd_width_ok &&
 @@ -3811,31 +3855,57 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
              /*.m1            =*/ m1,

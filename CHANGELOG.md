@@ -1,5 +1,18 @@
 # Changelog
 
+
+## Unreleased
+
+### Changed
+
+- **`TOSH_FA_AMD` is gone; FA AMD is on by default on wave64.** The old flag was
+  presence-tested, so `TOSH_FA_AMD=0` turned Flash Attention on and leaving it unset
+  turned it off - the opposite of what the name implies. Flash Attention on the AMD
+  path is now enabled whenever the kernels and pipeline are available, and the single
+  escape hatch is `TOSH_FA_AMD_DISABLE=1` for debugging. Nothing else about the flag
+  changes: the sub-flags (`TOSH_FA_AMD_NSG_64`, `_NSG_128`, `_NSG_WIDE`, `_LDS32`,
+  `_PREFILL_DECOMPOSED_DISABLE`, `_HEAD64_PREFILL_DISABLE`) keep their meanings.
+
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 

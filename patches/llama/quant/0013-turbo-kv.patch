@@ -857,7 +857,7 @@ index 629f95464..e7a5b3922 100644
              const bool fa_amd_width_ok = dev->props.simd_width == 32
                  ? has_simdgroup_reduction
                  : wave64_decode;
-             if (TOSH_ENV("TOSH_FA_AMD") != NULL &&
+             if (TOSH_ENV("TOSH_FA_AMD_DISABLE") == NULL &&
 @@ -2175,40 +2179,54 @@ bool ggml_metal_device_supports_op(ggml_metal_device_t dev, const struct ggml_te
                  (op->src[0]->ne[0] % 32 == 0 || op->src[0]->ne[0] == 72 ||
                   op->src[0]->ne[0] == 40 || op->src[0]->ne[0] == 80 || op->src[0]->ne[0] == 160)) {
