@@ -45,7 +45,7 @@ def run_once(cfg, model, timeout):
         "-p", str(cfg["pp"]), "-n", str(cfg["tg"]),
         "-r", str(cfg["reps_per_invocation"]),
         "-o", "csv",
-    ]
+    ] + list(cfg.get("extra_args", []))
     env = dict(os.environ)
     env.update(cfg["env"])
     p = subprocess.run(cmd, capture_output=True, text=True, env=env, timeout=timeout)

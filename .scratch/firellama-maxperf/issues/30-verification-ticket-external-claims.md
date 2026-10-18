@@ -214,3 +214,54 @@ wave64 decode, with no isolated measurement.
    128/256/512 across nine K/V type pairs including asymmetric mixes. Whether
    `kernels/fa.metal` here covers the same matrix was not checked. If it does not, that
    is a real gap on exactly the quantized and asymmetric cases.
+
+### fa.metal coverage: no gaps, and the check that was proposed cannot detect them
+
+Measured from the shipping artefact, `vendor/llama.cpp/build-static/bin/kernels/fa.metallib`:
+
+- **12 DK widths**: 40, 64, 72, 80, 128, 160, 256, 320, 384, 512, 576, 640
+- **24 K/V type pairs**: {f16, q4_0, q8_0, turbo2, turbo3, turbo4} x the same six
+- **6 dispatch variants** per pair: bare, `_w64`, `_w64_lds32`, `_w64_wg32`, `_w64_wg32_lds32`, `_wg32`
+- 861 distinct names, 1722 symbol lines (fat binary, one per architecture)
+
+The external branch declares DK {128, 256, 512} x 9 pairs = 27 instantiations. This fork
+covers 12x the DK widths and 2.7x the pair count, and includes asymmetric and non-power-
+of-two widths (40, 72, 80, 160, 320, 384, 576, 640) that the external does not enumerate.
+**There are no gaps to document against its matrix; the fork is the superset.** Recording
+"known limitations" here would have been backwards.
+
+`tools/check-fa-amd-kernels.sh` verifies the three names a GCN fallback would request.
+Two traps it documents, both of which bit while writing it:
+
+1. `strings FILE | grep -q NAME` under `set -o pipefail` reports failure **on a match**.
+   `strings` dies of SIGPIPE when grep exits before draining the pipe, pipefail turns the
+   141 into a non-zero pipeline, and every present kernel reads as ABSENT. The same trap
+   reported exit 141 earlier in this session and was misread then as a crash. The check now
+   materialises the symbol list once and uses here-strings, with no pipe in the path.
+2. **Presence is not usability.** All three names are present, and
+   `kernel_flash_attn_ext_vec_amd_dk128_kf16_vf16_w64` is the exact pipeline that fails
+   `newComputePipelineStateWithFunction` at runtime with `GPGPU, exceed the local data
+   storage limit`. A presence check green-lights the broken kernel. The script therefore
+   exits 0 on presence but says so in the output, and takes `FA_AMD_PROBE=` to test pipeline
+   creation, which is the only evidence that matters.
+
+### Upstream sync (ticket 31): nothing to port, because upstream has no engine
+
+`upstream` is `engeldlgado/toshllm`. `git fetch upstream` puts `upstream/main` at
+`523b814 release: 0.87.26`, 44 commits ahead of local HEAD and 72 behind it.
+
+The 44 commits are all application-layer: MCP transports, extension agents, MapLibre maps,
+Russian localisation, PMTiles byte-range serving, HELPERS.sha256. Measured on the trees:
+
+```
+files matching ggml-metal in upstream/main:  0
+files matching ggml-metal in HEAD:           0
+top-level vendor entries upstream:           0
+```
+
+Upstream carries no llama.cpp source at all, so step 2 as written has no subject: there is
+no metal, amd, wave64 or gcn path to diff, and no upstream kernel changes to port into
+`patches/llama/metal/`. The engine lives in the `vendor/llama.cpp` submodule, which is not
+in either index, and the fork's engine work is carried as `patches/`. Reconciling the two
+repositories is an app-layer question (0.87.24-beta.1 here against 0.87.26 there), not a
+metal one.
