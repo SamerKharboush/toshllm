@@ -155,3 +155,62 @@ Worth recording, because it is the fork's central claim:
 this fork doing matrix multiply on the GPU and stock llama.cpp assigning it to
 the CPU, which is what the 1.28788-versus-1e-5 parity result and the 7-versus-19
 kernel-compile count both measure.
+
+### wave64-radeon-vii reviewed: it is not independent prior art
+
+The brief said to cross-check against "the same problem, independent author". It is
+not independent. `leolebkuchen/llama.cpp` (default branch `wave64-radeon-vii`,
+created 2026-07-18, two commits on an upstream base of `1593d568`) shares with this
+tree, verbatim:
+
+| artifact | external | local |
+|---|---|---|
+| `// simdgroup reduction kernels produce corrupted output on AMD RDNA 2 (e.g. RX 6700 XT)` | `device.m:774` | `0001-amd-backend-host.patch` |
+| `probed SIMD-group width = %d (32 = Apple/AMD RDNA, 64 = AMD GCN/Vega)` | `device.m:767` | `vendor/.../ggml-metal-device.m:1805` |
+| env var set | `GGML_METAL_WAVE64_DECODE`, `GGML_METAL_DEVICE_INDEX`, `GGML_METAL_SIMDGROUP_REDUCTION_DISABLE`, ... | the same |
+| prop names | `wave64_decode`, `use_mm_manual` | the same |
+| function-constant slots | `FC_MUL_MV + 5`, `FC_MUL_MM + 6` | the same |
+| kernel name | `kernel_flash_attn_ext_vec_amd` | the same |
+| project naming | its `HOWTORUN.md` points at `toshllm/vendor/llama.cpp-merged` | this repo |
+
+Direction cannot be proven from these artifacts, but everything checkable is
+consistent with this fork being that lineage continued on a newer base, and a
+strict superset of its mechanisms. So this is ancestor-versus-descendant, not a
+cross-check: agreement between them is not independent corroboration and must not
+be reported as such.
+
+Its GEMM work is smaller than the fork's, not a different answer: ~100 lines inside
+`kernel_mul_mm`/`kernel_mul_mm_id` replacing `simdgroup_multiply_accumulate` with
+per-lane register MACs behind `FC_mul_mm_manual`, with `const short vsg = tiitg / 32;`
+for wave64. The fork's `0006`/`0007` are the same branch plus an `NLR == 8` variant,
+narrow/wide tiles, double buffering, `acc_f32`/`uniform_scale`, and a separate
+`kernels/mul_mm_w64.metal` compile unit.
+
+Its published numbers are not quotable: no harness, no N, no warmup policy, no raw
+logs, and its `HOWTORUN.md` documents `llama-bench` as broken for 12B models. Its
+13x/12x table multiplies in `--no-mmap` residency and attributes only 2-2.9x to
+wave64 decode, with no isolated measurement.
+
+### Genuinely actionable from it
+
+1. **Command-buffer node budget.** It GPU-faults when one command buffer carries too
+   much of a large wave64 graph ("command buffer status 5, e00002bd Internal Error"),
+   and splits at an empirical ~75 nodes per buffer with `MAX_COMMAND_BUFFERS` 64.
+   This fork serialises discrete GPUs but keeps `#define GGML_METAL_MAX_COMMAND_BUFFERS 8`
+   and no per-graph node budget. Unverified here, worth a look before any large-model
+   wave64 work.
+2. **9-character tool-call-id fix.** Confirmed absent locally:
+   `tools/server/server-common.cpp:111` is still `std::string random_string()` and
+   `common/chat.cpp:253` is still `if (!tool_call.id.empty())`. External assigns the id
+   unconditionally. Fixes turn-2 breakage with templates that validate ids.
+3. **Its divergence-finding harnesses** (`EVCB_STATS`/`EVCB_RAWDUMP` in
+   `examples/eval-callback`, `TBO_ELEMDUMP` in `tests/test-backend-ops`) answer "which
+   is the first genuinely divergent op between config A and B" with one env var, and
+   include an index-mod-32/64 histogram that exposes lane and tail bugs. That is a
+   sharper instrument than anything here for the class of bug this fork fights.
+4. **A narrower concurrency gate**: it serialises only wave64 *decode*, where this fork
+   serialises every discrete GPU. Only safe behind a per-op correctness gate.
+5. **An unverified coverage question**: it instantiates the FA vec kernel for DK
+   128/256/512 across nine K/V type pairs including asymmetric mixes. Whether
+   `kernels/fa.metal` here covers the same matrix was not checked. If it does not, that
+   is a real gap on exactly the quantized and asymmetric cases.
