@@ -331,3 +331,45 @@ jobs:
         with:
           name: perf-claim-gate
           path: /tmp/fitgate.txt
+
+  # The provenance claim: this tree is upstream at the pin plus a series of patches.
+  # scripts/check-patch-series.sh hydrates the pin into its own worktree, dry-runs the whole
+  # series, and exits 0 when every patch applies cleanly or with a three-way merge.
+  #
+  # A NON-ZERO EXIT HERE IS NOT "A PATCH IS STALE". It means the provenance claim is broken:
+  # the tree is no longer the pin plus a series, so the playback that proves what this fork is
+  # is no longer reproducible. That is why this is a job and not a script someone remembers.
+  #
+  # PRs run it unfiltered, since a patch edit is reviewed there; branch pushes are already
+  # path-filtered by this workflow's `on.push.paths`. It clones, makes a worktree and applies
+  # ~38 patches, so it is slow by nature and the timeout is generous on purpose.
+  patch-series:
+    if: github.event_name == 'pull_request'
+    name: Patch series against the pin
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Dry-run the whole series against the pin
+        run: |
+          # the checker is zsh; the Linux runner image does not ship one
+          command -v zsh >/dev/null || sudo apt-get install -y -qq zsh
+          PIN="$(grep -oE 'LLAMA_COMMIT:-[a-f0-9]+' scripts/build-engines.sh | cut -d- -f2)"
+          [ -n "$PIN" ] || { echo "::error::no LLAMA_COMMIT pin in scripts/build-engines.sh"; exit 1; }
+          echo "pin: $PIN"
+          zsh scripts/check-patch-series.sh "$PIN"
+
+  # Clause (c) of specs/metal-fa-contract.md: on the wave64 FA AMD path, no build the probe
+  # refused on this device is a dead end. The comparison is between the names the selector
+  # constructs (from the tracked series) and the refusal record the probe produced on the D700,
+  # which lives in the contract. No Metal device is needed here, so this runs on Linux.
+  fa-amd-contract:
+    if: github.event_name == 'pull_request'
+    name: FA AMD contract (wave64)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Enforce clause (c) against the recorded refusal list
+        run: ./tools/check-fa-amd-contract.sh
