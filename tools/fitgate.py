@@ -3,25 +3,65 @@
 
 Standard library only.
 
-The noise floor is EXTERNAL and is passed in. It must come from repeated
-measurement of the same cell. It must never be computed from the residuals:
-with dof == 1 every studentized residual is exactly +-1, so an internal floor
-makes reduced chi-squared identically 1 and the gate can never fail.
+The noise floor is EXTERNAL. It comes from repeated measurement of the same cell,
+either as a uniform relative fraction (--noise-rel) or, preferably, from the raw
+per-invocation calibration CSV (--calib), which gives each cell its own measured
+sigma. It must never be computed from the residuals: with dof == 1 every
+studentized residual is exactly +-1, so an internal floor makes reduced
+chi-squared identically 1 and the gate can never fail.
 
-    ./tools/fitgate.py --noise-rel 0.001 name:bytes:ms [...]
+    ./tools/fitgate.py --calib tools/calibrate/results/calibration-3cell-2026-10-18.csv \
+        --calib-test tg128 name:bytes:ms [...]
+
+    ./tools/fitgate.py --noise-rel 0.001 name:bytes:ms [...]      # uniform fallback
+
+y is milliseconds per token. sigma comes back in tokens per second, so it is
+propagated: y = 1000/t gives sigma_y = (1000/t^2) * sigma_t = (y^2/1000) * sigma_t.
 """
-import argparse, math, sys
+import argparse, csv, math, statistics, sys
+
+
+def sigma_from_calib(path, test, names):
+    """Per-cell sigma in t/s, straight from the raw per-invocation rows."""
+    rows = list(csv.DictReader(open(path)))
+    if not rows:
+        raise SystemExit(f"{path}: empty")
+    if test not in rows[0]:
+        raise SystemExit(f"{path}: no column {test!r}; has {sorted(rows[0])}")
+
+    by_cell = {}
+    for r in rows:
+        raw = (r.get(test) or "").strip()
+        if raw:
+            by_cell.setdefault(r["cell"], []).append(float(raw))
+
+    sig, ns = {}, {}
+    for cell, vals in by_cell.items():
+        if len(vals) < 2:
+            continue
+        sig[cell] = statistics.stdev(vals)
+        ns[cell] = len(vals)
+
+    missing = [n for n in names if n not in sig]
+    return sig, ns, missing
+
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--noise-rel", type=float, required=True,
-                    help="EXTERNAL noise floor, as a fraction of each measured value (0.001 = 0.1%%)")
+    ap.add_argument("--noise-rel", type=float,
+                    help="EXTERNAL uniform noise floor as a fraction of each measured value")
+    ap.add_argument("--calib", help="raw per-invocation calibration CSV; sigma is measured from it")
+    ap.add_argument("--calib-test", default="tg128",
+                    help="column of the calibration CSV to take sigma from (default tg128)")
     ap.add_argument("--reject-at", type=float, default=3.0)
     ap.add_argument("--chi2-max", type=float, default=3.0)
     ap.add_argument("--leverage-alarm", type=float, default=0.9)
     ap.add_argument("--loo-swing", type=float, default=0.20)
-    ap.add_argument("cells", nargs="+", help="name:bytes:y")
+    ap.add_argument("cells", nargs="+", help="name:bytes:y   (y in ms per token)")
     a = ap.parse_args()
+
+    if (a.calib is None) == (a.noise_rel is None):
+        print("REJECT: give exactly one noise floor, --calib or --noise-rel"); return 2
 
     pts = []
     for c in a.cells:
@@ -32,6 +72,20 @@ def main():
     n, p = len(pts), 2
     if n - p < 1:
         print(f"REJECT: n={n} p={p} leaves dof={n-p}; dof must be >= 1"); return 1
+
+    if a.calib is not None:
+        sig, ns, missing = sigma_from_calib(a.calib, a.calib_test, [nm for nm, _, _ in pts])
+        if missing:
+            print(f"REJECT: no calibration sigma for {missing}; "
+                  f"refusing to fall back to a modelled floor")
+            return 1
+        print(f"noise floor (measured): {a.calib}")
+        for nm in [nm for nm, _, _ in pts]:
+            print(f"  {nm:14s} sigma {sig[nm]:.4f} t/s  from n={ns[nm]} invocations of {a.calib_test}")
+        print()
+    else:
+        sig = None
+        print(f"noise floor (external, uniform): {a.noise_rel:.4%} relative")
 
     mx = sum(b for _, b, _ in pts) / n
     my = sum(y for _, _, y in pts) / n
@@ -45,12 +99,17 @@ def main():
         sxx = sum((x-ax)**2 for x in xs)
         return sum((x-ax)*(y-ay) for x, y in zip(xs, ys)) / sxx
 
-    resid, h = [], []
-    for _, b, y in pts:
+    resid, h, sigma = [], [], []
+    for nm, b, y in pts:
         resid.append(y - (intercept + slope * b))
         h.append(1.0 / n + (b - mx) ** 2 / sxx)
+        if sig is None:
+            sigma.append(y * a.noise_rel)
+        else:
+            # y = 1000/t  =>  sigma_y = (1000/t^2) * sigma_t = (y^2/1000) * sigma_t
+            sigma.append((y * y / 1000.0) * sig[nm])
+
     dof = n - p
-    sigma = [y * a.noise_rel for _, _, y in pts]
     z = [r / s for r, s in zip(resid, sigma)]
     chi2 = sum(zi * zi for zi in z) / dof
     worst = max(abs(zi) for zi in z)
@@ -59,9 +118,9 @@ def main():
     r2 = 1 - ss_res / ss_tot
 
     print(f"n={n}  p={p}  dof={dof}")
-    print(f"slope={slope:.4f} ms/unit   intercept={intercept:.3f}")
-    print(f"noise floor (external): {a.noise_rel:.4%} relative"
-          f"  -> sigma per cell {[round(s,4) for s in sigma]}")
+    print(f"slope={slope * 1e9:.4f} ms/GB   (= {1000.0 / (slope * 1e9):.1f} GB/s if read as a rate)"
+          f"   intercept={intercept:.3f} ms")
+    print(f"sigma per cell (ms): {[round(s, 3) for s in sigma]}")
     print()
     print(f"{'cell':18s}{'x':>10s}{'y':>10s}{'resid':>10s}{'z':>9s}{'leverage':>10s}{'cookD':>9s}")
     any_alarm = False
@@ -94,6 +153,7 @@ def main():
     if swing > a.loo_swing: problems.append(f"LOO swing {swing:.1%} > {a.loo_swing:.0%}")
     print("VERDICT:", "PASS" if not problems else "REJECT (" + "; ".join(problems) + ")")
     return 0 if not problems else 1
+
 
 if __name__ == "__main__":
     sys.exit(main())
