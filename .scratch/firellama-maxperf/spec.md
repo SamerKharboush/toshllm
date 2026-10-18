@@ -1,6 +1,6 @@
 # Spec: a calibration that can support a leverage analysis, and the LDS ceiling
 
-Status: ready-for-agent
+Status: ready-for-agent (revised)
 
 ## Problem Statement
 
@@ -197,3 +197,48 @@ The existing seams are preferred over new ones, and no new seam is proposed.
 - **`TOSH_FA_AMD=0` used to mean on.** Any configuration still setting it explicitly
   needs to move to leaving it unset, and the only remaining flag is
   `TOSH_FA_AMD_DISABLE=1`.
+
+## Revisions
+
+The following supersede the corresponding statements above. Each is the result of
+implementing a ticket, not of reconsidering.
+
+**The device index in the LDS measurement was wrong.** The spec said device index 2.
+`MTLCopyAllDevices` returns exactly two devices on this machine, indices 0 and 1,
+both FirePro D700. `GGML_METAL_DEVICES=2` registers two virtual slots mapping to
+those two physical devices; it does not create a third. The measurement runs on 0
+or 1, which are the same hardware.
+
+**The refused kernel's threadgroup request is not obtainable, and does not need to
+be.** Metal exposes a pipeline's static threadgroup bytes only through a built
+pipeline state, and a refused pipeline has no state; every other size API is a
+later macOS. The probe therefore prints `unavailable` for the refused variant rather
+than inventing a number. It did find the measurement that matters: the `_lds32`
+twin of the same kernel **builds** and requests **17152 bytes** against the 32768
+ceiling, with the plain `_w64` and `_w64_wg32` variants refused. The open question
+is therefore not "reduce the memory", since a working variant is already under the
+ceiling, but **why the selector chooses a variant that does not build.**
+
+**The gate takes exactly one noise floor.** `--calib` and `--noise-rel` are mutually
+exclusive. The structural-rejection control is therefore run by widening a copy of
+the calibration around each cell's mean, which scales sigma while preserving the
+measured time. Under that control the gate reports `worst |z| = 0.0x`,
+`reduced chi-squared = 0.0`, and still rejects on `leverage > 0.9` and
+`LOO swing 41.2%`. The structural property holds.
+
+**Calibration collection is automated, not manual.** The cell declaration, the
+thermal stabilisation, the discarded warmups, the per-cell mean and sigma, and the
+CSV header all belong to one script so that a rerun is a command rather than a
+procedure.
+
+**The patch series is validated in CI.** Any change to the pinned commit runs the
+series checker against the pin and fails if a hunk no longer applies, so a patch
+edit cannot silently break the build.
+
+**The probe runs in CI and fails on the two false results.** It fails if any D700
+reports `MTLGPUFamilyMetal3 == true`, which would be a false positive against this
+machine's measured capability, and it fails if it cannot find at least one built
+FA AMD variant, which is the evidence that the wave64 path exists at all.
+
+**Ticket status.** 31, 32 and 34 are resolved. 33 and 35 are on the frontier; 36
+remains blocked until 33 lands.
