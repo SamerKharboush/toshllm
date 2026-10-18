@@ -1,6 +1,6 @@
 # 35: run the threadgroup memory probe on the D700
 
-Status: ready-for-agent
+Status: resolved
 Blocked by: 34
 Spec: ../spec.md
 

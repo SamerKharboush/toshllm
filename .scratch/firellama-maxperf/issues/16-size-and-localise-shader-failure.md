@@ -79,3 +79,18 @@ The fork warns about exactly this pattern elsewhere in the same tree. In `ggml-m
 **Which kernel actually executes decode attention.** Candidates, none yet eliminated: the dispatch site guards on a nil pipeline and takes another path (a different variant, or a host-side attention); or the nil pipeline is encoded against and does nothing. The engine produces coherent output and passed the 256-token logprob parity check, so *something* computes attention correctly — which is evidence for a guard, not proof of one.
 
 This is now ticket 27.
+
+## Answer, from ticket 35
+
+The question "what ran in its place" is answered. The kernel selector requests the
+plain `..._w64` name first, and falls back to the same kernel's `_lds32` twin at half
+the simdgroups when that build fails. The refusal is memoised per process, so it costs
+one failed compile, not one per layer or per token.
+
+The split is exact and not a size effect. Refused plain widths: {64, 128, 256, 512}.
+Building plain widths: {40, 72, 80, 160}. Those are precisely the widths that have an
+`_lds32` twin and those that do not, so the correlation is with the twin's existence
+rather than with the request size. The largest request that builds is 23552 bytes,
+9216 under the 32768 ceiling.
+
+Evidence: .scratch/firellama-maxperf/evidence/threadgroup-memory-2026-10-18.md
