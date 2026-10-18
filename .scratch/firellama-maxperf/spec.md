@@ -242,3 +242,56 @@ FA AMD variant, which is the evidence that the wave64 path exists at all.
 
 **Ticket status.** 31, 32 and 34 are resolved. 33 and 35 are on the frontier; 36
 remains blocked until 33 lands.
+
+## Revision 2: the refusal is a selector decision, and the fifth cell is a download
+
+**Deliverable 10 is withdrawn.** There is no layout tweak to make. Every variant that
+builds requests between 10624 and 23552 bytes against a 32768 ceiling, the largest of
+them 9216 bytes under, and the refused widths are exactly those carrying an `_lds32`
+twin. Nothing that builds is near the ceiling, so reducing threadgroup memory would
+address a constraint that is not binding.
+
+**The refusal is a selector decision, not a memory fault.** The guard belongs at the
+point where the kernel name is chosen, and the defensible form of it is: on wave64,
+request the `_lds32` form first rather than requesting the plain form and falling back.
+That ordering change is supported by the probe.
+
+The stronger claim — that the plain form is never viable on GCN — is **not** proved.
+Ticket 35 leaves two readings standing and they are indistinguishable from the data
+available: the twin may exist *because* the plain form overflows, or the plain names may
+be leftovers that were never viable. A guard that assumes the second reading would be
+asserting more than the measurement supports, and it would be wrong on any hardware
+where the plain form does build. The guard is therefore an ordering change, not a
+prohibition, and it must remain testable by the probe. Confirming which reading holds
+needs the pipelined engine run ticket 16 is still waiting for.
+
+**The fourth-cell intermediate check has an arithmetic error in the request that
+produced it.** Four cells against `p = 2` give `df = 2`, not `df = 0`; `df = 0` is the
+three-cell case we already have. The intermediate check is still worth doing and is
+cheap, because the 0.60 GB cell is already on disk and needs no download — but it must
+be run with the minimum overridden, since the gate's own `MIN_CELLS = 5` will otherwise
+report insufficiency, which is the only thing a four-cell run can say by default. What
+the four-cell run buys is the leverage profile before paying for a download, not a fit.
+
+**The fifth cell is a download, not the on-disk candidate.** `Qwen3-8B-Q4_K_M` at
+4.58 GB, same quantisation family as the other four, filling the same 3.08 to 8.38 GB
+bracket. This removes the size-versus-quantisation-family coupling that
+`Ternary-Bonsai-2-27B-PQ2_0` would have introduced. The download is a deliberate
+action on a large file and is recorded as such rather than as a side effect.
+
+**A published five-cell pass is not guaranteed by five cells.** Leverage for a point
+far from the centroid of the rest stays high however many points are added, and two of
+the five additions sit at the ends of the range where leverage is naturally highest. If
+five cells still reject, the leverage profile is the finding and it is reported as one.
+The threshold does not move to meet the data.
+
+**The patch series is validated in CI.** The series checker becomes a job rather than a
+script someone remembers to run, so a patch edit cannot silently break the playback that
+proves this tree is the pin plus a series. That provenance is load-bearing.
+
+**The flash-attention contract is declared in a file and gated in CI.** It states the
+kernel the selector requests on wave64 hardware, that the selected variant stays under
+the device's threadgroup ceiling, and that the selector does not attempt a build the
+probe has already refused. The third clause is the one that would have caught this, and
+it is checkable: the probe already knows which names are refused, so the check is a
+comparison against its output rather than a new measurement.
