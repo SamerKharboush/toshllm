@@ -75,3 +75,36 @@ The accurate statement, which the fork's own maintainer makes in #15228, is that
 the *current upstream implementation* requires it. That is a codebase
 constraint, not a hardware one, and it is the constraint this fork exists to
 lift.
+
+### Round 1 verdicts (web agent, primary sources)
+
+| # | claim | verdict |
+|---|---|---|
+| 1 | llama.cpp #19610 reports a Vulkan/RADV DeviceLost crash on GCN 1.0 with full offload | VERIFIED. Titled for Tahiti/HD 7900/R9 280X, hardware listed as 2x FirePro D700 on Arch Linux. Closed next day as a duplicate of #19615. |
+| 2 | llama.cpp #26949 reports GGML_ASSERT(buf_src) from the page-alignment requirement | VERIFIED. iMac Pro 2017 + Vega 56. Closed stale, bug-unconfirmed, fix never merged. |
+| 3 | upstream gates GGML_OP_MUL_MAT and MUL_MAT_ID on has_simdgroup_reduction | VERIFIED, but through a helper: `ggml_metal_supports_mul_mat_op(has_simdgroup_reduction, op, true, ...)`, not a direct `&&` in the case bodies. |
+| 4 | the flag is only true for Apple7 or Metal3 | VERIFIED. Set from `supportsFamily:MTLGPUFamilyApple7` then ORed with `MTLGPUFamilyMetal3_GGML` (5001). Nothing else assigns it and there is no env override. |
+| 5 | the D700 supports Metal 2 and not Metal 3 | Machine-level only. Apple states this for "Mac Pro introduced in late 2013 or later"; the Metal Feature Set Tables PDF contains no AMD card names at all and no Mac GPU-family table. The D700 card is never documented. Inference, not documentation, so the supportsFamily: probe is the stronger evidence. |
+| 6 | `ggml-metal-gcn` is a project to build on | **FALSE.** No repository by that name. GCN Metal work is real but under different names, notably `leolebkuchen/llama.cpp` branch `wave64-radeon-vii`. |
+| 7 | upstream toshllm is at 1559d9b | **FALSE.** HEAD is 523b814 "release: 0.87.26", 2026-10-17. 1559d9b is real but 50 commits behind (the Ukrainian translation merge). |
+| 8 | SamerKharboush/toshllm is public, default branch main | VERIFIED. HEAD 8a238c4, 2026-10-15. |
+| 9 | iRon-Llama targets Metal3-class hardware | VERIFIED. Targets W6800X Duo, "designed to be MetalV3 compatible", and never mentions FirePro, D700, GCN or Vega. |
+| 10 | upstream has merged or documented pre-Metal3 AMD Metal support | **FALSE.** Master still gates on the flag, so those ops fall back to CPU. PR #19527 "Metal backend performance on AMD discrete GPUs" has been open and unmerged since 2026-02-11. #15228 closed not-planned; #25866 and #26949 closed stale. docs/build.md never mentions the gate. |
+
+Claims that failed verification: 6, 7, 10.
+
+## What this changes
+
+1. **The sync target is upstream 0.87.26, not 1559d9b.** This machine reports engine
+   0.87.24-beta.1. That is a real gap and it is the first correct statement of
+   deliverable 6. Worth a separate ticket.
+
+2. **A second independent GCN Metal effort exists**: `leolebkuchen/llama.cpp`,
+   branch `wave64-radeon-vii`, described as "wave64: coherent, fast Metal LLM
+   inference on AMD GCN/Vega Macs". It is not called ggml-metal-gcn and it is not
+   a clean-room backend, but it is prior art on the same problem and has not been
+   read here. Worth reading before any new kernel work.
+
+3. PR #19527 upstream, open and unmerged since February, touches Metal
+   performance on AMD discrete GPUs. Unread. If it contains anything this fork
+   already solved independently, that is worth knowing in both directions.
