@@ -3,8 +3,7 @@
   "env": {
     "GGML_METAL_DEVICES": "2",
     "GGML_METAL_VRAM_RESERVE_MB": "1024",
-    "GGML_METAL_SIMDGROUP_REDUCTION_DISABLE": "1",
-    "TOSH_FA_AMD": "1"
+    "GGML_METAL_SIMDGROUP_REDUCTION_DISABLE": "1"
   },
   "extra_args": ["-sm", "tensor"],
   "pp": 512,

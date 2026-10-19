@@ -182,17 +182,19 @@ def main():
     r2 = 1 - ss_res / ss_tot
 
     print(f"n={n}  p={p}  dof={dof}")
-    print(f"slope={slope * 1e9:.4f} ms/GB   (= {1000.0 / (slope * 1e9):.1f} GB/s if read as a rate)"
-          f"   intercept={intercept:.3f} ms")
-    print(f"sigma per cell (ms): {[round(s, 3) for s in sigma]}")
+    # No rate form here: 1000/slope is a throughput derived from a fit, and a fit this
+    # gate rejects is not a measurement. A rate is quotable only as a secant between two
+    # measured cells.
+    print(f"slope={slope * 1e9:.4f} ms/GB   intercept={intercept:.3f} ms")
     print()
-    print(f"{'cell':18s}{'x':>10s}{'y':>10s}{'resid':>10s}{'z':>9s}{'leverage':>10s}{'cookD':>9s}")
+    print(f"{'cell':18s}{'x':>10s}{'y':>10s}{'sigma_ms':>10s}{'resid':>10s}{'z':>9s}"
+          f"{'leverage':>10s}{'cookD':>9s}")
     any_alarm = False
-    for (nm, b, y), r, hi, zi in zip(pts, resid, h, z):
+    for (nm, b, y), s, r, hi, zi in zip(pts, sigma, resid, h, z):
         cook = (zi * zi / p) * (hi / (1 - hi))
         if hi > a.leverage_alarm:
             any_alarm = True
-        print(f"{nm:18s}{b:10.4f}{y:10.3f}{r:+10.3f}{zi:9.2f}{hi:10.3f}{cook:9.2f}")
+        print(f"{nm:18s}{b:10.4f}{y:10.3f}{s:10.3f}{r:+10.3f}{zi:9.2f}{hi:10.3f}{cook:9.2f}")
     print()
     sh = sum(h)
     print(f"sum of leverage = {sh:.6f}  (must equal p = {p})  "

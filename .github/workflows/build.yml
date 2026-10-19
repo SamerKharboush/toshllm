@@ -300,11 +300,27 @@ jobs:
   # calibration CSV, never from the fit's own residuals, so a claim can only be
   # published from a configuration whose scatter was actually measured.
   #
-  # EXPECT RED ON THE CURRENT DATA. This gate rejects the three-cell chord today
-  # (leverage 0.991, leave-one-out swing 41.2%), and it rejects on that geometry
-  # even with sigma inflated 1000x, so the rejection is structural rather than a
-  # tight noise floor. Red here means the chord is not publishable, which is the
-  # intended verdict until the model is respecified.
+  # The five arguments are the five calibration cells as name:bytes:ms: bytes is the
+  # size of the model file on disk, ms is 1000/mean(tg128) over that cell's 20
+  # invocations in the CSV. The gate re-derives the chord from the same rows it takes
+  # the sigmas from, instead of being handed a slope someone typed.
+  #
+  # ms is carried at 0.000001 so the value is the exact mean of the rows; the committed
+  # capture of this same run prints chi2_red 774.2 rather than the 774.1 below because
+  # its ms inputs are rounded to 0.001. That difference is input rounding, not a
+  # measurement difference, and neither number is near the threshold.
+  #
+  # RED IS THE EXPECTED VERDICT ON THIS DATA, and it must not be silenced by moving a
+  # threshold. On five cells the geometry is no longer the problem (maximum leverage
+  # 0.801, leave-one-out swing 8.5%); the gate rejects on the residuals, worst |z| 32.5
+  # and reduced chi-squared 774.2 against the measured floor. That verdict says the
+  # line-in-bytes model is misspecified, which is the finding this calibration was
+  # built to produce. Red here means no throughput claim is publishable from this
+  # calibration; a green badge bought by widening a threshold is the failure mode.
+  #
+  # --min-cells is deliberately NOT passed. It defaults to MIN_CELLS = 5, and the flag
+  # exists only for a four-cell intermediate check run by hand; setting it here would
+  # bypass the precondition this job is supposed to enforce.
   perf-claim-gate:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
@@ -317,13 +333,19 @@ jobs:
 
       - name: Reject any throughput claim whose fit exceeds the measured noise floor
         run: |
-          test -f tools/calibrate/results/calibration-3cell-2026-10-18.csv || {
+          CALIB=tools/calibrate/results/calibration-5cell-2026-10-18.csv
+          test -f "$CALIB" || {
             echo "no calibration CSV: refusing to gate a claim against a modelled floor"; exit 2; }
 
           set -o pipefail
           python3 tools/fitgate.py \
-            --calib tools/calibrate/results/calibration-3cell-2026-10-18.csv \
-            --calib-test tg128 | tee /tmp/fitgate.txt
+            --calib "$CALIB" \
+            --calib-test tg128 \
+            0.6B-Q8_0:639446688:18.191366 \
+            4B-Q4_K_M:2497280256:51.661836 \
+            4B-Q6_K:3306260704:56.387269 \
+            8B-Q4_K_M:5027783488:68.768362 \
+            14B-Q4_K_M:9001753376:116.863345 | tee /tmp/fitgate.txt
 
       - name: Attach the gate output
         if: always()

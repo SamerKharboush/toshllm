@@ -20,10 +20,12 @@
 //
 // build: clang -fobjc-arc -framework Foundation -framework Metal -o threadgroupprobe threadgroupprobe.m
 // run:   export GGML_METAL_DEVICES=2 GGML_METAL_VRAM_RESERVE_MB=1024 GGML_METAL_SIMDGROUP_REDUCTION_DISABLE=1
-//        ./threadgroupprobe 2
+//        ./threadgroupprobe
 //
 // args, each also settable by environment variable, argument wins:
-//   argv[1] device index  LDS_PROBE_DEVICE     default 2
+//   argv[1] device index  LDS_PROBE_DEVICE     default 0 (this machine reports two
+//                                              devices, indices 0 and 1; index 2 does
+//                                              not exist and never did)
 //   argv[2] metallib      LDS_PROBE_METALLIB   default <exe dir>/../../vendor/llama.cpp/build-static/bin/kernels/fa.metallib
 //   argv[3] function      LDS_PROBE_FUNCTION   default kernel_flash_attn_ext_vec_amd_dk128_kf16_vf16_w64
 //
@@ -68,7 +70,7 @@ int main(int argc, char ** argv) {
         if (fn_name == nil) {
             fn_name = @"kernel_flash_attn_ext_vec_amd_dk128_kf16_vf16_w64";
         }
-        long dev_index = dev_str != nil ? strtol([dev_str UTF8String], NULL, 10) : 2;
+        long dev_index = dev_str != nil ? strtol([dev_str UTF8String], NULL, 10) : 0;
 
         printf("probe=threadgroup-memory-request\n");
 

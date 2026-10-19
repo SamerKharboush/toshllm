@@ -1,6 +1,8 @@
 # Baseline 2026-09-30: 2x FirePro D700, Xeon E5-2697 v2, TOSH_NO_AVX2=1, engine 0.87.11
 
-Env: GGML_METAL_CONCURRENCY_DISABLE=1 TOSH_FA_AMD=1, 12 threads, -ngl 99 --load-mode none -fa 1.
+Env: GGML_METAL_CONCURRENCY_DISABLE=1, 12 threads, -ngl 99 --load-mode none -fa 1.
+FA AMD on wave64 was turned on by `TOSH_FA_AMD=1` when these rows were measured; that flag is gone
+(`14f5aee`), the path is default-on, and `TOSH_FA_AMD_DISABLE=1` is the only opt-out.
 **Prompt-processing figures in this table are pp512.** See the prompt-length section below: pp on this
 pair is not prompt-length-invariant, so a pp figure without its prompt length does not mean anything.
 
