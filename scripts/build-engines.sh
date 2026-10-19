@@ -135,6 +135,17 @@ CMAKE_FLAGS=(
 # baseline for pre-AVX Xeons. TOSH_AVX1=1 is the middle variant for AVX-but-no-AVX2 chips
 # (e.g. Ivy Bridge Xeon E5-2697 v2): AVX+F16C on, AVX2/FMA/BMI2 off (FMA needs AVX2).
 ISA_FLAGS=()
+
+# Default to the build host's own ISA. The full-AVX2 variant SIGILLs on an AVX1-only Xeon, so
+# building without env vars on the target machine produced a binary that died on its first
+# instruction -- the same defect class as shipping a "no-avx2" build compiled with AVX2. Only
+# auto-detect for a native build; a cross-build's host says nothing about the target.
+if [ "$ARCH" = "x86_64" ] && [ "$(uname -m)" = "x86_64" ] \
+   && [ -z "${TOSH_AVX1:-}" ] && [ -z "${TOSH_NO_AVX2:-}" ] \
+   && ! sysctl -n machdep.cpu.leaf7_features 2>/dev/null | grep -q AVX2; then
+    TOSH_AVX1=1
+fi
+
 if [ "$ARCH" = "x86_64" ]; then
     if [ -n "${TOSH_AVX1:-}" ]; then
         ISA_FLAGS=(-DGGML_SSE42=ON -DGGML_AVX=ON -DGGML_AVX2=OFF -DGGML_FMA=OFF
@@ -206,6 +217,32 @@ build_engine() {
             METAL_PRECOMPILE=0
         fi
     fi
+
+    # A build that cannot run on the machine that just produced it fails here, not at benchmark
+    # time. Both halves are needed: the scan is a flag over the whole __TEXT, the execution check
+    # is the verdict. The scan pattern is AVX2/FMA mnemonics only -- it deliberately does not try
+    # to be a complete ISA decoder, so a clean scan is not proof of anything on its own.
+    if [ "$ARCH" = "x86_64" ] && [ "$(uname -m)" = "x86_64" ]; then
+        local eserver="$PWD/build-static/bin/llama-server"
+        if [ -x "$eserver" ]; then
+            if ! "$eserver" --version >/dev/null 2>&1; then
+                echo "BUILD CHECK FAILED: $eserver does not execute on this host"
+                echo "  the AVX2 variant SIGILLs on an AVX1-only CPU; use TOSH_AVX1=1 or TOSH_NO_AVX2=1"
+                exit 1
+            fi
+            if ! sysctl -n machdep.cpu.leaf7_features 2>/dev/null | grep -q AVX2; then
+                local hits
+                hits=$(otool -tvV "$eserver" 2>/dev/null \
+                    | grep -cE '\bv(permps|permd|permq|permpd|pbroadcast[a-z]*|inserti128|extracti128|psllvd|psrlvd|psravd|pblendd|fmadd|fmsub|fnmadd|fnmsub)[a-z0-9]*\b' || true)
+                if [ "${hits:-0}" -gt 0 ]; then
+                    echo "BUILD CHECK FAILED: $hits AVX2/FMA instructions in a build for a host without AVX2"
+                    exit 1
+                fi
+                echo "build check: runs on this host, 0 AVX2/FMA mnemonics"
+            fi
+        fi
+    fi
+
     echo "engine ready at $PWD/build-static/bin (arch: $ARCH)"
     cd "$ROOT"
 }
