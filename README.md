@@ -148,7 +148,7 @@ A 2021 card holds its own: it trails the M3 Max on short prompts, leads it from 
 
 ## Fork changes
 
-Everything below is this fork's own work on top of upstream 0.87.24. Measured on a dual-
+Everything below is this fork's own work on top of upstream 0.87.26. Measured on a dual-
 FirePro-D700 Mac Pro (Xeon E5-2697 v2, AVX1 no AVX2, 64 GB RAM).
 
 ### Engine defects fixed
