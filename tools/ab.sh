@@ -164,11 +164,13 @@ preflight "$FORK" fork || die "preflight failed: the fork binary is not fit to m
 } > "$CSV"
 
 echo "== $BLOCKS blocks, seed $SEED =="
-mapfile -t PLAN < <(python3 -c "
-import random,sys
+PLAN=()
+while IFS= read -r line; do PLAN+=("$line"); done < <(python3 -c "
+import random
 r=random.Random($SEED)
 p=['baseline','fork']*($BLOCKS//2)
-r.shuffle(p); print('\n'.join(p))")
+r.shuffle(p)
+print('\n'.join(p))")
 
 i=0
 for side in "${PLAN[@]}"; do
