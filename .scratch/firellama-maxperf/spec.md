@@ -478,3 +478,78 @@ the interior intervals sit in the same residency regime, the window is mechanist
 holds. If they do not, the window shrinks or is withdrawn. The probe is already the
 instrument for per-device facts, so this is a new reading on an existing seam rather
 than a new tool.
+
+## Revision 5: the comparison was never run, and two claims are already upstream's
+
+**The baseline was wrong, so the improvement has never been measured.** Every A/B in this
+effort compared against stock llama.cpp. Stock llama.cpp is not the alternative a user of
+this project has. The alternative is the `0.87.26` noavx2 build, and it has never been
+benchmarked against this fork on this machine. Until that pairing exists, "we improved it"
+is unfalsifiable: a capability claim resting on a comparison nobody ran.
+
+**Two headline claims are retired, with citations.**
+
+*No-AVX2 is not a differentiator.* Upstream's README states that every release also ships a
+build without AVX2, and the file exists. This fork's README still tells users upstream
+"needs AVX2 and dies with illegal hardware instruction". That sentence is now false, and it
+is the same class of error this project refuses to let through in code.
+
+*The D700 attention refusal was fixed upstream in 0.87.17, before us.* Their release note:
+the AMD kernel asked for 34 KB of local memory and those cards give 32 KB, so it fell back to
+slower kernels; a version with half the work groups now fits; reported in #12. Ticket 35
+measured 33024 against 32768 and found the `_lds32` twin. **We re-derived a fix that had
+already shipped.** The measurement was not wasted -- it is an independent confirmation on
+this exact box -- but it is not an original contribution and will not be described as one.
+
+**One claim survives as possibly ours, and it is unproven.** GCN matmul -- wave64 matvec,
+toshgemm, bf16e emulation, aligned-load handling for pre-Vega, the Mac2 simdgroup reduction
+for macOS 12/13 -- is plausibly unique to this fork. Nothing has measured it against the
+right baseline.
+
+**The README is wrong in the exact way this project catches in code.** It advertises
+v0.87.14-beta.1, states a base of 0.87.23, and mentions none of the five-cell calibration,
+the secants, `_lds32`, or the 0.87.26 gap. Its differentiator list is partly false. A
+differentiator list is a claim, and claims here are gated.
+
+**The sync is now urgent rather than merely cheap.** Forty-four commits to 0.87.26 touch
+zero ggml-metal files, so none of the 15 patches is in their path. But a performance claim
+tied to 0.87.23 is obsolete on arrival, and the 0.87.26 engine moves -- llama.cpp v0.6.0,
+VRAM-reserve plumbing -- may shift the numbers by more than our patches do. Measuring first
+and syncing afterwards would waste the measurement.
+
+**Three third-party projects were assessed against the actual machine. None is a
+dependency.** Strata cannot run: its macOS path is gated on Apple Silicon, unified memory and
+macOS 15, and its AMD story needs 12 GB on one card against our 6. AirLLM is a per-token
+whole-model PCIe stream -- on a 14B file that is over a second per token before any compute,
+against the ~8.6 tok/s already measured -- and its transferable idea, expert streaming, is
+what upstream Dynamic MoE already does. Colibri is the only one that runs here and the only
+one worth measuring, **as an oracle rather than a dependency**: its tensor layout and quant
+formats are its own, so grafting it into llama.cpp would be a rewrite, not a patch.
+
+**The AVX1 penalty has never been measured.** Every measurement so far measured GPU paths.
+The Xeon's contribution at `-ngl 0` has no number, which makes it the one hardware axis this
+project has never characterised.
+
+### Decisions taken, binding on the tickets that follow
+
+**The baseline is the installable artifact, not a source build.** The A/B runs the 0.87.26
+noavx2 build against this fork's, alternating within one session so thermal drift cancels,
+same models, N at least 20. Stock llama.cpp is not a baseline for a claim about what this
+fork gives a user.
+
+**Sync before publishing.** No performance claim, README edit or release note is written
+against 0.87.23. The merge lands first and the patch series must still apply cleanly against
+the pin.
+
+**Claims upstream already fixed are credited, not quietly dropped.** The D700 attention work
+stays in the record with a citation to 0.87.17 and a statement that our measurement
+independently confirms it on this hardware. Deleting it would be a different dishonesty from
+keeping it as ours.
+
+**Colibri is measured as an oracle and never ported.** A faster engine on the same model means
+the gap is architectural and worth understanding. It does not mean adopting a second tensor
+layout.
+
+**Parity is a complete answer.** If the fork is within the noise floor of the 0.87.26
+artifact, the verdict file says parity, the README says parity, and the release note says
+parity. A capability claim that turns out to be a capability tie is a finished finding.
