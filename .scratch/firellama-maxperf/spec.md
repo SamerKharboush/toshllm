@@ -345,3 +345,114 @@ check fails, return to the earliest ticket that could have caused it rather than
 starting a new one. The effort terminates when every box is ticked, and the gate
 reports what it reports — a rejection with a named cause is a completed ticket, not an
 unfinished one. No threshold moves to convert a rejection into a pass.
+
+## Revision 4: the salvage was computed from the mislabelled sigmas, and there is no rate
+
+**The number this spec was about to publish was not approximately wrong. It was the
+bug.** The proposed claim was `7.13 ± 0.21 ms/GB` with the two interior secants
+"agreeing at 1.3σ". Both figures come from the sigma array that the standards review
+found to be in CSV-block order rather than table order — the array that assigns 14B's
+0.764 ms to 4B-Q4_K_M. Recomputing from the committed rows, with the sigmas keyed to
+the cells they belong to:
+
+| interior secant | slope | sigma |
+|---|---|---|
+| 2.497 → 3.306 GB | 5.84 ms/GB | ± 0.46 |
+| 3.306 → 5.028 GB | 7.19 ms/GB | ± 0.21 |
+
+They differ by 1.35 ms/GB against a combined sigma of 0.503, which is **2.68σ**. The
+inverse-variance mean is **6.96 ± 0.19**, not 7.13.
+
+Run the same arithmetic with the mislabelled array and the secants read as
+`5.84 ± 1.01` and `7.19 ± 0.21`, differing by **1.31σ**, with an inverse-variance mean
+of **7.14 ± 0.20**. The published pair was 1.3σ and 7.13. The mislabelling did not
+merely survive into the claim; it *is* the claim, to two decimal places. That is worth
+recording plainly because the failure mode is now demonstrated rather than feared: a
+sigma array printed without its cell names reached a published number through a
+review, a challenge, and two revisions of this spec without anyone — including the
+person who wrote it — noticing.
+
+**Correcting the mean is not enough, because the corollary forbids the average.**
+`CLAUDE.md` rule 3 ends: *two probes that disagree by more than the noise floor are two
+observations, not one quantity — publish what each one measured and do not average them
+into a rate.* At 2.68σ these two secants disagree by more than the noise floor. The
+corrected `6.96 ± 0.19` is an average of two observations that the rule says must not
+be averaged. **So no rate is published for this window, corrected or otherwise.**
+
+**What survives is two bounded statements, and they are stronger than the rate was.**
+Each secant is a direct measurement over its own interval:
+
+- **5.84 ± 0.46 ms/GB over 2.497 → 3.306 GB**
+- **7.19 ± 0.21 ms/GB over 3.306 → 5.028 GB**
+
+Published as two observations, not one quantity. And they corroborate Revision 3's
+finding by an independent route: the residual signs `- + + - -` said the relation is
+curved, and the secants say the same thing directly — the marginal cost is *not*
+constant across the window, rising by 2.68σ between two adjacent intervals. Two
+independent methods agreeing on the shape, where neither can support a single rate, is
+a better result than the rate would have been.
+
+**A rate that cannot be recomputed from the committed CSV by a committed script is a
+rumour.** This is the structural fix, and it is the reason this revision exists rather
+than a corrected sentence. A tool reads the calibration CSV and emits every adjacent
+secant with its sigma, the chi-squared between neighbours, the inverse-variance mean
+and its interval, and the explicit cell pairs used. **Its stdout is the claim.** The
+number stops living in a sentence that a reader has to trust and starts being an
+output anyone with the CSV can regenerate. If the script disagrees with the prose, the
+script wins and the prose is rewritten. This repo has already retracted one chord for
+exactly this reason, and the fix is to make the second retraction impossible.
+
+**The window must be defended by mechanism, not by which secants agreed.** "2.50 to
+5.03 GB" is currently the pair that happened to sit close together, which is the shape
+of a cherry-picked window whether or not it was one. The defence is residency: show
+that the cells bounding the interior intervals sit in the same VRAM-residency regime,
+by comparing model size against the device working-set budget. If they do, the window
+is mechanistic. If they do not, the window shrinks or the claim is withdrawn. A window
+chosen because its numbers were pleasing does not become honest by being stated
+carefully.
+
+**The gate's own rejection is evidence and must be reproducible as such.** The CI
+invocation runs the five committed cells and must reach REJECT with exit 1, not
+argparse's exit 2. The gate output, the leverage 0.801, the 8.5% leave-one-out swing,
+the worst |z| 32.5 and the reduced chi-squared 774.1 all reproduce from the CSV. The
+control asymmetry is on the record and is the sharpest single result here: **widening
+the sigmas flips the five-cell verdict to PASS and does not flip the three-cell
+verdict.** That is what distinguishes a rejection driven by residuals from a rejection
+driven by geometry, and it is why the five-cell rejection is a statement about the
+model.
+
+**The negative results are first-class artifacts, not footnotes.** Sixteen subsets with
+n≥3, none passing. Three functional forms — `x²`, `ln x`, `√x` — each breaking the
+leverage cap. A best quadratic still failing at reduced chi-squared 419. These are what
+make the surviving claim credible, because they show the window was not selected by
+exhausting the alternatives until one was quiet. They belong in the pull request body
+next to the claim, not in a comment on a ticket.
+
+**The claim ships as a file, not as a result quoted in prose.** It records the script's
+stdout verbatim, the window with its residency justification, the cell count and the
+coefficient of variation, the two excluded end intervals with their deltas, and the
+explicit statement that this is a bounded marginal cost over a stated region — not a
+bandwidth, and not a model of the full range. The end intervals are excluded because
+they are more than twenty sigma away from the interior, and that exclusion is stated
+in the same breath as the number rather than left for a reader to discover.
+
+**The pull request opens now.** A fork with issues disabled does not block a pull
+request; a read-only remote resolution does, and that is fixed by setting the default
+repository for the fork. The draft pull request, carrying the REJECT evidence, the two
+dead routes and the bounded claim, is the deliverable. Waiting for a green gate is not
+required, and it would be dishonest to imply that a gate currently rejecting is
+otherwise.
+
+**Ticket 39 stays blocked, with its reason named.** The selector ordering change
+becomes a change to which kernel name is requested first, and only after the engine run
+shows whether the plain form fails at build time or was never viable. Those two
+readings are still indistinguishable from the probe data, and an unconditional skip
+would be wrong under the first. The engine run's output is the justification, and the
+ticket remains blocked until it speaks.
+
+**Deeper, not bigger, applied to this revision.** The tool, the window justification,
+the claim file and the pull request each remove one ambiguity: whether the number is
+real, whether the window is principled, whether the claim is stated honestly, and
+whether the work is reviewable. No sixth cell, no fitted curve, no threshold moved.
+The termination condition is unchanged and is not a green gate: every stated piece of
+evidence exists and can be re-run.
