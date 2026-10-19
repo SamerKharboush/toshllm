@@ -1,0 +1,25 @@
+noise floor (measured): tools/calibrate/results/calibration-5cell-2026-10-18.csv
+  0.6B-Q8_0      sigma 0.6053 t/s  from n=20 invocations of tg128
+  14B-Q4_K_M     sigma 0.0560 t/s  from n=20 invocations of tg128
+  4B-Q4_K_M      sigma 0.0823 t/s  from n=20 invocations of tg128
+  4B-Q6_K        sigma 0.0936 t/s  from n=20 invocations of tg128
+  8B-Q4_K_M      sigma 0.0424 t/s  from n=20 invocations of tg128
+
+n=5  p=2  dof=3
+slope=11.1787 ms/GB   (= 89.5 GB/s if read as a rate)   intercept=16.603 ms
+sigma per cell (ms): [0.2, 0.764, 0.22, 0.298, 0.201]
+
+cell                       x         y     resid        z  leverage    cookD
+0.6B-Q8_0         639446688.0000    18.191    -5.560   -27.76     0.498   382.18
+14B-Q4_K_M        9001753376.0000   116.863    -0.368    -0.48     0.801     0.47
+4B-Q4_K_M         2497280256.0000    51.662    +7.143    32.51     0.264   189.21
+4B-Q6_K           3306260704.0000    56.387    +2.824     9.49     0.216    12.36
+8B-Q4_K_M         5027783488.0000    68.768    -4.039   -20.12     0.222    57.69
+
+sum of leverage = 2.000000  (must equal p = 2)  OK
+leave-one-out slope swing (max) = 8.5%   ok
+R^2 = 0.9792   (printed for context only; never a pass criterion)
+worst |z| = 32.5x the noise floor
+reduced chi-squared = 774.2
+
+VERDICT: REJECT (worst |z| 32.5 > 3; chi2_red 774.2 > 3)

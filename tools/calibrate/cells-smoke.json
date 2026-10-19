@@ -6,6 +6,7 @@
     "GGML_METAL_SIMDGROUP_REDUCTION_DISABLE": "1",
     "TOSH_FA_AMD": "1"
   },
+  "extra_args": ["-sm", "tensor"],
   "pp": 32,
   "tg": 16,
   "reps_per_invocation": 1,

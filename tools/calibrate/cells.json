@@ -12,9 +12,12 @@
   "reps_per_invocation": 2,
   "_configuration": "Tensor split. This is the configuration the fork exists for and the one every published figure refers to. The first calibration run omitted -sm tensor and therefore measured the default layer split, which reads about 0.55x on pp and 0.69x on tg. That run is void.",
   "_cannot_run": "Layer split with -fa 0. Tensor split requires flash attention at this pin (llama-context.cpp:3822-3832), so a no-flash-attention arm is not available on this hardware.",
+  "_sizes_gb": "0.64, 2.50, 3.31, 5.03, 9.00 -- five points spanning the parameter-size axis, no gap larger than 4 GB",
   "cells": [
-    { "label": "4B-Q6_K",    "model": "/Users/sam/models/Qwen3-4B-Q6_K.gguf" },
+    { "label": "0.6B-Q8_0",  "model": "/Users/sam/models/Qwen3-0.6B-Q8_0.gguf" },
     { "label": "4B-Q4_K_M",  "model": "/Users/sam/models/Qwen3-4B-Q4_K_M.gguf" },
+    { "label": "4B-Q6_K",    "model": "/Users/sam/models/Qwen3-4B-Q6_K.gguf" },
+    { "label": "8B-Q4_K_M",  "model": "/Users/sam/models/Qwen3-8B-Q4_K_M.gguf" },
     { "label": "14B-Q4_K_M", "model": "/Users/sam/models/Qwen3-14B-Q4_K_M.gguf" }
   ]
 }

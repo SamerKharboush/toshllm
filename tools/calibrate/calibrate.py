@@ -38,8 +38,24 @@ def load_cells(path):
     return cfg
 
 
+def thermal_state():
+    """This machine's thermal limits as a one-line string, or why we cannot say."""
+    try:
+        out = subprocess.run(["pmset", "-g", "therm"], capture_output=True,
+                             text=True, timeout=10).stdout
+    except Exception as e:                                     # not macOS, or pmset moved
+        return f"unavailable ({e})"
+    limits = " ".join(ln.strip() for ln in out.splitlines() if "Limit" in ln)
+    return limits or "unavailable (pmset reported no limits)"
+
+
 def run_once(cfg, model, timeout):
-    """One llama-bench invocation, returned as {test: t_s}."""
+    """One llama-bench invocation, returned as {test: t_s}.
+
+    The split is read back from the run's own csv. Omitting -sm tensor silently
+    measures a layer split instead, which is a different constraint, and that
+    mistake already voided one published run.
+    """
     cmd = [
         cfg["binary"], "-m", model,
         "-p", str(cfg["pp"]), "-n", str(cfg["tg"]),
@@ -79,7 +95,23 @@ def run_once(cfg, model, timeout):
         out[test] = float(raw)
         sd = (row.get("stddev_ts") or "").strip()
         out[test + "_sd"] = float(sd) if sd else 0.0
+        # first row wins; every row of an invocation reports the same split
+        if "_split_mode" not in out:
+            out["_split_mode"] = (row.get("split_mode") or "").strip()
+    if out.get("_split_mode") != "tensor":
+        raise RuntimeError(
+            f"{model}: llama-bench measured split_mode={out.get('_split_mode') or 'absent'!r}, "
+            f"not 'tensor'; a layer split is not the declared cell and the run is void")
     return out
+
+
+def write_csv(path, rows):
+    """Rows as a versioned csv; called after each cell so a dead run keeps the cells it finished."""
+    with open(path, "w", newline="") as f:
+        f.write("# schema_version=1\n")
+        w = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
+        w.writeheader()
+        w.writerows(rows)
 
 
 def main():
@@ -90,7 +122,7 @@ def main():
     ap.add_argument("--reps", type=int, default=20)
     ap.add_argument("--timeout", type=int, default=1800)
     ap.add_argument("--settle", type=int, default=0,
-                    help="seconds of idle before measuring")
+                    help="seconds of idle before each cell, for thermal stabilisation")
     args = ap.parse_args()
 
     cfg = load_cells(args.cells)
@@ -103,27 +135,26 @@ def main():
         if not os.path.exists(c["model"]):
             raise SystemExit(f"model not found: {c['model']}")
 
-    if args.settle:
-        print(f"settling : {args.settle}s idle")
-        time.sleep(args.settle)
-
     rows = []
     for cell in cfg["cells"]:
         label, model = cell["label"], cell["model"]
+        if args.settle:
+            print(f"settling : {args.settle}s idle before {label}", flush=True)
+            time.sleep(args.settle)
+        print(f"cell {label}: load1 {os.getloadavg()[0]:.2f}  {thermal_state()}", flush=True)
         for i in range(args.warmup):
             print(f"  warmup {label} {i + 1}/{args.warmup}", flush=True)
             run_once(cfg, model, args.timeout)
         for i in range(args.reps):
             t0 = time.time()
             got = run_once(cfg, model, args.timeout)
+            split = got.pop("_split_mode")
             rows.append({"cell": label, "rep": i, "seconds": round(time.time() - t0, 1), **got})
-            print(f"  {label} rep {i + 1}/{args.reps}: " +
+            print(f"  {label} rep {i + 1}/{args.reps}: split_mode={split} " +
                   " ".join(f"{k}={v:.3f}" for k, v in got.items()), flush=True)
+        write_csv(args.out, rows)
 
-    with open(args.out, "w", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
-        w.writeheader()
-        w.writerows(rows)
+    write_csv(args.out, rows)
     print(f"\nraw csv -> {args.out}")
 
     tests = sorted({k for r in rows for k in r
