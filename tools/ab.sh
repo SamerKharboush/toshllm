@@ -85,14 +85,81 @@ preflight() {
     return "$failures"
 }
 
+# ---------------------------------------------------------------- identity
+
+# assert_artifact <binary> <label>
+# Three artifacts, three identities, and they are not the same string:
+#   * the engine reports llama.cpp's own commit -- d81235049, the pin in
+#     scripts/build-engines.sh. It does NOT report the app's version.
+#   * the app bundle reports VERSION, in Info.plist, not on the command line.
+# Asserting --version against VERSION can never pass. Asserting nothing is how
+# dist/ToshLLM.app sat at 0.87.24-beta.1 while the tree said 0.87.26-beta.1, and every
+# measurement taken from it described a release nobody was shipping.
+assert_artifact() {
+    local bin=$1 label=$2 bad=0 commit pin app ver
+    commit=$("$bin" --version 2>&1 | sed -n 's/.*commit \([0-9a-f]*\).*/\1/p' | head -1)
+    pin=$(grep -oE '\b[0-9a-f]{40}\b' scripts/build-engines.sh | head -1)
+    if [ -z "$commit" ]; then
+        echo "assert[$label]: no commit in --version"; bad=1
+    elif [ -n "$pin" ] && [ "${pin#"$commit"}" = "$pin" ]; then
+        echo "assert[$label]: engine commit $commit is NOT the pin ${pin:0:9}"; bad=1
+    else
+        echo "assert[$label]: engine commit ${commit:0:9} == pin"
+    fi
+    app=$(echo "$bin" | sed -n 's#\(.*\.app\)/.*#\1#p')
+    if [ -n "$app" ] && [ -f "$app/Contents/Info.plist" ]; then
+        ver=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist" 2>/dev/null)
+        if [ "$ver" = "$(cat VERSION)" ]; then
+            echo "assert[$label]: bundle $ver == VERSION"
+        else
+            echo "assert[$label]: bundle $ver != VERSION $(cat VERSION)"; bad=1
+        fi
+    fi
+    echo "assert[$label]: sha256 $(sha "$bin")"
+    return "$bad"
+}
+
+# ---------------------------------------------------------------- splits
+
+# probe_splits <binary> <label> <model>
+# Never ask a binary for a mode it does not have. This harness once hardcoded -sm tensor,
+# and the resulting failure was reported as a property of the binary rather than of the
+# invocation. One invocation per mode. Exit codes are NOT comparable across these two
+# binaries: patch 0038 turns 39 abort paths into a named exit 86, so record the exit code
+# AND the first error line, and treat any 86 as the patched path firing, not a pass.
+probe_splits() {
+    local bin=$1 label=$2 model=$3 mode
+    for mode in layer row tensor; do
+        local log; log=$(mktemp)
+        "$bin" -m "$model" -ngl 99 -sm "$mode" -c 2048 -t 6 \
+               --host 127.0.0.1 --port "$PORT" --no-webui >"$log" 2>&1 &
+        local pid=$! ready=no rc=0
+        for _ in $(seq 240); do
+            curl -sf "http://127.0.0.1:$PORT/health" >/dev/null 2>&1 && { ready=yes; break; }
+            kill -0 "$pid" 2>/dev/null || break
+            sleep 0.5
+        done
+        if [ "$ready" = yes ]; then
+            kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null
+            # served is not split: a degenerate split that puts everything on device 0
+            # serves perfectly. Count the devices the engine names and say so.
+            echo "split[$label]: -sm $mode SERVED (devices named: $(grep -c 'device [0-9]:' "$log" 2>/dev/null || echo 0))"
+        else
+            wait "$pid" 2>/dev/null; rc=$?
+            echo "split[$label]: -sm $mode FAILED exit=$rc :: $(grep -iE 'error|abort|assert|not supported|split' "$log" | head -1 | cut -c1-110)"
+        fi
+        rm -f "$log"
+    done
+}
+
 # ---------------------------------------------------------------- one block
 
-# run_block <binary> <ngl> -> "tok_s pred_n therm"
+# run_block <binary> <ngl> <split> -> "tok_s pred_n therm"
 run_block() {
-    local bin=$1 ngl=$2 log; log=$(mktemp)
+    local bin=$1 ngl=$2 split=$3 log; log=$(mktemp)
     local therm; therm=$(pmset -g therm 2>/dev/null | awk '/CPU_Speed_Limit/{print $3}' | head -1)
 
-    "$bin" -m "$MODEL" -ngl "$ngl" -sm tensor -c 8192 -t 12 \
+    "$bin" -m "$MODEL" -ngl "$ngl" -sm "$split" -c 8192 -t 12 \
            --host 127.0.0.1 --port "$PORT" --no-webui >"$log" 2>&1 &
     local pid=$! ready=no
     for _ in $(seq 240); do
@@ -131,6 +198,7 @@ while [ $# -gt 0 ]; do
         --model)    MODEL=$2;    shift 2;;
         --blocks)   BLOCKS=$2;   shift 2;;
         --out)      OUT=$2;      shift 2;;
+        --split)    SPLIT=$2;    shift 2;;
         --selftest) SELFTEST=yes; shift;;
         *) die "unknown argument: $1";;
     esac
@@ -138,6 +206,7 @@ done
 [ -n "$BASELINE" ] || die "--baseline is required"
 [ -n "${MODEL:-}" ] || die "--model is required"
 [ -f "$MODEL" ] || die "model not found: $MODEL"
+[ -n "${SPLIT:-}" ] || die "--split is required: layer|row|tensor (no default; a default is what asked the baseline for a mode it does not have)"
 [ "$SELFTEST" = yes ] && FORK="$BASELINE"
 BLOCKS=${BLOCKS:-$((MIN_BLOCKS_PER_SIDE * 2))}
 [ "$BLOCKS" -ge $((MIN_BLOCKS_PER_SIDE * 2)) ] || \
@@ -148,6 +217,10 @@ OUT=${OUT:-ab-$(date +%Y%m%dT%H%M%SZ)}
 CSV="${OUT}.csv"; JSON="${OUT}.json"
 BASE_SHA=$(sha "$BASELINE"); FORK_SHA=$(sha "$FORK")
 
+echo "== identity (asserted, not assumed) =="
+assert_artifact "$BASELINE" baseline || die "baseline failed assert_artifact: this is not the artifact it claims to be"
+assert_artifact "$FORK" fork || die "fork failed assert_artifact: this is not the artifact it claims to be"
+
 echo "== preflight (a gate, not a report) =="
 preflight "$BASELINE" baseline || die "preflight failed: the baseline is not fit to measure"
 preflight "$FORK" fork || die "preflight failed: the fork binary is not fit to measure"
@@ -157,6 +230,7 @@ preflight "$FORK" fork || die "preflight failed: the fork binary is not fit to m
     echo "# seed=$SEED blocks=$BLOCKS warmup_tokens=$WARMUP_TOKENS measure_tokens=$MEASURE_TOKENS"
     echo "# model=$MODEL"
     echo "# baseline_sha256=$BASE_SHA"
+    echo "# split=$SPLIT"
     echo "# fork_sha256=$FORK_SHA"
     echo "# selftest=$SELFTEST"
     echo "# note: thermal is the CPU_Speed_Limit reported by pmset at block start"
@@ -176,7 +250,7 @@ i=0
 for side in "${PLAN[@]}"; do
     i=$((i+1))
     if [ "$side" = baseline ]; then BIN=$BASELINE; else BIN=$FORK; fi
-    read -r toks n therm <<< "$(run_block "$BIN" 99)"
+    read -r toks n therm <<< "$(run_block "$BIN" 99 "$SPLIT")"
     if [ "${toks:-ERR}" = ERR ]; then
         echo "  block $i ($side): FAILED ($n)"; echo "$i,$i,$side,99,ERR,0,$therm" >> "$CSV"; continue
     fi
