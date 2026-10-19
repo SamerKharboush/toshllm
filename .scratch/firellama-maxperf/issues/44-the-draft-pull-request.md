@@ -1,6 +1,6 @@
 # 44: the draft pull request opens now
 
-Status: ready-for-agent
+Status: resolved
 Type: task
 Blocked by: 43
 Spec: ../spec.md (Revision 4)
@@ -32,3 +32,19 @@ The pull request URL, and its head resolving to the pushed commit. The patch-ser
 green, the contract job green, and the performance gate red for the stated reason:
 `REJECT`, worst |z| 32.5, reduced chi-squared 774.1, exit 1. Red is the expected state
 and the body says so.
+
+## Answer
+
+https://github.com/SamerKharboush/toshllm/pull/2 — draft, base `main`, head
+`phase1-metal-d700-optimization`.
+
+Opened by setting the fork as the default repository first
+(`gh repo set-default SamerKharboush/toshllm`). The fork's disabled issues were never
+the obstacle; a `gh` default resolving to upstream read-only was, and it is a setting
+rather than a permission. Recorded because the earlier account of this as blocking was
+wrong.
+
+The body carries the committed REJECT evidence, both dead routes with their arithmetic,
+the bounded claim, the ticket statuses, and the sigma-mislabelling defect. The negative
+results are in the body rather than a ticket comment, because a reader who cannot see
+sixteen subsets and three rejected forms cannot tell the window from a cherry-pick.

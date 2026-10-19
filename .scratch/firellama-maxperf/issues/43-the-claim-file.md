@@ -58,3 +58,22 @@ Two corrections to earlier prose came out of writing it. The excluded upper inte
 on residency, so the delta is a consequence rather than the reason, which is the one
 place the spec's wording and the measurement disagree. And the residency budget that
 defends the upper bound is a recorded probe reading, not a modelled denominator.
+
+## Answer
+
+`docs/claim-marginal-cost-2026-10-19.md`. The tool's stdout is pasted verbatim and
+verified to match a fresh run byte for byte, so a reader with the CSV and
+`tools/secant.py` reproduces every figure rather than trusting a transcription.
+
+The two secants ship as two observations over their own intervals. The file states in
+one sentence that their mean is refused by rule 3's corollary and carries no averaged
+rate anywhere.
+
+The window's two justifications are kept apart, as ticket 42 found them: residency
+excludes the upper end because the 14B cell needs 139.7% of a 6442450944-byte budget
+and must spill, while fixed-cost dominance excludes the lower end at 25 sigma and the
+file says plainly that this is not a residency argument, since that cell sits at 9.9%
+of the budget and is comfortably resident.
+
+The file carries no percentage against a modelled ideal, no rate form, and no instance
+of the withdrawn `7.13 +/- 0.21`.
