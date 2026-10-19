@@ -22,3 +22,7 @@ negative control that proves the grep can actually fail.
 The disassembly grep output committed verbatim -- an empty result is the proof -- and a
 SIGILL-free run from the same binary. If either fails, stop the round: the baseline is invalid
 and no number from it may be published.
+
+## Revision 7 note
+
+Gated by Revision 7: the check must first run against a binary known to contain AVX2 and see a non-zero hit, before it may report zero for ours. The build tree on this machine is real, so a genuine artifact exists to serve as that positive control; locating it is part of the ticket. A wrapper, a shell script, or a truncated read must be rejected as not-a-binary.

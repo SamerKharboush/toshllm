@@ -23,3 +23,7 @@ already records cells, reps and a versioned CSV with per-cell sigmas.
 Per-block tok/s with sigma for 8B-Q4_K_M and 14B-Q4_K_M, with both sha256 values on every row
 and the per-side kernel-compile, refused-pipeline and CPU-fallback counts in the same file.
 0.6B is the smoke test and does not enter the verdict.
+
+## Revision 7 note
+
+Re-scoped by Revision 7: the harness is the deliverable and its output is the only evidence the verdict may cite. An independent review reached the same conclusion about the existing harness, which measured one binary sequentially, counted warmups as invocations, and benchmarked a tool rather than the engine.

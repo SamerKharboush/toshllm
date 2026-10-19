@@ -21,3 +21,7 @@ idle or working during -ngl 99 decode, sampled during the run rather than after 
 
 The per-token delta with its method line, and an answer to whether the RAM is idle. If it is
 idle, name what a cache tier would buy and at what complexity -- or say it would buy nothing.
+
+## Revision 7 note
+
+Re-scoped by Revision 7: the evidence is the launchd plist, never a process environment. The job is deregistered rather than killed, and the respawn behaviour is recorded as a hazard note, because a restarting twelve-thread server would be indistinguishable from variance across an alternating A/B.

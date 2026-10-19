@@ -22,3 +22,7 @@ and a `--version` run.
 The captured argv and env committed verbatim, the sha256, the codesign identity, and the smoke
 test output. Then one run through the app comparing its own reported throughput against the
 extracted binary's band: if they disagree, the extraction is wrong and this ticket reopens.
+
+## Revision 7 note
+
+Re-scoped by Revision 7: extract from the disk image rather than the installed copy, and run it with the argument vector the plist records. The comparison against the app's own reported throughput is owed, not done -- one line in the release notes, not a blocker.
