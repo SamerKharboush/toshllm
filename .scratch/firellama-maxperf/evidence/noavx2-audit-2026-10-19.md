@@ -1,70 +1,68 @@
-# The noavx2 label, proven twice
+# The noavx2 label: no AVX2 found in 107 MB of disassembly, and the binary runs
 
-Ticket 53. The label is verified by disassembly **and** execution, against a control
-that was shown to trip. Nothing here rests on a filename.
+Ticket 53, at its honest ceiling. The claim is **not** "the label is true". It is:
 
-## The pattern in the ticket was too narrow, and that is why the first audit refused
+> No AVX2 instruction was found in 107,586,373 bytes of `__TEXT` disassembly of the
+> shipped engine, using a scan shown to detect them, and the binary executes cleanly on
+> this Xeon under both offload settings.
 
-The ticket specified `\bvperm[qd]\b|\bvpsrlvd\b|\bvpgatherdd\b`. `otool` reports the
-control's instruction as:
+Those are three legs and the release note should carry all three.
+
+## Leg 1 -- the build recipe sets a no-AVX2 target
+
+Carried by the project's engine build configuration, not re-derived here.
+
+## Leg 2 -- the disassembly is clean, under a widened pattern
+
+The ticket's original pattern was `\bvperm[qd]\b|\bvpsrlvd\b|\bvpgatherdd\b`. It scores a
+genuine AVX2 binary at **zero**, because `otool` renders the control's instruction as
+`vpermps` and the character after `vperm` is `p`, not `q` or `d`.
+
+A hand-written mnemonic list is incomplete by construction and will miss the next one too.
+The widened pattern, where every hit is a flag rather than a verdict:
 
 ```
-0000000100000394	vpermps	%ymm0, %ymm1, %ymm0
+\bvperm|\bvpbroadcast|\bvpgather|\bvpsrlv|\bvpsllv|\bvpmaskmov|\bvpermi2|\bvpermt2
 ```
 
-`vpermps` does not match `\bvperm[qd]\b` -- the character after `vperm` is `p`, not `q`
-or `d`. A genuine AVX2 binary scored **zero** under the specified pattern.
+| input | widened hits | disassembly bytes |
+|---|---|---|
+| control (`tools/controls/avx2_control.c`) | **3** | 861 |
+| baseline engine | **0** | **107,586,373** |
 
-`assertcheck.py` refused to issue a verdict because the known-bad input did not trip the
-check. That is the tool doing its job: the audit was broken and it said so instead of
-reporting a clean zero for the subject.
+Coverage is stated because it changes the claim. A scan of part of a 26 MB binary is not
+the same assertion as a scan of all of it, and nothing in the earlier output distinguished
+them.
+
+## Leg 3 -- it executes, on both paths
+
+The extracted engine runs and reports itself:
+
+```
+version: 0.6.0-dev (build 11429, commit d81235049)
+```
+
+**That commit is the llama.cpp pin this repository's patch series is written against.** The
+shipped 0.87.26 engine and our 39-patch series target the same upstream revision, which is
+a provenance fact worth recording independently of the audit.
 
 ## The control
 
-Built rather than found, because no AVX2 artifact existed in the local llama.cpp tree:
+Committed as source, rebuilt on every run, never as a binary. If it stops tripping, the
+harness fails rather than passing:
 
-```c
-__attribute__((target("avx2"), used, noinline))
-static __m256i f(__m256i a, __m256i b) { return _mm256_permutevar8x32_epi32(a, b); }
-```
-
-Two independent proofs that it contains AVX2:
-
-1. **Disassembly.** `otool -tvV` emits `vpermps`; the permissive pattern `vperm` scores 1.
-2. **Execution.** Running it on this Xeon returns **exit 132** -- SIGILL.
-
-The second proof is the important one. Exit 132 is exactly the historical failure mode
-this repository has already shipped once: a "noavx2" download that was silently compiled
-with AVX2 and died with exit 132 on pre-AVX2 Xeons. The failure is now reproducible on
-demand, which is what makes it a control rather than an anecdote.
-
-## The subject
-
-Extracted from the disk image, never the installed copy:
-
-| | |
-|---|---|
-| path | `ToshLLM.app/Contents/Resources/bin/llama-server` |
-| size | 26,466,352 bytes |
-| sha256 | `c232e4763a6a462e…` |
-| `vperm` hits | **0** |
-
-None of the 20 KB files that earlier looked like an engine were engine binaries; this one
-is 26 MB and is the real thing.
-
-## Verdict
-
-| input | `vperm` hits | gate |
+| property | expected | observed |
 |---|---|---|
-| control (`/tmp/avx2ctl`) | 1 | trips, as required |
-| baseline engine | **0** | gated, therefore meaningful |
+| widened scan | >= 1 hit | 3 |
+| execution | 132 (SIGILL) | `Illegal instruction: 4` |
 
-The 0.87.26 noavx2 build contains no AVX2 instructions detectable by this audit, and the
-audit has been shown able to detect them. **The label is true**, and for the first time
-that is a measurement rather than an assertion.
+`used` and `noinline` are load-bearing in that source file. Without them the optimiser
+deletes the function, the control scores zero, and a check rots into a passing fixture --
+which is exactly the failure this file exists to make impossible.
 
-## Consequence for the tickets
+## What this does not establish
 
-The audit pattern must be the permissive one. A pattern tuned until it matches only the
-instructions one expects will miss the ones that matter, which is precisely how a broken
-check reports success.
+The audit reads the x86_64 slice. It says nothing about whether a kernel the scan did not
+reach would fault, which is why leg 3 runs both `-ngl 0` and `-ngl 99` and why `ab.sh`'s
+preflight refuses to emit a row until both are SIGILL-free. A clean disassembly and a clean
+smoke test are two different claims and the release note keeps them separate.

@@ -29,20 +29,24 @@ Gated by Revision 7: the check must first run against a binary known to contain 
 
 ## Answer
 
-Both proofs obtained, against a control shown to trip.
+Ceiling stated honestly rather than maximised:
 
-The control is built rather than found, because no AVX2 artifact existed locally: a small
-clang `-mavx2` binary calling `_mm256_permutevar8x32_epi32`. It is proven to contain AVX2 two
-ways -- `otool` emits `vpermps` for it, and running it on this Xeon returns **exit 132**,
-SIGILL. That is the exact failure this repository has already shipped once, now reproducible
-on demand.
+> No AVX2 instruction was found in **107,586,373 bytes** of `__TEXT` disassembly of the
+> shipped engine, using a scan shown to detect them, and the binary executes cleanly on
+> this Xeon under both offload settings.
 
-The subject is the engine extracted from the disk image: 26,466,352 bytes, sha256
-`c232e476…`, **zero** `vperm` hits, with the control at 1 in the same invocation.
+Three legs, all recorded: the build recipe targets no-AVX2; the whole disassembly is clean
+under a widened pattern with control 3 hits and subject 0; and the binary runs, reporting
+`0.6.0-dev (build 11429, commit d81235049)` -- which is the same llama.cpp pin this repo's
+39-patch series targets.
 
-**The ticket's own pattern was too narrow.** `\bvperm[qd]\b` does not match `vpermps`, so a
-genuine AVX2 binary scored zero under it. `assertcheck.py` refused to report a verdict for
-that reason -- the audit was broken and said so instead of returning a clean zero. The
-permissive pattern is the correct one.
+**The ticket's own pattern was too narrow**, and that is the finding worth keeping. It
+scores a genuine AVX2 binary at zero because `otool` renders the instruction as `vpermps`.
+A hand-written mnemonic list is incomplete by construction; the widened pattern is the
+instrument and every hit is a flag rather than a verdict.
+
+The control is committed as source and rebuilt per run, so it cannot rot into a passing
+fixture. Its `used`/`noinline` attributes are load-bearing: without them the optimiser
+deletes the function and the control silently scores zero.
 
 Evidence: `evidence/noavx2-audit-2026-10-19.md`.
