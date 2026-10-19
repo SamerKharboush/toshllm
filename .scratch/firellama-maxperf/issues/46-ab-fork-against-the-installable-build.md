@@ -2,23 +2,24 @@
 
 Status: ready-for-agent
 Type: task
-Blocked by: 45
-Spec: ../spec.md (Revision 5)
+Blocked by: 45, 48
+Spec: ../spec.md (Revision 6)
 
 ## Problem
 
-No comparison that decides anything has been run. The question is what a user gets from this
-fork over the build they can download.
+No comparison that decides anything has been run, and the fork has never been built as a
+bundle to compare.
 
 ## Change
 
-Alternating blocks in one session so thermal drift cancels: fresh process per block, 200-token
-warmup discarded, 500 measured tokens, N at least 20, thermal idle first. Both binaries, same
-model files, same prompt, pp512 and tg128. Let the existing calibration harness do the work --
-it already records cells, reps and a versioned CSV with per-cell sigmas -- extended to take a
-binary path rather than a new harness written alongside it.
+Build our side as a bundle, not a development tree: a packaged artifact against a dev tree is a
+category error. Then run both bundles' engine binaries alternating in one session -- fresh
+process per block, 200-token warmup discarded, 500 measured, N at least 20, thermal idle
+first, tensor split, same model files. Let the existing calibration harness carry it; it
+already records cells, reps and a versioned CSV with per-cell sigmas.
 
 ## Evidence
 
-Per-binary tok/s with sigma, pp512 and tg128, and the per-binary kernel and fallback counters
-in the same file. If the delta is inside the noise floor, that is the result.
+Per-block tok/s with sigma for 8B-Q4_K_M and 14B-Q4_K_M, with both sha256 values on every row
+and the per-side kernel-compile, refused-pipeline and CPU-fallback counts in the same file.
+0.6B is the smoke test and does not enter the verdict.

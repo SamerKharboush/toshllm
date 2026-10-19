@@ -2,7 +2,7 @@
 
 Status: ready-for-agent
 Type: task
-Spec: ../spec.md (Revision 5)
+Spec: ../spec.md (Revision 6)
 
 ## Problem
 
@@ -20,5 +20,5 @@ question closes.
 
 ## Evidence
 
-The receipts file, and the benchmark table with a verdict of colibri faster (naming the gap),
+The receipts file and the benchmark table with a verdict of colibri faster (naming the gap),
 parity, or colibri slower. No porting decision without that table.

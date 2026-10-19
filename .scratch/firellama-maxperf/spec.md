@@ -553,3 +553,68 @@ layout.
 **Parity is a complete answer.** If the fork is within the noise floor of the 0.87.26
 artifact, the verdict file says parity, the README says parity, and the release note says
 parity. A capability claim that turns out to be a capability tie is a finished finding.
+
+## Revision 6: the seam is the bundled engine, and both sides are artifacts
+
+**The comparison unit is the engine binary inside the shipped bundle, not the app and not a
+dev tree.** The GUI shell contributes no throughput and a great deal of nondeterminism --
+MCP, telemetry, a model manager. But "the engine" cannot simply be invoked either: the app
+supplies an environment and an argument vector that the A/B must reproduce, and 0.87.26
+specifically repaired a VRAM-reserve value that was not reaching the engine. A binary run
+with guessed flags measures a configuration nobody ships.
+
+The method is therefore: launch the installed app once, capture the engine process's exact
+argument vector and environment from the live process, and drive that same bundled binary
+directly with the captured configuration, a fresh process per block. The capture is the
+configuration. Anything else is an approximation of it.
+
+**Both sides are built as bundles.** A packaged artifact measured against a development tree
+is a category error: it compares a shipped configuration against an unshipped one and calls
+the difference a version. Our side is built, bundled and hashed like the thing users install.
+
+**The GUI cross-check is what makes the extraction trustworthy.** One run through the app,
+comparing its own reported throughput against the band from the extracted binary. If they
+disagree, the extraction is wrong -- not the engine. Without that check, a mis-captured
+argument vector would produce a confident number describing a configuration that does not
+exist.
+
+**The 0.6B cell is a smoke test and is not a verdict cell.** It was the worst-fitting point in
+the entire calibration at -27.8 sigma, and it sits in a different residency regime from
+everything else. Its job is to prove the pipeline runs end to end before the expensive cells
+run. The verdict is taken on 8B and 14B.
+
+**The no-AVX2 property is proven by disassembly and by execution, never by filename.** This
+repository has already shipped a "noavx2" download that was silently compiled with AVX2 and
+SIGILLed with exit 132 on exactly these Xeons. One proof is a claim; two independent proofs
+are a measurement. If either fails, the baseline is invalid and nothing measured from it may
+be published.
+
+**Packaging is gated behind the verdict.** Building a package before the verdict exists means
+shipping a number nobody measured. The package is produced only after wins, parity or loses is
+on file, and a parity verdict produces a release note that says parity.
+
+**The sync precedes the measurement.** Measuring 0.87.23 and syncing afterwards invalidates
+the measurement, because the 0.87.26 engine moved to llama.cpp v0.6.0 and repaired the
+VRAM-reserve plumbing that a VRAM-sensitive comparison depends on.
+
+**The Colibri dual-GPU question is answered by a probe, not by a port.** Whether MoltenVK
+enumerates both D700s is a five-minute check. If it enumerates one, "Colibri can use our dual
+GPU" is answered NO and no porting work begins.
+
+### Decisions taken, binding on the tickets that follow
+
+**Baseline capture is recorded as data, not retold as prose.** The captured argument vector,
+the environment, both sha256 values, the code-signing identity and the build-version load
+command are committed alongside the numbers. A reader must be able to reconstruct the
+configuration without asking.
+
+**Two sha256 values appear on every A/B row.** The extracted baseline binary and ours. A
+throughput table without them cannot be attributed to artifacts.
+
+**The verdict's primary cells are 8B and 14B.** 0.6B appears in the record as a smoke test and
+is excluded from the verdict arithmetic, for the reason the calibration already established.
+
+**A failed audit stops the work rather than qualifying it.** If the noavx2 audit fails, or the
+sync breaks a patch, or the GUI cross-check disagrees with the extracted binary, the round
+stops at that point. There is no partial-credit outcome in which a number from an invalid
+configuration is published with an asterisk.
