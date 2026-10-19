@@ -203,6 +203,13 @@ def _text(content):
     return ""
 
 
+def _media(request):
+    """Whether the request's last message carries images, audio or video, which this agent cannot read."""
+    messages = request.get("messages")
+    content = messages[-1].get("content") if isinstance(messages, list) and messages and isinstance(messages[-1], dict) else None
+    return isinstance(content, list) and any(isinstance(p, dict) and p.get("type") not in (None, "text") for p in content)
+
+
 def _parse(request):
     """(system, history, question) from a chat request. Tool messages are refused: the tools run
     here, and a result sent by a client could otherwise pass for one Tosh computed."""
@@ -253,7 +260,7 @@ class Turn:
         messages = ([{"role": "system", "content": self.system}] if self.system else []) + self.history
         messages = messages + [{"role": "user", "content": self.question}] + self.messages
         if note:
-            messages = messages + [{"role": "user", "content": note}]
+            messages = messages + [{"role": "user", "content": note + policy.language_note(_text(self.question))}]
         if body["chat_template_kwargs"].get("enable_thinking") is False:
             # Qwen3 templates that ignore enable_thinking still honour the switch in the text, as the app's chat sends it
             last = max(i for i, m in enumerate(messages) if m["role"] == "user")
@@ -438,7 +445,9 @@ class Turn:
             # no math tools on this engine: the model answers as it is
             message = self._generate(self._body(None, None, None), live=True)
             return message.get("content") or "", "answered"
-        tools = [t["definition"] for t in listed if isinstance(t.get("definition"), dict)]
+        # the model leans to the first tool that fits: exact ones go before their numerical twins
+        tools = [t["definition"] for t in sorted(listed, key=lambda t: not str(t.get("tool", "")).startswith("sympy_"))
+                 if isinstance(t.get("definition"), dict)]
         # with an approved server the model may also ask for what its tools need, in any round
         clarify_anywhere = any(approved(t.get("tool")) for t in listed)
         self.intent, asked = self._intent()
@@ -530,6 +539,13 @@ def run(arguments, emit=None, register=None):
         return {"status": 400, "error": {"message": "requests with tools are answered by the raw endpoint",
                                          "type": "invalid_request_error"}}
     started = time.monotonic()
+    if _media(request):
+        # the client sends the attachment to the model itself, with its math tools in its own loop
+        return {"id": "chatcmpl-tosh-" + uuid.uuid4().hex, "object": "chat.completion", "created": int(time.time()),
+                "model": str(request.get("model") or "tosh-agent"),
+                "choices": [{"index": 0, "message": {"role": "assistant", "content": ""}, "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+                "tosh": {"version": 1, "outcome": "declined", "seconds": 0.0, "passes": 0}}
     engine = Engine(str(arguments.get("base_url") or ""), arguments.get("api_key"), arguments.get("agent_key"))
     if register:
         register(engine)
