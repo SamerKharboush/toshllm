@@ -1,6 +1,6 @@
 # 33: calibrate at least five cells
 
-Status: ready-for-agent
+Status: resolved
 Blocked by: none
 Spec: ../spec.md
 

@@ -1,7 +1,7 @@
 # 39: wave64 requests the _lds32 form first
 
 Status: ready-for-agent
-Blocked by: the pipelined engine run that ticket 16 waits for
+Blocked by: 16
 Spec: ../spec.md (Revision 2)
 
 ## Problem

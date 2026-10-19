@@ -456,3 +456,25 @@ real, whether the window is principled, whether the claim is stated honestly, an
 whether the work is reviewable. No sixth cell, no fitted curve, no threshold moved.
 The termination condition is unchanged and is not a green gate: every stated piece of
 evidence exists and can be re-run.
+
+### Decisions taken, binding on the tickets that follow
+
+**No rate is published. Two bounded secants ship, each as its own observation.** Not
+the corrected mean, and not the interval: the corollary in rule 3 is applied literally,
+so `6.96 ± 0.19` is computed and *not* published as a quantity. The two statements that
+ship are `5.84 ± 0.46 ms/GB over 2.497 → 3.306 GB` and `7.19 ± 0.21 ms/GB over
+3.306 → 5.028 GB`.
+
+**The script refuses to print a mean when its neighbours exceed the noise floor.** The
+rule is enforced in code rather than in the judgement of whoever runs it. A script that
+computes a forbidden average and leaves the decision to the reader will eventually be
+read by someone who prints it. The refusal is part of the tool's contract, alongside
+the secants, sigmas, neighbour chi-squared and explicit cell pairs it emits.
+
+**The probe gains a per-device working-set budget reading, and the window stands or
+falls on it.** The residency check cannot run against a quantity nothing currently
+reports, so the reading is the first thing the window work needs. If the cells bounding
+the interior intervals sit in the same residency regime, the window is mechanistic and
+holds. If they do not, the window shrinks or is withdrawn. The probe is already the
+instrument for per-device facts, so this is a new reading on an existing seam rather
+than a new tool.
