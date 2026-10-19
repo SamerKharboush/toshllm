@@ -295,3 +295,53 @@ the device's threadgroup ceiling, and that the selector does not attempt a build
 probe has already refused. The third clause is the one that would have caught this, and
 it is checkable: the probe already knows which names are refused, so the check is a
 comparison against its output rather than a new measurement.
+
+## Revision 3: the five cells answered the question, and the answer is the model
+
+**The cell-count argument is settled and was right.** Five cells moved the maximum
+leverage from 0.991 to 0.801 and the leave-one-out slope swing from 41.2% DOMINATED to
+**8.5% ok**. No cell dominates the fit. That retires the claim that the chord was
+rejected because three points cannot fit a line; it was, and now it is not.
+
+**The verdict is still REJECT and the reason has moved.** worst |z| = 32.5, reduced
+chi-squared = 774.2. The gate changed its reason rather than softening. Its output is
+committed verbatim in the evidence directory.
+
+**The residuals are curvature, not noise.** In ascending size order the signs are
+`- + + - -`: below, above, above, below, on the line. Random scatter alternates signs.
+A systematic sweep is what a chord through a curved relation leaves behind. Across 0.6
+to 14 billion parameters, spanning four quantisations, the relation is concave: the
+marginal cost per byte is roughly three times steeper at the small end than in the
+middle.
+
+**So the line-in-bytes model is misspecified, and that is a measurement.** This is the
+finding the calibration was built to produce. Three cells could not separate "wrong
+model" from "too few points", because they rejected on geometry and said nothing about
+shape. Five cells made it definite. Adding a sixth would fail identically, so a sixth
+cell is not a route.
+
+**The decision this spec now poses, and it is exactly two options.** Both are honest
+and neither touches a threshold.
+
+*Scope the claim.* Publish a per-byte rate over the range where the marginal cost is
+roughly constant, and report the small cell as a separate regime with its own number.
+Narrower, bounded, defensible from the data already in hand.
+
+*Model the shape.* Fit a form carrying a size-dependent term so the fixed cost is a
+parameter rather than a residual. Better answer, more work, and it requires a
+justification for the functional form that does not amount to fitting until the gate
+passes.
+
+**Deeper, not bigger.** Every ticket in this effort earns its place by removing an
+ambiguity: the cell-count ticket separated geometry from noise, the probe separated
+threadgroup memory from selector behaviour, the flag ticket removed an inverted
+default. A ticket that adds scope without removing an ambiguity does not belong, and
+neither does a sixth cell, a wider model sweep, or a second hardware target. Depth
+here means one more question answered per unit of work, not more work per question.
+
+**Loop to completion.** Each ticket states its own evidence. A ticket is done when its
+stated evidence exists and can be re-run, not when the work feels finished. When a
+check fails, return to the earliest ticket that could have caused it rather than
+starting a new one. The effort terminates when every box is ticked, and the gate
+reports what it reports — a rejection with a named cause is a completed ticket, not an
+unfinished one. No threshold moves to convert a rejection into a pass.
