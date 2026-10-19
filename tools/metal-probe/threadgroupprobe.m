@@ -18,6 +18,12 @@
 // byte count from a sibling that builds; that is a different kernel's request, not
 // this one's, and the two must not be reported as one number.
 //
+// It also reports every device's recommended working-set budget in bytes, beside the
+// device index it already prints, so a residency argument has the number to argue from
+// rather than an assumption about VRAM. The budget is the driver's recommendation, not
+// a hard limit -- Metal grants allocations past it -- and the probe says so in its own
+// output line rather than leaving a reader to infer which of the two it is.
+//
 // build: clang -fobjc-arc -framework Foundation -framework Metal -o threadgroupprobe threadgroupprobe.m
 // run:   export GGML_METAL_DEVICES=2 GGML_METAL_VRAM_RESERVE_MB=1024 GGML_METAL_SIMDGROUP_REDUCTION_DISABLE=1
 //        ./threadgroupprobe
@@ -76,8 +82,12 @@ int main(int argc, char ** argv) {
 
         NSArray<id<MTLDevice>> * devs = MTLCopyAllDevices();
         printf("device_count=%lu\n", (unsigned long) devs.count);
+        printf("device_recommended_max_working_set_bytes_source=MTLDevice.recommendedMaxWorkingSetSize\n");
+        printf("device_recommended_max_working_set_bytes_kind=driver_recommendation_not_hard_limit\n");
         for (NSUInteger i = 0; i < devs.count; i++) {
             printf("device[%lu]=%s\n", (unsigned long) i, [[devs[i] name] UTF8String]);
+            printf("device_recommended_max_working_set_bytes[%lu]=%llu\n", (unsigned long) i,
+                   (unsigned long long) devs[i].recommendedMaxWorkingSetSize);
         }
         if (dev_index < 0 || (NSUInteger) dev_index >= devs.count) {
             fprintf(stderr, "probe error: device index %ld is out of range 0..%lu; "
