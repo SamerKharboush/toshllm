@@ -618,3 +618,66 @@ is excluded from the verdict arithmetic, for the reason the calibration already 
 sync breaks a patch, or the GUI cross-check disagrees with the extracted binary, the round
 stops at that point. There is no partial-credit outcome in which a number from an invalid
 configuration is published with an asterisk.
+
+## Revision 7: the harness replaces the agent, and checks must be able to fail
+
+**The measurement path must not contain an agent.** Three implementer runs died with zero
+commits on this work -- two on the baseline capture, one on the sync. The measurement does not
+need judgement; it needs a script that runs the A/B, writes its results to disk, and can be
+re-run verbatim. The agent then reads the JSON. That is one file and it removes the failure mode
+that has cost three rounds. Everything downstream cites the script's output and nothing cites an
+agent's account of it.
+
+**A check whose output is a zero must first be shown tripping on a known-bad input.** This
+effort has produced three checks that could not fail: a sigma array printed without cell names
+that put 14B's noise on 4B and reached a published number; an AVX2 grep that passes a 192-byte
+shell script; and a metal-file count whose `fatal: bad revision` was redirected to `/dev/null`,
+counted as zero, and reported as a measurement. Prose rules have failed three times, so this
+becomes code: a small assertion helper that takes a check and a known-bad input and refuses to
+emit a verdict unless the bad input trips it. A check that has never failed is not evidence.
+
+**Capture argv from a structured source, never from a process environment.** `ps eww` prints
+everything a process inherited, which for a launchd job includes credential material; it was
+rejected by the secret scanner for exactly that reason. A launchd job's argument vector is
+stored verbatim in its plist, with no environment attached. The plist is the authoritative
+record; a process listing is a snapshot of whatever happened to be inherited. Where a live
+process must be read, `ps -ww -o command=` gives the argument vector alone.
+
+**A respawning process is a measurement hazard, not an inconvenience.** The CPU-only 14B server
+on this machine is launchd job `com.user.llama-server`. Killing the process appeared to work and
+a byte-identical replacement appeared within seconds, because that is what launchd does. Twelve
+threads of CPU work at `-ngl 0` would have silently contaminated an A/B whose blocks alternate
+over twenty repetitions -- the contamination would be indistinguishable from variance. The job
+must be deregistered, not killed, and the check that it is gone must be `launchctl print`
+failing rather than a process listing succeeding.
+
+**The GUI is off the measurement path.** An application that will not stay dead cannot witness a
+measurement. The baseline is extracted from the disk image, not from the installed copy, and run
+with the argument vector the plist records. The comparison against the app's own reported
+throughput is **owed** -- a line to be written once the release exists -- and not a blocker.
+
+**An outside reviewer reaching the same conclusion is corroboration, not duplication.** A
+review found that the existing calibration harness cannot produce this A/B: it measures one
+binary sequentially, discards warmups as invocation counts rather than tokens, and shells out to
+a benchmark tool that is not the engine under measurement. That is the same conclusion reached
+here from first principles, and it is worth more for having been reached twice.
+
+### Decisions taken, binding on the tickets that follow
+
+**The graph is frozen at nine tickets.** Three consecutive rounds each added three or more. The
+next round adds none. Work that does not fit an existing ticket is reported, not ticketed.
+
+**The harness is a script and its output is the verdict's only permitted evidence.** Alternating
+blocks, a fresh process per block, two hundred warmup tokens discarded as tokens rather than
+invocations, five hundred measured, both hashes in the header, thermal state recorded per block.
+No number from the older harness may be cited as verdict evidence.
+
+**The positive control gates the audit.** The AVX2 check must run against a binary known to
+contain AVX2 and see a non-zero hit before it may report zero for ours. The build tree on this
+machine is real and contains genuine artifacts; locating one is part of the ticket.
+
+**A secret-bearing capture is deleted, not redacted.** A redacted derivative of a file that
+never needed to exist is worse than the file that does. Argument vectors come from the plist.
+
+**One patch edit carries its own proof.** Any change under the patch tree must be accompanied by
+the series check exiting zero in the same commit, not a follow-up.
