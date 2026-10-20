@@ -24,28 +24,25 @@ rate and the net tok/s, not just the ratio.
 
 ## Answer
 
-Two findings, one of them a flag that does not exist.
+**The draft was never firing because `--spec-type` defaults to `none`.** `-md` loads the draft
+model; the speculative path stays switched off, and the engine does not complain. With
+`--spec-type draft-simple --spec-draft-n-max 8` it fires:
 
-**`--draft-max` has been removed at this pin.** The engine says so:
-`error while handling argument "--draft-max": the argument has been removed. use
---spec-draft-n-max or --spec-ngram-mod-n-max`. The correct flag is `--spec-draft-n-max`.
+```
+I slot print_timing: draft acceptance = 0.40000 (  96 accepted /  240 generated), mean len =  4.20
+```
 
-**The draft never engages, on either build.** With `-md Qwen3-0.6B-Q8_0 --spec-draft-n-max 8`:
+**And it is 3.5x slower.**
 
-| build | tok/s with draft | tok/s without draft |
-|---|---|---|
-| this branch | 8.190 / 8.193 / 8.194 | 8.184 / 8.186 / 8.191 |
-| upstream@AVX1 | 2.537 / 2.553 / 2.552 | 2.546 / 2.556 / 2.554 |
+| configuration | tok/s |
+|---|---|
+| no draft | 8.184 / 8.186 / 8.191 |
+| `--spec-type draft-simple --spec-draft-n-max 8` | 2.360 / 2.366 / 2.363 |
 
-Identical to the third decimal, and the only draft-related line in either log is
-`common_speculative_init_result: loading draft model ...`. A verbose run adds no drafting
-counters -- there is no `n_drafted` and no `n_accepted` anywhere. The model is loaded and the
-sampler never calls it, on this build and on upstream's.
+The mechanism works and the acceptance rate is healthy; the economics are inverted, because the
+0.6B draft competes with the 8B target for the one card that is already the bottleneck. Strata's
+published 1.6-1.8x does not reproduce on this box, and the reason is specific: there is no
+second device to draft on.
 
-So there is no acceptance rate to report, because no tokens were ever drafted. Strata's
-1.6-1.8x is not reachable through this path in its current state, and the reason is that the
-engine's speculative path is not engaged on this machine, not that acceptance is low.
-
-Next step for this ticket: find why. `patches/llama/spec/0028-mtp.patch` is the fork's
-speculative patch and is the first place to look, along with whether the engine needs a
-different flag or a `-np`/draft-parameter to point at the draft model rather than `-md`.
+Not swept: the draft's own placement (`--spec-draft-n-cpu-moe`, `--spec-draft-n-gpu-layers`).
+A CPU-resident draft is the obvious next cell.
