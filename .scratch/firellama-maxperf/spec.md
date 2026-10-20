@@ -681,3 +681,82 @@ never needed to exist is worse than the file that does. Argument vectors come fr
 
 **One patch edit carries its own proof.** Any change under the patch tree must be accompanied by
 the series check exiting zero in the same commit, not a follow-up.
+
+## Revision 8: the 35B is the spine, the second D700 has a two-command answer, and a kernel that fails to build must fall back loudly
+
+**The tiering preset is already working, and the 35B is the case it was built for.**
+`ornith-1.0-35b-Q6_K.gguf` is 27 GB with 3B active per token. It runs here with about 4.4 GB
+on one D700 and the rest in the 64 GB. That run is now the spine: every later cell is a delta
+against it, measured the same way, and a number without its before is not a result.
+
+**The second D700 has a two-command answer before it has a code answer.** Run `-ts 1,1` first.
+If the second card stays cold, run the `MTLCopyAllDevices` probe and read the vendor patch. The
+outcome is one of three and only three: the budget arithmetic, the enumeration, or a vendor
+patch that pins device 0. A hypothesis about device B is not a finding until one of those says
+which.
+
+**Stop chasing the linker. Make the failure non-fatal.** A kernel the driver refuses to build
+must fall back loudly, not vanish: one warning that names the fallback, and a non-vector path
+where there is no twin. The dk128/dk256 layout fix is a separate ticket with its own measured
+payoff, and it does not block the release.
+
+**Speculative decoding is gated on the second GPU.** The draft runs on B and the target on A,
+which is Strata's architecture. If the second device does not materialise, the ticket closes
+with the measured loss on one device instead of a claim about a machine that does not exist.
+
+**The 64 GB claim needs a pagein row.** Flat means "zero re-faults". Climbing means "expert
+streaming from SSD". The row states which, with the number and the window it was taken in.
+
+### The tasks
+
+1. **T1, baseline the 35B.** Q6_K, `-ngl 99`, default split. Record prompt-eval and decode
+   tok/s with n >= 5, a utilisation card sampled mid-decode, and a `vm_stat` pagein delta
+   across a warm run. Every later cell is a delta against this.
+2. **T2, settle device B with two commands, then a probe.** `-ts 1,1`; if B stays cold, the
+   `MTLCopyAllDevices` probe; then the vendor patch. The outcome is one of: budget arithmetic,
+   enumeration, or a vendor patch that pins device 0.
+3. **T3, the flash-attention fallback.** A nil pipeline means `use_vec = false`, one warning,
+   and the non-vector path. Re-run T1: the caveat disappears. The dk128/dk256 layout fix
+   becomes a separate ticket with a measured payoff and must not block the release.
+4. **T4, the placement matrix on the 35B.** `--n-cpu-moe {16,24,32}`, `-cmoe`, one `-ot`
+   regex for the late-layer expert FFNs, `-ts 1,1`, `-sm tensor`. Every cell reports tok/s and
+   both devices. A cell with one device is recorded as one device.
+5. **T5, speculative decoding, only if T2 produced a second device.** The draft on B, the
+   target on A, `--spec-type draft-simple --spec-draft-n-max 8`. If T2 fails, the ticket
+   closes with "gated on dual-device; measured 3.5x loss on one device".
+6. **T6, fidelity of this binary.** Temperature 0, fixed prompts, compared against the shipped
+   build. No release without this row.
+7. **T7, upstream and release.** Weekly tag check, merge the newest tag with two parents, 39
+   of 39 patches, `assert_artifact()`, `make dmg`, sha256, a GPG-signed tag, the evidence
+   attached. The README is written last, one sentence per CSV row, with the retractions
+   listed.
+
+### Definition of done
+
+- The 35B number is the spine, and every optimisation carries a before and an after against
+  it.
+- A hypothesis about device B is not a finding until `-ts 1,1` or the probe says which.
+- A kernel that fails to build falls back loudly, not silently.
+- Every README claim cites a row in the evidence, and every retired claim stays visible.
+- The release is signed, its digest is published, and the artifact is the one that was
+  measured.
+
+### Decisions taken, binding on the tickets that follow
+
+**The 35B baseline is one device until a cell says otherwise.** The Metal backend registers
+one device unless it is told otherwise, so every placement cell run so far, in this project
+and in the record, was a one-device cell. A cell that names a second device without holding
+VRAM on it is recorded as one device.
+
+**The flash-attention refusal is a device fact, not a build defect.** The 64-lane kernel asks
+for about 33 KB of threadgroup memory and a GCN 1.0 threadgroup gets 32 KB. The half-size
+twin builds and runs, so the kernel is not missing, and the record that said it was is
+retracted rather than edited away.
+
+**The gate counts drops, not refusals.** A refusal the host recovers from is not a failure,
+and a gate that counts it fails every good build. The gate counts a kernel with no fallback
+and proves it can fail on a forced drop.
+
+**One patch edit carries its own proof.** The series check exits zero in the same commit as
+the patch, and the round trip is verified: the series applied to a fresh tree at the pin
+produces the tree that was built and measured.
