@@ -80,6 +80,16 @@ preflight() {
             fi
             kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null
         fi
+        # A build that drops a Metal kernel still serves and still produces tokens, so every
+        # other check here passes. That is how a build with a silently missing kernel got
+        # measured four times in this project. Positive control: today's build logs one.
+        local pf
+        pf=$(grep -c 'failed to create pipeline state' "$log" 2>/dev/null || echo 0)
+        if [ "${pf:-0}" -gt 0 ]; then
+            echo "preflight[$label]: -ngl $ngl dropped $pf Metal pipeline(s) and served anyway"
+            grep -oE "base = '[^']+'" "$log" | sort -u | head -3 | sed 's/^/    /'
+            failures=$((failures+1))
+        fi
         rm -f "$log"
     done
     return "$failures"
