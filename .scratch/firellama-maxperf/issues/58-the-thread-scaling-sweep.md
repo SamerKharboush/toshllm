@@ -25,3 +25,23 @@ best point.
 
 ## Answer
 
+The knee is at **8 threads** on a 12-core Xeon E5-2697 v2, so the CPU lane was already
+measured at the optimum and its 5.7% ratio is not retroactively disqualified.
+
+```
+-t  4: 19.55 pp tok/s  sd 0.40
+-t  6: 20.28 pp tok/s  sd 0.02
+-t  8: 20.49 pp tok/s  sd 0.05   <- knee
+-t 12: 19.39 pp tok/s  sd 0.08
+-t 16: 18.30 pp tok/s  sd 0.03
+-t 24: 15.98 pp tok/s  sd 0.06
+```
+
+Going past the physical core count makes it worse, sharply so at 24 threads, so the curve has
+a real knee rather than a plateau.
+
+One thing this did surface: the sweep measured `-t 8` on this branch at **20.49** pp tok/s,
+while the CPU lane measured the same binary at the same thread count at **19.68** -- a 4.1%
+difference between two sessions with within-run sd under 0.1. So the absolute CPU numbers are
+not reproducible across sessions to better than about 4%. The CPU lane's *ratio* was measured
+side by side in one session and is the trustworthy part; the absolute values are not.
