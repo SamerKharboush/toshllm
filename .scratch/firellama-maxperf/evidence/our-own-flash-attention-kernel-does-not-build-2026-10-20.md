@@ -1,5 +1,12 @@
 # Our own flash-attention kernel fails to create a pipeline, and tensor split requires it
 
+> **Retracted 2026-10-20.** The observation is right and the conclusion is wrong. The refusal
+> is the driver's local data storage limit (the kernel wants about 33 KB of threadgroup memory
+> and a GCN 1.0 threadgroup gets 32 KB), not the data layout, and the host does not lose the
+> kernel: it falls back to the half-simdgroup twin, which builds and runs. Measured:
+> `the-flash-attention-kernel-was-never-missing-2026-10-20.md`. Everything below is left as
+> it was written, so the wrong reading stays visible next to the correction.
+
 ## The defect
 
 Every run of this branch's engine, at every size and both split modes, prints:

@@ -82,17 +82,54 @@ preflight() {
         fi
         # A build that drops a Metal kernel still serves and still produces tokens, so every
         # other check here passes. That is how a build with a silently missing kernel got
-        # measured four times in this project. Positive control: today's build logs one.
+        # measured four times in this project. The count is of drops, not of refusals the
+        # attention path recovers from: that path now says which kernel it fell back to.
         local pf
-        pf=$(grep -c 'failed to create pipeline state' "$log" 2>/dev/null || echo 0)
+        pf=$(grep -c 'using the generic kernels' "$log" 2>/dev/null | head -1)
+        pf=${pf:-0}
         if [ "${pf:-0}" -gt 0 ]; then
-            echo "preflight[$label]: -ngl $ngl dropped $pf Metal pipeline(s) and served anyway"
-            grep -oE "base = '[^']+'" "$log" | sort -u | head -3 | sed 's/^/    /'
+            echo "preflight[$label]: -ngl $ngl dropped $pf Metal kernel(s) and served anyway"
+            grep -oE "ggml_metal_op_flash_attn_ext: .*using the generic kernels" "$log" | sort -u | head -3 | sed 's/^/    /'
             failures=$((failures+1))
         fi
         rm -f "$log"
     done
+    preflight_control "$bin" "$label" || failures=$((failures+1))
     return "$failures"
+}
+
+# preflight_control <binary> <label>
+# The drop counter reads zero on a good build, and a check that only ever reads zero proves
+# nothing. TOSH_FA_AMD_NSG_* asks the attention path for more threads than the kernel
+# admits, which is the same drop the counter looks for: the control has to read non-zero, or
+# the counter is not a check.
+preflight_control() {
+    local bin=$1 label=$2 log pid ready=no toks=0 pf
+    log=$(mktemp)
+    env TOSH_FA_AMD_NSG_64=9999 TOSH_FA_AMD_NSG_128=9999 TOSH_FA_AMD_NSG_WIDE=9999 \
+        "$bin" -m "$SMOKE_MODEL" -ngl 99 -sm tensor -c 2048 -t 6 \
+        --host 127.0.0.1 --port "$PORT" --no-webui >"$log" 2>&1 &
+    pid=$!
+    for _ in $(seq 240); do
+        curl -sf "http://127.0.0.1:$PORT/health" >/dev/null 2>&1 && { ready=yes; break; }
+        kill -0 "$pid" 2>/dev/null || break
+        sleep 0.5
+    done
+    if [ "$ready" = yes ]; then
+        toks=$(curl -s "http://127.0.0.1:$PORT/completion" \
+                 -d "{\"prompt\":\"$PROMPT\",\"n_predict\":32,\"temperature\":0}" \
+               | python3 -c 'import json,sys; print(json.load(sys.stdin)["timings"]["predicted_n"])' 2>/dev/null)
+    fi
+    kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null
+    pf=$(grep -c 'using the generic kernels' "$log" 2>/dev/null | head -1)
+    pf=${pf:-0}
+    rm -f "$log"
+    if [ "${pf:-0}" -gt 0 ]; then
+        echo "preflight[$label]: drop counter reads $pf on a forced drop (the control passes)"
+        return 0
+    fi
+    echo "preflight[$label]: drop counter read 0 on a forced drop (served=${toks:-0} tokens): the check cannot fail"
+    return 1
 }
 
 # ---------------------------------------------------------------- identity
@@ -199,7 +236,7 @@ run_block() {
 
 # ---------------------------------------------------------------- main
 
-BASELINE=""; FORK=""; SELFTEST=no; BLOCKS=0; OUT=""
+BASELINE=""; FORK=""; SELFTEST=no; BLOCKS=0; OUT=""; PREFLIGHT_ONLY=no
 while [ $# -gt 0 ]; do
     case "$1" in
         --baseline) BASELINE=$2; shift 2;;
@@ -210,6 +247,7 @@ while [ $# -gt 0 ]; do
         --out)      OUT=$2;      shift 2;;
         --split)    SPLIT=$2;    shift 2;;
         --selftest) SELFTEST=yes; shift;;
+        --preflight-only) PREFLIGHT_ONLY=yes; shift;;
         *) die "unknown argument: $1";;
     esac
 done
@@ -218,6 +256,13 @@ done
 [ -f "$MODEL" ] || die "model not found: $MODEL"
 [ -n "${SPLIT:-}" ] || die "--split is required: layer|row|tensor (no default; a default is what asked the baseline for a mode it does not have)"
 [ "$SELFTEST" = yes ] && FORK="$BASELINE"
+
+# The gate on its own: the release checklist asks whether the shipped artifact passes the
+# preflight, and that is a question about one binary, not about a comparison.
+if [ "$PREFLIGHT_ONLY" = yes ]; then
+    preflight "$BASELINE" baseline || die "preflight failed"
+    exit 0
+fi
 BLOCKS=${BLOCKS:-$((MIN_BLOCKS_PER_SIDE * 2))}
 [ "$BLOCKS" -ge $((MIN_BLOCKS_PER_SIDE * 2)) ] || \
     echo "ab.sh: warning: $BLOCKS blocks is below the ${MIN_BLOCKS_PER_SIDE}-per-side minimum" >&2
