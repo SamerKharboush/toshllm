@@ -1,7 +1,7 @@
 # Changelog
 
 
-## Unreleased
+## [0.87.27-beta.1] - 2026-10-20
 
 Upstream 0.87.27 merged. The 0.87.26-beta.1 fork release stays as its own release, and the
 0.87.24-beta.1 fixes this fork carries are unchanged.
