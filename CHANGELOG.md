@@ -3,6 +3,9 @@
 
 ## Unreleased
 
+Upstream 0.87.27 merged. The 0.87.26-beta.1 fork release stays as its own release, and the
+0.87.24-beta.1 fixes this fork carries are unchanged.
+
 ### Changed
 
 - **`TOSH_FA_AMD` is gone; FA AMD is on by default on wave64.** The old flag was
@@ -12,6 +15,50 @@
   escape hatch is `TOSH_FA_AMD_DISABLE=1` for debugging. Nothing else about the flag
   changes: the sub-flags (`TOSH_FA_AMD_NSG_64`, `_NSG_128`, `_NSG_WIDE`, `_LDS32`,
   `_PREFILL_DECOMPOSED_DISABLE`, `_HEAD64_PREFILL_DISABLE`) keep their meanings.
+- **llama.cpp stays pinned at `d8123504938`** (v0.6.0). The upstream tag moved; the engine
+  pin did not.
+- **This fork's patches keep their numbers**: 0035 (timestep GCN parity), 0036 (xdev stall
+  and `NSMakeRange`), 0037 (the Metal memset range test), 0038 (tensor split falls back to
+  layers), 0039 (a refused attention kernel falls back loudly). All 40 patches verified to
+  apply to a pristine worktree of `d8123504938`.
+
+### Fixed
+
+- **A refused Flash Attention kernel now falls back loudly instead of vanishing.** The
+  driver refuses the 64-lane attention kernel on a GCN 1.0 card because it asks for about
+  33 KB of threadgroup memory and the card has 32 KB, and it refuses the wide prefill
+  kernel for the same reason. The host already recovered into the half-simdgroup twin and
+  into the tile kernel, but the recovery was invisible: the refusal was printed as an error
+  by the shared compile helper, and the prefill path recompiled the refused kernel once per
+  layer per prompt, so one 35B run printed 52 of them. The compile helper grew a quiet
+  variant, the attention path names the kernel it falls back to once per kernel, and a
+  kernel with no fallback is an error that says so. The 35B's attention log went from 52
+  refusal errors to 2 named warnings, and the decode is unchanged (6.5073 and 0.1465 tok/s
+  before and after, 0.3 and 1.1 standard deviations apart).
+- **The engine gate counts drops, not refusals.** It counted `failed to create pipeline
+  state`, which is the refusal the code recovers from, so every good build failed the gate
+  written to catch a missing kernel. It counts the drop now, and the preflight proves it
+  can fail: a forced drop reads 1.
+
+### Measured
+
+- **A 35B Q6_K belongs on the host, not on the card.** The same model, the same prompt and
+  the same eight threads give 0.1450 tok/s on one D700, 0.4387 tok/s with a tensor split
+  across both, and 11.1015 tok/s with everything on the host. The 35B is a 256-expert MoE
+  that uses 8 experts per token, and the card path pays for more of the model than the
+  token uses. The card is 41% busy and the host 17.9% busy in the slow path, so this is
+  not a bandwidth limit.
+- **Enrolling the second D700 is worth 3.03x on that model**, and the card is not enrolled
+  by default: `GGML_METAL_DEVICES=2` with `GGML_METAL_DEVICE_LIST=0,1` registers it.
+- **`--n-cpu-moe` and `-cmoe` do not compute the model.** They are 34x to 71x faster
+  because the answer starts right and then collapses into one token repeated to the end.
+  The engine does not refuse the combination yet, and it should.
+- **This build answers the shipped build's prompts the same way**: 6 of 6 prompts, 64
+  tokens each, byte for byte, and 7.7% faster on the 8B's decode. The shipped build
+  aborts in a tensor split, where this build runs the cell.
+- **Speculative decoding fires and loses**: 138 tokens drafted, 45 accepted (32.6%), and
+  2.6250 tok/s against 8.3239 tok/s without a draft. The draft on the second card is 4.3%
+  better than the draft on the target's card, and neither is worth having.
 
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).

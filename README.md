@@ -15,12 +15,12 @@ Native macOS app · Metal acceleration · No cloud, no accounts, no per-token co
 
 ### [⬇️ Download the latest release](https://github.com/engeldlgado/toshllm/releases/latest) · [📝 Changelog](CHANGELOG.md)
 
-> ### Fork release: v0.87.14-beta.1
+> ### Fork release: v0.87.27-beta.1
 >
 > This fork publishes its own downloadable build:
-> **[⬇️ ToshLLM-v0.87.14-beta.1.dmg](https://github.com/SamerKharboush/toshllm/releases/download/v0.87.14-beta.1/ToshLLM-v0.87.14-beta.1.dmg)**
-> ([release notes](https://github.com/SamerKharboush/toshllm/releases/tag/v0.87.14-beta.1) ·
-> [checksums](https://github.com/SamerKharboush/toshllm/releases/download/v0.87.14-beta.1/checksums.txt))
+> **[⬇️ ToshLLM-v0.87.27-beta.1.dmg](https://github.com/SamerKharboush/toshllm/releases/download/v0.87.27-beta.1/ToshLLM-v0.87.27-beta.1.dmg)**
+> ([release notes](https://github.com/SamerKharboush/toshllm/releases/tag/v0.87.27-beta.1) ·
+> [checksums](https://github.com/SamerKharboush/toshllm/releases/download/v0.87.27-beta.1/checksums.txt))
 >
 > **This build is x86_64 only. It will not run on Apple Silicon.** There is no arm64 slice,
 > and Rosetta cannot help: an Apple GPU never enters the code these fixes touch — the Metal
@@ -33,7 +33,7 @@ Native macOS app · Metal acceleration · No cloud, no accounts, no per-token co
 > so right-click the app once and choose **Open**.
 >
 > What this fork changes is listed under [Fork changes](#fork-changes) below. Everything
-> else, including the 0.87.13 Dynamic MoE work, is upstream's and unchanged.
+> else, including the 0.87.27 work, is upstream's and unchanged.
 
 
 *[Versión en español más abajo](#toshllm-en-español)*
@@ -91,7 +91,7 @@ These are new and still being validated — enable them in Settings, but expect 
 - **Remember conversations (disk cache)** — persists each chat's KV cache so reopening it, or restarting the app, skips re-processing the prompt; the reload is byte-exact, and an 8.6k-token chat comes back in 0.9 s instead of 24.8 s of re-prefilling. Also pre-warms the cache for external clients (VS Code/Cline), so their first request skips the multi-minute cold prefill.
 - **Prompt cache reuse** — reuses the cache across mid-prompt edits (coding assistants) and trimmed reasoning instead of reprocessing. Fast but approximate; toggle it off in Settings for exact, reproducible output.
 - **Split model across GPUs** — validated on a dual-GPU setup (RX 6900 XT + RX 6800 XT eGPU): a 35B MoE with all experts in VRAM generated at ~3× the single-GPU-offload speed, and testers run 122B-class models across four cards. You can pick the exact set of cards per server; it stays flagged experimental in the UI while more configurations report back.
-- **Tensor split (`--split-mode tensor`)** — splits every tensor instead of assigning whole layers per card, so both GPUs work on the same token. Now selectable in Settings, next to the fast event hand-off it needs (on by default with a split). It costs one all-reduce per layer, a fixed price per token: a 14B still generates faster split by layers, while a 27B on a dual card gains in both phases (281 → 377 t/s prompt, 8.1 → 11.6 generated). Within the all-reduce the transfer is chosen per batch, the Infinity Fabric peer copy for prompts and events for generation.
+- **Tensor split (`--split-mode tensor`)** — splits every tensor instead of assigning whole layers per card, so both GPUs work on the same token. Now selectable in Settings, next to the fast event hand-off it needs (on by default with a split). It costs one all-reduce per layer, a fixed price per token: a 14B still generates faster split by layers, while a 27B on a dual card gains in both phases (281 → 377 t/s prompt, 8.1 → 11.6 generated). Within the all-reduce the transfer is chosen per batch, the Infinity Fabric peer copy for prompts and events for generation. On this machine, a 35B Q6_K split across both D700s generates 0.4387 tok/s against the one-card cell's 0.1450 (R3), and the second card has to be enrolled first (R9).
 
 ### A native chat that stays out of your way
 
@@ -148,7 +148,7 @@ A 2021 card holds its own: it trails the M3 Max on short prompts, leads it from 
 
 ## Fork changes
 
-Everything below is this fork's own work on top of upstream 0.87.26. Measured on a dual-
+Everything below is this fork's own work on top of upstream 0.87.27. Measured on a dual-
 FirePro-D700 Mac Pro (Xeon E5-2697 v2, AVX1 no AVX2, 64 GB RAM).
 
 ### Engine defects fixed
@@ -175,6 +175,25 @@ end offset where a length belongs, so the fill ran `offs` bytes past the region 
 asked for.
 
 Both engine fixes are in `patches/llama/metal/0035` and `0036`.
+
+### The attention kernel, and the log it used to print
+
+**The 64-lane Flash Attention kernel does not fit on this card, and the host already knew.**
+The kernel asks for about 33 KB of threadgroup memory and a GCN 1.0 threadgroup gets 32 KB,
+so the driver refuses it. A half-simdgroup twin carries the decode, and forcing the twin
+changes nothing: 8.2632 tok/s by default and 8.2719 with the twin forced, 0.7 of the run's
+own standard deviation apart. What the AMD attention path is worth is 8.18% against the
+generic kernels (15 standard deviations), and it is also what makes a tensor split work at
+all: with the AMD path off, the 35B refuses to load under `-sm tensor` and tells the caller
+to use a layer split.
+
+**What was wrong was the log, not the kernel.** The refusal was printed as an error by the
+shared compile helper, and the prefill path recompiled the refused kernel once per layer per
+prompt: one 35B run printed 52 of those errors. The compile helper grew a quiet variant, the
+attention path names the kernel it falls back to once per kernel, and a kernel with no
+fallback is an error that says so. The same 35B run now prints two warnings, both naming
+their fallback, and the decode is the number it was: 6.5073 tok/s prompt eval and 0.1465
+tok/s decode, against 6.4793 and 0.1451 before the change.
 
 ### App behaviour fixed
 
@@ -223,14 +242,74 @@ machine was sized as if it were single-card. That is fixed too.
 
 ### Measured on this hardware
 
-| | |
-|---|---|
-| 14B Q4_K_M, both D700s, layer split | prompt 21.25 tok/s, generate 5.08 tok/s |
-| 27B, both D700s, layer split | prompt 11.51 tok/s, generate 6.20 tok/s |
-| chat through the shipped binary | coherent, `finish_reason: stop`, 5.05 tok/s |
-| engine backend suite | 11682 / 11682 |
-| `swift test` | 424 tests, 0 failures |
-| first launch to listening, precompiled kernels | 16 s (was 143 s) |
+Every row names the evidence it comes from. The rows marked `R1` to `R18` are in
+`.scratch/firellama-maxperf/evidence/rows-2026-10-20.csv`.
+
+| | | |
+|---|---|---|
+| 35B Q6_K, one D700 (the headless card), the card path | R1 | prompt 6.5073 tok/s, generate 0.1465 tok/s, n=5 |
+| 35B Q6_K, both D700s, a tensor split | R3 | generate 0.4387 tok/s, 3.03x the one-device cell |
+| 35B Q6_K, everything on the host | R2 | prompt 23.4130 tok/s, generate 11.1015 tok/s |
+| 35B decode, re-faults from the disk | R4 | 52.4 MB over a 219 s decode, 0.24 MB/s, 1.6 MB per token |
+| 8B Q4_K_M, the AMD Flash Attention path off | R5 | 7.6384 tok/s, 8.18% below, 15 sigma |
+| 35B, the attention log | R7 | 52 refusal errors before, 2 named warnings after |
+| 8B Q4_K_M, this build against the shipped build | R15 | 6 of 6 prompts identical, 64 tokens each |
+| 8B Q4_K_M, a tensor split on the card | R16 | the shipped build aborts; this build runs it at 8.39 tok/s |
+| 8B Q4_K_M, the draft on the second card | R13 | 2.6250 tok/s, 138 drafted and 45 accepted, 3.17x slower than not drafting |
+| the engine gate | R8 | counts drops, and the forced-drop control reads 1 |
+| 14B Q4_K_M, both D700s, layer split | `docs/bench-baseline-2026-09-30.md` | prompt 21.25 tok/s, generate 5.08 tok/s |
+| 27B, both D700s, layer split | `docs/bench-baseline-2026-09-30.md` | prompt 11.51 tok/s, generate 6.20 tok/s |
+| chat through the shipped binary | `docs/bench-baseline-2026-09-30.md` | coherent, `finish_reason: stop`, 5.05 tok/s |
+| engine backend suite | `docs/bench-baseline-2026-09-30.md` | 11682 / 11682 |
+| `swift test` | `docs/bench-baseline-2026-09-30.md` | 424 tests, 0 failures |
+| first launch to listening, precompiled kernels | `docs/bench-baseline-2026-09-30.md` | 16 s (was 143 s) |
+
+### Where a 35B belongs on this machine
+
+**On the host, not on the card.** The same 35B, the same prompt and the same eight threads
+give 0.1450 tok/s on one D700, 0.4387 tok/s with a tensor split across both, and **11.1015
+tok/s with everything on the host** (R1, R3, R2). The card is 41% busy and the host 17.9%
+busy in the slow path, so neither is saturated and this is not a bandwidth limit: the host
+holds the 27 GB of weights in the page cache and re-faults 1.6 MB per token.
+
+The 35B is a 256-expert MoE that uses 8 experts per token. The host path multiplies the 8
+experts the token needs; the card path pays for more of the model than the token uses.
+This is not a statement about dense models: the 8B decodes at 8.32 tok/s on the card, and
+this fork's wave64 work is what makes the card path 7.7% faster than the generic one (R17).
+
+**Enrolling the second card is worth 3.03x** (R3, R9), and the second D700 is not enrolled
+by default: `GGML_METAL_DEVICES=2` with `GGML_METAL_DEVICE_LIST=0,1` registers it, and the
+backend then calls the devices `MTL0` and `MTL1`.
+
+**`--n-cpu-moe` and `-cmoe` do not compute the model** (R12). They are 34x to 71x faster
+than the card path because the output collapses into one token repeated to the end of the
+answer after a correct first paragraph. The host-only row above is the placement to use.
+
+### Retracted claims
+
+Every claim below was published by this fork and is withdrawn. Each one names the evidence
+that replaces it.
+
+- **"A 35B-A3B MoE serves on this build, and it uses the 64 GB."** The `-sm layer` row was
+  wrong: the engine answered the health check and then failed the completion with a Metal
+  command buffer error (`Compute error. off = 0, n_batch = 2048, ret = -3`), so it did not
+  serve. The "device B" columns in the same table were a card the engine never registered.
+  *Replaced by* the 35B baseline row above, which is a one-device cell that says so.
+- **"Our own flash-attention kernel does not build."** The observation was right and the
+  conclusion was wrong. The kernel is refused for the card's 32 KB of threadgroup memory,
+  and the host does not lose it: the half-simdgroup twin builds and runs. *Replaced by* the
+  attention row above, which measures the twin and the path around it.
+- **"The second D700 was starved of budget."** It was never registered. The Metal backend
+  registers one device unless it is told otherwise, so every placement cell in this project
+  was a one-device cell, and no amount of budget would have changed that. *Replaced by* the
+  placement matrix, which enrolls both cards with two environment variables and says which
+  cells really had two.
+- **The modelled rates.** "7.13 ms/GB", a 94.6 GB/s "marginal rate", an "80/20
+  decomposition" and an "18% collective cost" were all withdrawn: each divided by a
+  denominator that was itself modelled, and each had residuals far above the measurement's
+  own noise. A denominator that is a model is not a measurement.
+- **"The 7.7% decode win is compiler flags."** It is code: the fork's own kernels, and the
+  same build with the generic path is 7.7% slower.
 
 ### Known gaps
 

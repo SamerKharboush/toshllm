@@ -1,5 +1,13 @@
 # A 35B-A3B MoE serves on this build, and it uses the 64 GB
 
+> **Two corrections, 2026-10-20.** The `-sm layer` row below is wrong: the engine answered
+> the health check and then failed the completion with a Metal command buffer error
+> (`Compute error. off = 0, n_batch = 2048, ret = -3`), so it did not serve. And the "device B"
+> columns are a card the engine never registered: the Metal backend registers one device
+> unless it is told otherwise (`g_devices = 1`), so every placement cell in this file was a
+> one-device cell. See `the-second-d700-was-never-registered-2026-10-20.md` and
+> `the-35b-baseline-is-the-spine-2026-10-20.md`.
+
 ## The artifact was already on disk
 
 The models live in subfolders of `/Users/sam/models/`, and the unlock was there:
