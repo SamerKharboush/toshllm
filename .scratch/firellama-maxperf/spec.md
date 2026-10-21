@@ -760,3 +760,37 @@ and proves it can fail on a forced drop.
 **One patch edit carries its own proof.** The series check exits zero in the same commit as
 the patch, and the round trip is verified: the series applied to a fresh tree at the pin
 produces the tree that was built and measured.
+
+## Revision 8 outcome: what shipped, and the one thing that did not
+
+The 0.87.27-beta.1 release is published at
+<https://github.com/SamerKharboush/toshllm/releases/tag/v0.87.27-beta.1> with the DMG
+(`sha256 3b5f41b9cdf948ba3634c31da8159a88ac9cc742193d7ee101f9f6588d4b1d3b`), the
+checksums and the notes. The engine in it is the one the rows were measured on:
+`assert_artifact` reads the pin `d81235049` from its `--version` and `0.87.27-beta.1`
+from the bundle, and the gate passes on it with the forced-drop control reading 1.
+
+**The release is not signed.** gpg is not installed on this machine, the only SSH key is
+passphrase-protected with an empty agent, and `git tag -s` failed with "incorrect
+passphrase supplied to decrypt private key". The tag is annotated, like every earlier
+release tag in this fork, and the gap is written in the CHANGELOG's 0.87.27-beta.1
+section, in the release notes, in the README and in ticket 64. The definition of done
+above says "the release is signed"; that clause is not met, and it is named rather than
+quietly dropped.
+
+Two other clauses of the definition of done did not hold, and both are named in the
+records rather than edited away:
+
+- **"Every README claim cites a row in the evidence."** It does, for the rows R1 to R23
+  that are in the CSV, and the README says which file they come from. The rows in
+  `docs/bench-baseline-2026-09-30.md` are cited by that file's name, since they were
+  measured before this round's CSV existed.
+- **"A hypothesis about device B is not a finding until `-ts 1,1` or the probe says
+  which."** It was obeyed, and it was worth the time it took: the second D700 is not
+  enrolled by default, `GGML_METAL_DEVICES=2` with `GGML_METAL_DEVICE_LIST=0,1` is what
+  enrolls it, and the 3.03x on the 35B decode is a measurement of that cell and not of
+  a flag.
+
+The two placements that were measured and are not what the plan expected are the two
+findings of this round: a 35B MoE and a 27B dense Q8_0 both belong on the host on this
+machine, and the cells that put part of the model on the card answer with zeros.
