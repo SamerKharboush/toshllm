@@ -34,7 +34,7 @@ are the same class of problem, and the second is the dangerous one: the user can
 that the model is not being computed. The zero answer at least looks wrong.
 
 This is a defect in the shipped build, not in this fork, and the fork's answer is the
-reference. What is not yet known is which change fixes it: the fork's 40-patch series, the
+reference. What is not yet known is which change fixes it: the fork's 50-patch series, the
 compiler (AppleClang 21 against 17), or the patch set the 0.87.26 release carries against
 the one this build carries.
 

@@ -19,8 +19,13 @@ Upstream 0.87.27 merged. The 0.87.26-beta.1 fork release stays as its own releas
   pin did not.
 - **This fork's patches keep their numbers**: 0035 (timestep GCN parity), 0036 (xdev stall
   and `NSMakeRange`), 0037 (the Metal memset range test), 0038 (tensor split falls back to
-  layers), 0039 (a refused attention kernel falls back loudly). All 40 patches verified to
-  apply to a pristine worktree of `d8123504938`.
+  layers), 0039 (a refused attention kernel falls back loudly). All 50 patches verified to
+  apply to a pristine worktree of `d8123504938`: the 40 this fork carried before the
+  upstream merge, plus the 10 the 0.87.27 merge brought (the MTP head scored over the
+  whole vocabulary, the Q2_K mat-vec that reads only the two shorts it uses, the constant
+  time key comparison, the MCP timeout, the GLM-4 tool calls, the MCP server that is
+  replaced when it stops answering, the web chat that shows the agent draft, and the
+  checkpoint that keeps the prefix it already holds).
 
 ### Fixed
 

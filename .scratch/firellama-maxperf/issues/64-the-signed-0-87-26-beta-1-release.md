@@ -36,8 +36,9 @@ down in three places.**
   (`SHA256:go6fR8fJ7vSRDrbe1jsFFvsJ9I1A8r2ZC5hmOha0934`), verified against
   `~/.config/git/allowed_signers`. It was merged with two parents (`decdc81`) and the
   version is `0.87.27-beta.1`.
-- The patch series: **40 of 40 apply cleanly** to a pristine worktree of
-  `d8123504938`, and `scripts/check-patch-series.sh` exits 0.
+- The patch series: **50 of 50 apply cleanly** to a pristine worktree of
+  `d8123504938` (the 40 this fork carried before the upstream merge, plus the 10 the
+  0.87.27 merge brought), and `scripts/check-patch-series.sh` exits 0.
 - `assert_artifact()` passes for both artifacts: the engine reports the pin
   `d81235049`, and the bundle's `CFBundleShortVersionString` is `0.87.27-beta.1`, the same
   as `VERSION`.

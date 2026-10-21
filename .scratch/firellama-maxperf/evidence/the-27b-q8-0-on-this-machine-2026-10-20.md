@@ -89,8 +89,10 @@ model does not fit.
   logical), 64 GB RAM, two AMD Radeon HD FirePro D700 (GCN 1.0, wave64, 6 GB each), the
   headless one on device 1.
 - Engine: `vendor/llama.cpp/build-static/bin/llama-server`, the pin
-  `d81235049384534c167caea52b85a694f6103d14` with the fork's 40-patch series, Apple clang
-  17, 0 AVX2/FMA mnemonics. The shipped build is
+  `d81235049384534c167caea52b85a694f6103d14` with the fork's 50-patch series (the tree
+  the 0.87.27 merge produced), sha256
+  `8ebda2454b4df9ac348dc289cc44cb7e82af1885aa1c3c2ea78acbc5550b9d0d`, Apple clang 17, 0
+  AVX2/FMA mnemonics. The shipped build is
   `/Applications/ToshLLM.app/Contents/Resources/bin/llama-server`, the same commit with the
   0.87.26 patch set, Apple clang 21.
 - Model: Qwen3.6-27B-Fable-Fus-711-UnHeretic-NM-DAU-NEO-MAX-NEO-Q8_0.gguf, 28 407 800 000

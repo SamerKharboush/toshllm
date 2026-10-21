@@ -62,7 +62,7 @@ The variant that fits 32 KB was written, instantiated and measured:
 The wide prefill kernel that fits computes the same prompt eval as the tile kernel, to
 inside the noise, on both head sizes. It works, and it is not faster, so the fork does not
 carry it: a new kernel in the release path that buys nothing is a risk and not a feature.
-The 40-patch series is what the release ships, and R1's 35B prompt eval is the tile
+The 50-patch series is what the release ships, and R1's 35B prompt eval is the tile
 kernel's.
 
 Head 512 has no variant that fits 32 KB and none was written: the 512-head default asks
