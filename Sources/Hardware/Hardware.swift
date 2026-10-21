@@ -191,6 +191,15 @@ struct MemoryEstimate {
     let suggestedNcmoe: Int
     let level: FitLevel
     let expectedSpeed: String   // estimated t/s range
+    /// Where the model should run. The card when it fits, the host when it does not
+    /// and the card is one this fork measured.
+    var placement: ModelPlacement = .card
+}
+
+/// Where a model runs: on the card, or on the host.
+enum ModelPlacement: String {
+    case card
+    case host
 }
 
 /// Conservative preflight for DFlash. llama.cpp cannot currently measure a
@@ -277,8 +286,11 @@ enum Estimator {
         let ctx = d.object(forKey: SettingsKeys.ctx) == nil ? 16384 : d.integer(forKey: SettingsKeys.ctx)
         let scale = (kvTypeScale(d.string(forKey: SettingsKeys.cacheTypeK) ?? "f16")
                    + kvTypeScale(d.string(forKey: SettingsKeys.cacheTypeV) ?? "f16")) / 2
+        // An explicit list of cards is a split too, even with the all/N toggle off.
+        let listed = ServerSettings.gpuList(fromCSV: d.string(forKey: SettingsKeys.gpuList))
         return estimate(spec: spec, hw: hw, ctx: ctx, kvScale: scale,
-                        multiGPU: d.object(forKey: SettingsKeys.multiGPU) as? Bool ?? ServerSettings.defaultMultiGPU,
+                        multiGPU: (d.object(forKey: SettingsKeys.multiGPU) as? Bool ?? ServerSettings.defaultMultiGPU)
+                            || listed.count >= 2,
                         tensorSplit: (d.string(forKey: SettingsKeys.splitMode) ?? "layer") == "tensor",
                         ncmoeOverride: ncmoeOverride)
     }
@@ -323,11 +335,29 @@ enum Estimator {
         let bwVRAM = bandwidthGBs(of: hw.bestGPU)
         let denseEff = decodeEfficiency(of: hw.bestGPU)
         let effectiveBW = bwVRAM * denseEff
-        let vramBudget = (splitting ? hw.combinedVramGB : hw.vramGB) - Double(splitting ? splitGPUs : 1)
+        let vramBudget = usableVRAM(hw: hw, splitting: splitting, devices: splitGPUs)
         let kvGB = kvCache(spec: spec, ctx: ctx) * kvScale
         let scratchGB = (splitting && tensorSplit)
             ? tensorSplitScratchGB(spec: spec, devices: splitGPUs) : 0
         let computeGB = 0.9 + spec.paramsB * 0.012 + scratchGB
+
+        // A model that does not fit in VRAM runs on the host on the cards this fork
+        // measured (2x FirePro D700, GCN 1.0). The card then keeps a fraction of the
+        // weights and every token crosses the host interconnect, so the card path
+        // pays for the whole model and the host path pays for the active part: the
+        // same 35B Q6_K decodes at 0.1450 tok/s on one card and 11.1015 tok/s with
+        // everything on the host, and a 27B Q8_0 at 0.0883 against 1.5972. A model
+        // that fits stays on the card, and a card this fork has not measured keeps
+        // the old behaviour.
+        if prefersHostPlacement(spec: spec, hw: hw, ctx: ctx, kvScale: kvScale,
+                                vramBudgetGB: vramBudget) {
+            let active = spec.activeParamsB > 0 ? spec.activeParamsB : spec.paramsB * 0.11
+            let activeGB = active * (spec.weightsGB / max(1, spec.paramsB))
+            let tg = clampSpeed(1 / max(0.0001, activeGB / bwRAM), effective: effectiveBW)
+            return MemoryEstimate(vramGB: 0, ramGB: spec.weightsGB + kvGB + computeGB,
+                                  suggestedNcmoe: 0, level: .slow, expectedSpeed: speedRange(tg),
+                                  placement: .host)
+        }
 
         if !spec.isMoE {
             let need = spec.weightsGB * 1.03 + kvGB + computeGB
@@ -402,6 +432,44 @@ enum Estimator {
     /// nowhere near its own figure: measured 58.78 tg on a Vega II Duo against
     /// 61 on an RX 6700 XT with the same Qwen3-8B Q4_K_M, despite 2.7x the
     /// bandwidth, so both land near 280 GB/s of real throughput.
+    /// Cards on which a model that does not fit in VRAM belongs on the host. The list
+    /// holds what was measured, not a guess: the FirePro D700 is the card this fork's
+    /// rows were taken on, and a card whose host link and decode were not measured is
+    /// left on the path it had.
+    private static let hostPlacementCards = ["firepro d700"]
+
+    /// The VRAM a run may use: the cards' combined VRAM when it splits across them,
+    /// one card's otherwise, less a 1 GB reserve per card for the driver.
+    static func usableVRAM(hw: HardwareInfo, splitting: Bool, devices: Int) -> Double {
+        (splitting ? hw.combinedVramGB : hw.vramGB) - Double(splitting ? devices : 1)
+    }
+
+    /// True when the model does not fit in the VRAM the run may use, on a card that
+    /// was measured with this fork, and the host has room for it.
+    ///
+    /// The card keeps a fraction of the weights and every token crosses the host
+    /// interconnect, so the card path pays for the whole model while the host path
+    /// pays for the active part: the same 35B Q6_K decodes at 0.1450 tok/s on one
+    /// D700 and 11.1015 tok/s with everything on the host, and a 27B Q8_0 at 0.0883
+    /// against 1.5972. A model whose weights fit stays on the card (the 8B row), and
+    /// a card this fork has not measured keeps the path it had.
+    static func prefersHostPlacement(spec: ModelSpec, hw: HardwareInfo,
+                                     ctx: Int = 16384, kvScale: Double = 1.0,
+                                     vramBudgetGB: Double? = nil) -> Bool {
+        let name = (hw.bestGPU?.name ?? "").lowercased()
+        guard hostPlacementCards.contains(where: { name.contains($0) }) else { return false }
+        let budget = vramBudgetGB ?? usableVRAM(hw: hw, splitting: false, devices: 1)
+        guard budget > 0 else { return false }
+        // The weights are what the card has to hold. The KV cache and the compute
+        // buffers follow them: a model whose weights do not fit is a card path that
+        // streams the model over the bus on every token.
+        guard spec.weightsGB > budget else { return false }
+        // and the host has to hold it, or the host is not a fallback either
+        let kvGB = kvCache(spec: spec, ctx: ctx) * kvScale
+        let need = spec.weightsGB * 1.03 + kvGB + 0.9 + spec.paramsB * 0.012
+        return need <= hw.ramGB * 0.72
+    }
+
     static func decodeEfficiency(of gpu: GPUDevice?) -> Double {
         guard let name = gpu?.name.lowercased() else { return 0.72 }
         let wide = ["vega", "radeon vii", "rx 580", "rx 570", "rx 590", "rx 560",

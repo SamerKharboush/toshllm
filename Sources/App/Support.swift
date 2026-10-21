@@ -7,6 +7,28 @@ import CryptoKit
 import os
 import Security
 
+/// Defaults a product packaged from this tree sets differently (`TOSH_APP_DEFAULTS` in make-app.sh), registered
+/// at launch so that every `@AppStorage` falls back to them until the user changes the setting.
+enum ProductDefaults {
+    static func values(in bundle: Bundle = .main) -> [String: Any] {
+        bundle.url(forResource: "AppDefaults", withExtension: "plist")
+            .flatMap { NSDictionary(contentsOf: $0) as? [String: Any] } ?? [:]
+    }
+
+    static func register() {
+        let values = values()
+        if !values.isEmpty { UserDefaults.standard.register(defaults: values) }
+    }
+
+    static func double(_ key: String, or fallback: Double) -> Double {
+        (values()[key] as? NSNumber)?.doubleValue ?? fallback
+    }
+
+    static func bool(_ key: String, or fallback: Bool) -> Bool {
+        (values()[key] as? NSNumber)?.boolValue ?? fallback
+    }
+}
+
 // MARK: - Settings keys (single source of truth)
 
 /// Every persisted setting key lives here. Views, `ServerSettings.fromDefaults`
@@ -107,6 +129,10 @@ enum SettingsKeys {
     static let chatMapToolEnabled = "chatMapToolEnabled"
     /// show_road_route: Apple Maps routes by road, each call approved by the user since it uses the internet.
     static let chatRoadRouteEnabled = "chatRoadRouteEnabled"
+    /// The base map's MapLibre style URL; empty for OpenFreeMap.
+    static let mapStyle = "mapStyle"
+    /// A folder of PMTiles regions, with their fonts and sprites under assets/, drawn without internet.
+    static let mapFolder = "mapFolder"
 
     /// Models whose template accepts tools but that write the call in the wrong shape: the
     /// engine rejects it and the turn dies, so they stop being offered any tool.
@@ -118,6 +144,8 @@ enum SettingsKeys {
     static let mlock = "mlock"
     static let cacheRAM = "cacheRAM"
     static let parallelSlots = "parallelSlots"
+    /// With two or more slots, each one keeps its own share of the context instead of one shared pool.
+    static let separateKV = "separateKV"
     static let reasoningInline = "reasoningInline"
     /// Reasoning level for requests that do not choose one: "model", "off", "low", "medium", "high".
     static let serverDefaultReasoning = "serverDefaultReasoning"
@@ -268,9 +296,9 @@ enum SettingsKeys {
         audioVADProfile, audioVADThreshold, audioVADMinSpeechMS,
         audioVADMinSilenceMS, audioVADMaxSpeechSeconds, audioVADSpeechPadMS,
         extraArgs, embeddings, agentToolsEnabled, toolsRuntime, jsSandboxEnabled, sympyEnabled, scientificEnabled, mathAgentEnabled, mathToolsAllowed, toolResultLimit,
-        memoryToolsEnabled, chatMapToolEnabled, chatRoadRouteEnabled, toolsUnsupportedModels, mcpServers, uiMcpProxy,
+        memoryToolsEnabled, chatMapToolEnabled, chatRoadRouteEnabled, mapStyle, mapFolder, toolsUnsupportedModels, mcpServers, uiMcpProxy,
         cacheTypeK, cacheTypeV, mlock, cacheRAM,
-        parallelSlots, reasoningInline, serverDefaultReasoning, serverDefaultMaxTokens, specMTP, mtpDisabledModels, faAmd, prefetchExperts, ubatch,
+        parallelSlots, separateKV, reasoningInline, serverDefaultReasoning, serverDefaultMaxTokens, specMTP, mtpDisabledModels, faAmd, prefetchExperts, ubatch,
         dynamicMoeEnabled, dynamicMoeLeanRAM, routerMode, routerModelsMax,
         persistCache, multiGPU, multiGPUCount, splitMode, splitGroupSize, mgpuEvents, mgpuPeer,
         forcePrivateBuffers, cacheReuse, apiKeyEnabled, localNetworkDiscovery,

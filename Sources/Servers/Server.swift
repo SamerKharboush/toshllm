@@ -74,6 +74,9 @@ struct ServerSettings {
     /// for the GPU, and a prefill aborted by a client timeout stays in the slot so
     /// the retry resumes where it left off.
     var parallelSlots: Int = 1
+    /// Each slot gets its own share of the context: faster with several requests at once, but
+    /// no single conversation can grow past its share.
+    var separateKV: Bool = false
     var apiKeyEnabled: Bool = false
     /// Serve beyond loopback and advertise with Bonjour. Off by default: it opens
     /// the API to the whole local network, so it wants `apiKeyEnabled` alongside.
@@ -186,6 +189,48 @@ struct ServerSettings {
         let limit = discrete > 0 ? discrete : gpus.count
         return max(2, multiGPUCount > 0 ? min(multiGPUCount, limit) : limit)
     }
+
+    /// The model this server runs, as a spec: the catalog's numbers when the file
+    /// name matches a known model, otherwise an estimate from the file and its header.
+    var modelSpec: ModelSpec? {
+        guard !modelPath.isEmpty else { return nil }
+        let bytes = ((try? FileManager.default.attributesOfItem(atPath: modelPath))?[.size] as? NSNumber)?.int64Value ?? 0
+        guard bytes > 0 else { return nil }
+        return Catalog.spec(forPath: modelPath, fileBytes: bytes, isMoE: Self.modelIsMoE(at: modelPath))
+    }
+
+    /// The VRAM this run may use: the cards' combined VRAM when it splits across
+    /// them, one card's otherwise.
+    var vramBudgetGB: Double {
+        Estimator.usableVRAM(hw: hardware, splitting: isSplitting, devices: splitDeviceCount)
+    }
+
+    /// Where the model runs: on the card, or on the host. Resolved by the rule in
+    /// `resolvePlacement(on:)`, which the settings source and the controller both
+    /// call before a launch; `.card` until then.
+    var placement: ModelPlacement = .card
+
+    /// The placement the rule asks for on the given hardware. A model whose weights
+    /// do not fit in the VRAM this run may use runs on the host: the card would keep
+    /// a fraction of the weights and pay for the whole model on every token (the 35B
+    /// Q6_K decodes at 0.1450 tok/s on one D700 and 11.1015 tok/s with everything on
+    /// the host). A model that fits stays on the card (the 8B at 8.2632 tok/s).
+    func resolvePlacement(on hw: HardwareInfo) -> ModelPlacement {
+        guard !routerMode, !manualFullGPU, let spec = modelSpec else { return .card }
+        let kvScale = (Estimator.kvTypeScale(launchKV.k) + Estimator.kvTypeScale(launchKV.v)) / 2
+        let budget = Estimator.usableVRAM(hw: hw, splitting: isSplitting, devices: splitDeviceCount)
+        return Estimator.prefersHostPlacement(spec: spec, hw: hw, ctx: ctx,
+                                              kvScale: kvScale,
+                                              vramBudgetGB: budget) ? .host : .card
+    }
+
+    /// True when the cards are part of this run. A model on the host leaves them
+    /// out: no split, no device selection, no expert offload.
+    var usesGPUs: Bool { placement == .card }
+
+    /// The GPU offload the launch asks for. A model that does not fit in the VRAM
+    /// this run may use runs on the host, so nothing is offloaded.
+    var effectiveNgl: Int { usesGPUs ? ngl : 0 }
 
     /// Layer counts per GPU that even out the bytes rather than the layer count.
     /// `--n-cpu-moe` empties the experts of the first N layers, and llama.cpp still hands
@@ -304,7 +349,7 @@ struct ServerSettings {
         let faValue = kvNeedsFlashAttention ? "1" : (effectiveFaAmd ? "auto" : flashAttn)
         var args = [
             "-m", modelPath,
-            "-ngl", String(ngl),
+            "-ngl", String(effectiveNgl),
             "-c", String(ctx),
             "-t", String(threads),
             "-fa", faValue,
@@ -313,7 +358,8 @@ struct ServerSettings {
         ]
         // under the plan the engine picks offload and batch; by hand, Full GPU offloads nothing
         let planOwnsMemory = usesAutoPlan || manualFullGPU
-        if ncmoe > 0 && !planOwnsMemory { args += ["--n-cpu-moe", String(ncmoe)] }
+        // A model on the host has no experts on a card to offload from.
+        if ncmoe > 0 && !planOwnsMemory && usesGPUs { args += ["--n-cpu-moe", String(ncmoe)] }
         if !usesAutoPlan, let ub = effectiveUbatch { args += ["--ubatch-size", String(ub), "--batch-size", String(ub)] }
         if usesAutoPlan { args += ["--dynamic-moe", "on"] }
         let mode = Self.loadMode(noMmap: noMmap, mlock: mlock)
@@ -341,12 +387,12 @@ struct ServerSettings {
         }
         if parallelSlots > 0 { args += ["--parallel", String(parallelSlots)] }
         // An explicit --parallel N splits the context pool across slots instead of
-        // sharing it (only "auto" unifies), so ask for one pool ourselves: the chat
-        // keeps its full window and API requests don't multiply KV memory.
-        if parallelSlots > 1 { args.append("--kv-unified") }
+        // sharing it (only "auto" unifies), so ask for one pool ourselves unless the user
+        // chose separate shares: the chat then keeps its full window.
+        if parallelSlots > 1 && !separateKV { args.append("--kv-unified") }
         // Which devices to split across is decided by the env vars below.
-        if isSplitting { args += ["--split-mode", effectiveSplitMode] }
-        if let counts = layerBalancedTensorSplit {
+        if isSplitting && usesGPUs { args += ["--split-mode", effectiveSplitMode] }
+        if usesGPUs, let counts = layerBalancedTensorSplit {
             args += ["--tensor-split", counts.map(String.init).joined(separator: ",")]
         }
         if embeddings { args.append("--embeddings") }
@@ -373,7 +419,8 @@ struct ServerSettings {
         // A compatible downloaded DFlash draft takes precedence over embedded MTP.
         // Dynamic MoE plans memory without a separate draft model, so DFlash only joins a
         // full-GPU plan; the plan counts an MTP head, built in or in its own file.
-        let draftAllowed = !usesAutoPlan || plannedMode == "full_gpu"
+        // A model on the host has no card for the draft to run on.
+        let draftAllowed = usesGPUs && (!usesAutoPlan || plannedMode == "full_gpu")
         if draftAllowed, let selection = dflashSelection(modelPath: modelPath, ncmoe: ncmoe) {
             // Quantize the draft's KV cache: it doubles KV pressure at high ctx, and
             // q8_0 halves that footprint at no measurable quality cost for a draft.
@@ -387,7 +434,7 @@ struct ServerSettings {
             args += ["--spec-type", "draft-mtp"] + Self.mtpSamplingArgs
             args += Self.mtpDraftWidthArgs(forModel: modelPath, gpuArchitecture: selectedGPUArchitecture)
         }
-        if let ui = Self.chatUIPath { args += ["--path", ui] }
+        args += Self.chatUIArgs
         args += extraArgTokens.cli
         return args
     }
@@ -395,13 +442,18 @@ struct ServerSettings {
     /// Router writes one entry per model with the same context, but a multi-head model
     /// caches several times more per token than a GQA one and can overflow VRAM on
     /// load, which hangs the driver. Shrink the context for the models that don't fit.
+    /// The reserve the user set, or the share the engine's memory plan keeps on its own.
+    nonisolated static func effectiveVramReserveMB(_ setting: Int, vramMB: Int) -> Int {
+        setting > 0 ? setting : Int(min(max(0.08 * Double(vramMB), 768), 1536))
+    }
+
     nonisolated static func routerCtx(forModel path: String, requested: Int, ncmoe: Int,
                                       kvScale: Double, reserveMB: Int) -> Int {
         let kvPerToken = ModelSpec.kvBytesPerToken(atPath: path) * kvScale
         guard kvPerToken > 0, requested > 2048 else { return requested }
-        let vramGB = Double(ServerController.availableGPUs().map(\.vramMB).max() ?? 0) / 1024
-        guard vramGB > 0 else { return requested }
-        let budget = vramGB - Double(reserveMB) / 1024
+        let vramMB = ServerController.availableGPUs().map(\.vramMB).max() ?? 0
+        guard vramMB > 0 else { return requested }
+        let budget = Double(vramMB - effectiveVramReserveMB(reserveMB, vramMB: vramMB)) / 1024
         let size = ((try? FileManager.default.attributesOfItem(atPath: path))?[.size] as? Int64) ?? 0
         let weightsGB = Double(size) / 1_073_741_824 * (ncmoe > 0 ? 0.45 : 1.0)
         let computeGB = 0.9
@@ -437,7 +489,7 @@ struct ServerSettings {
         }
         if uiMcpProxy { args.append("--ui-mcp-proxy") }
         if apiKeyEnabled { args += ["--api-key", Keychain.apiKey()] }
-        if let ui = Self.chatUIPath { args += ["--path", ui] }
+        args += Self.chatUIArgs
         args += extraArgTokens.cli
         return args
     }
@@ -498,7 +550,7 @@ struct ServerSettings {
             lines.append("cache-ram = \(cacheRAM)")
             if cacheReuse && mmproj == nil { lines.append("cache-reuse = 256") }
             if parallelSlots > 0 { lines.append("parallel = \(parallelSlots)") }
-            if parallelSlots > 1 { lines.append("kv-unified = true") }
+            if parallelSlots > 1 && !separateKV { lines.append("kv-unified = true") }
             if isSplitting { lines.append("split-mode = \(effectiveSplitMode)") }
             if persistCache && effectiveFaAmd {
                 // the engine rejects a slot path that isn't an existing directory
@@ -685,6 +737,28 @@ struct ServerSettings {
         return nil
     }
 
+    /// The bundled web chat, starting in a new browser with the app's own image and PDF settings.
+    static var chatUIArgs: [String] {
+        guard let ui = chatUIPath else { return [] }
+        let d = UserDefaults.standard
+        let megapixels = d.object(forKey: SettingsKeys.chatMaxImageMegapixels) == nil
+            ? 1 : d.double(forKey: SettingsKeys.chatMaxImageMegapixels)
+        var config: [String: Any] = ["pdfAsImage": d.bool(forKey: SettingsKeys.chatPDFAsImages),
+                                     "maxImageMPixels": megapixels]
+        var tiles: [String] = []
+        if !MapBase.style.isEmpty { config["mapStyle"] = MapBase.style }
+        if let folder = MapBase.folder, !MapBase.regions.isEmpty {
+            tiles = ["--tiles-path", folder.path]
+            config["mapRegions"] = MapBase.regions.map { "/tiles/" + ($0.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? $0) }
+                .joined(separator: ",")
+            if !MapBase.labels { config["mapLabels"] = false }
+        }
+        guard let data = try? JSONSerialization.data(withJSONObject: config, options: [.sortedKeys]) else {
+            return ["--path", ui] + tiles
+        }
+        return ["--path", ui, "--ui-config", String(decoding: data, as: UTF8.self)] + tiles
+    }
+
     var environment: [String: String] {
         var env = ProcessInfo.processInfo.environment
         env.merge(EngineExtensions.environment()) { $1 }
@@ -695,14 +769,16 @@ struct ServerSettings {
         // The engine logs this, so a log pasted from a bug report identifies the
         // app build even when the engine binary is older than the app.
         env["TOSH_APP_VERSION"] = AppInfo.version
-        env["GGML_METAL_VRAM_RESERVE_MB"] = String(vramReserveMB)
+        // the engine's memory plan keeps its own share of the card unless the user set one
+        if vramReserveMB > 0 { env["GGML_METAL_VRAM_RESERVE_MB"] = String(vramReserveMB) }
         // Physical GPU selection (consumed by the patched Metal backend, which maps
         // these to MTLCopyAllDevices() — the same order as the app's GPU picker).
+        // A model that runs on the host leaves the cards out of the run entirely.
         let gpus = ServerController.availableGPUs()
-        if gpuList.count >= 2 {
+        if usesGPUs, gpuList.count >= 2 {
             // Split across exactly these GPUs; slot i maps to the i-th listed index.
             env["GGML_METAL_DEVICE_LIST"] = gpuList.map(String.init).joined(separator: ",")
-        } else if multiGPU {
+        } else if usesGPUs, multiGPU {
             // Split across N GPUs. Fewer than all lets the user trade prompt speed
             // (more GPUs) for generation speed (fewer, less cross-card sync). 0 = all.
             // Integrated iGPUs don't count: the engine skips them when mapping slots.
@@ -710,7 +786,7 @@ struct ServerSettings {
             let limit = discrete > 0 ? discrete : gpus.count
             let n = multiGPUCount > 0 ? min(multiGPUCount, limit) : limit
             env["GGML_METAL_DEVICES"] = String(max(2, n))
-        } else if gpuIndex >= 0 {
+        } else if usesGPUs, gpuIndex >= 0 {
             // Pin the engine to one physical GPU by index.
             env["GGML_METAL_DEVICE_INDEX"] = String(gpuIndex)
         }
@@ -718,17 +794,18 @@ struct ServerSettings {
         // over Thunderbolt every op. Auto-override when a selected card is external;
         // the manual toggle covers the case where macOS picked the GPU.
         let splittingList = gpuList.count >= 2
-        let selectedExternal = !multiGPU && !splittingList && gpuIndex >= 0
+        let selectedExternal = usesGPUs && !multiGPU && !splittingList && gpuIndex >= 0
             && gpus.first { $0.index == gpuIndex }?.isExternal == true
-        let anyExternalInSplit = (multiGPU && !splittingList && gpus.contains { $0.isExternal })
-            || (splittingList && gpus.contains { gpuList.contains($0.index) && $0.isExternal })
+        let anyExternalInSplit = usesGPUs
+            && ((multiGPU && !splittingList && gpus.contains { $0.isExternal })
+                || (splittingList && gpus.contains { gpuList.contains($0.index) && $0.isExternal }))
         if forcePrivateBuffers || selectedExternal || anyExternalInSplit {
             env["GGML_METAL_SHARED_BUFFERS_DISABLE"] = "1"
         }
         if effectiveFaAmd { env["TOSH_FA_AMD"] = "1" }
         // Only a tensor split reduces across cards, which is the copy the bridge speeds up.
         // A layer split has nothing for it to carry.
-        if mgpuPeer && isSplitting && effectiveSplitMode == "tensor" && Self.peerBridgeAvailable {
+        if mgpuPeer && usesGPUs && isSplitting && effectiveSplitMode == "tensor" && Self.peerBridgeAvailable {
             env["TOSH_MGPU_PEER"] = "1"
         }
         // Only a tensor split hands off activations often enough to matter, and on a
@@ -737,12 +814,12 @@ struct ServerSettings {
         // command buffer status 5, GPU Timeout Error) while the generic host staging path
         // ran the same prompt at 23.1 t/s. At 27B the threshold was p >= 129. With events
         // off, both models run every prompt length tested.
-        if mgpuEvents && isSplitting && effectiveSplitMode == "tensor" {
+        if mgpuEvents && usesGPUs && isSplitting && effectiveSplitMode == "tensor" {
             env["TOSH_MGPU_EVENTS"] = "1"
         }
         // Groups only mean anything inside a tensor split, and only when they are
         // smaller than the split itself and divide it evenly.
-        if effectiveSplitMode == "tensor", let g = effectiveSplitGroupSize {
+        if usesGPUs, effectiveSplitMode == "tensor", let g = effectiveSplitGroupSize {
             env["TOSH_MGPU_TENSOR_GROUP"] = String(g)
             // The default queue cap blocks the scheduler on one full group and stops the
             // prompt from pipelining into the next; a single GPU loses a little with it.
@@ -751,7 +828,7 @@ struct ServerSettings {
         // A DFlash draft runs its selector over the target's logits, so a head split by
         // vocabulary leaves no card holding a whole row and the engine aborts. Keep the head
         // on every card for that pairing; it costs its size per card and nothing otherwise.
-        if isSplitting, effectiveSplitMode == "tensor",
+        if usesGPUs, isSplitting, effectiveSplitMode == "tensor",
            dflashSelection(modelPath: modelPath, ncmoe: ncmoe) != nil {
             env["TOSH_MIRROR_OUTPUT_HEAD"] = "1"
         }
@@ -763,7 +840,7 @@ struct ServerSettings {
             env["TOSH_AUTO_KV"] = autoKVMode
             if dynamicMoeLeanRAM { env["TOSH_AUTO_HOST_BANK"] = "lean" }
             env["TOSH_AUTO_PLAN_FILE"] = AutoMemoryPlan.planURL(port: port).path
-        } else if prefetchExperts && ((ncmoe > 0 && !manualFullGPU) || routerMode) {
+        } else if prefetchExperts && usesGPUs && ((ncmoe > 0 && !manualFullGPU) || routerMode) {
             // At/above the measured cliff the prefetch overlap collapses and stalls the
             // GPU, so stay below it. Router mode has no single ncmoe to compare.
             let cliff = Self.recalledPrefetchCliff(forModel: modelPath)
@@ -867,7 +944,7 @@ struct ServerSettings {
         let d = UserDefaults.standard
         func int(_ key: String, _ def: Int) -> Int { d.object(forKey: key) == nil ? def : d.integer(forKey: key) }
         func bool(_ key: String, _ def: Bool) -> Bool { d.object(forKey: key) == nil ? def : d.bool(forKey: key) }
-        return ServerSettings(
+        var settings = ServerSettings(
             serverBinary: resolvedBinary(),
             modelPath: d.string(forKey: SettingsKeys.modelPath) ?? "",
             port: int(SettingsKeys.port, 8080),
@@ -879,7 +956,7 @@ struct ServerSettings {
             flashAttn: d.string(forKey: SettingsKeys.flashAttn) ?? "auto",
             noMmap: bool(SettingsKeys.noMmap, true),
             jinja: bool(SettingsKeys.jinja, true),
-            vramReserveMB: int(SettingsKeys.vramReserve, 1024),
+            vramReserveMB: int(SettingsKeys.vramReserve, 0),
             gpuIndex: int(SettingsKeys.gpuIndex, -1),
             gpuList: gpuList(fromCSV: d.string(forKey: SettingsKeys.gpuList)),
             extraArgs: d.string(forKey: SettingsKeys.extraArgs) ?? "",
@@ -899,6 +976,7 @@ struct ServerSettings {
             defaultReasoning: d.string(forKey: SettingsKeys.serverDefaultReasoning) ?? "model",
             defaultMaxTokens: int(SettingsKeys.serverDefaultMaxTokens, 0),
             parallelSlots: int(SettingsKeys.parallelSlots, 1),
+            separateKV: bool(SettingsKeys.separateKV, false),
             apiKeyEnabled: bool(SettingsKeys.apiKeyEnabled, false),
             localNetworkDiscovery: bool(SettingsKeys.localNetworkDiscovery, false),
             specMTP: bool(SettingsKeys.specMTP, false),
@@ -925,6 +1003,10 @@ struct ServerSettings {
             executionMode: d.string(forKey: SettingsKeys.executionMode) ?? "auto",
             autoKVMode: d.string(forKey: SettingsKeys.autoKVMode) ?? "auto",
             dynamicMoeLeanRAM: bool(SettingsKeys.dynamicMoeLeanRAM, false))
+        // Where the model runs is decided here, so every screen that shows the
+        // settings and the launch that uses them agree.
+        settings.placement = settings.resolvePlacement(on: hardware)
+        return settings
     }
 
     /// True when the model's attention head dim exceeds 256 (Gemma 4's global layers
@@ -986,9 +1068,10 @@ struct ServerSettings {
         }
     }
     /// The engine plans memory: MoE models under Auto or forced Dynamic MoE, on one GPU.
+    /// A model that runs on the host has no card to plan for.
     var usesAutoPlan: Bool {
         dynamicMoeEnabled && (executionMode == "auto" || executionMode == "dmoe")
-            && !routerMode && !isSplitting && Self.modelIsMoE(at: modelPath)
+            && !routerMode && !isSplitting && usesGPUs && Self.modelIsMoE(at: modelPath)
     }
     /// Full GPU chosen by hand: no expert offload, even where Auto would reject the headroom.
     var manualFullGPU: Bool { dynamicMoeEnabled && executionMode == "full" }
@@ -1046,7 +1129,8 @@ struct ServerSettings {
             * (keyLength + valueLength) * q8BytesPerElement
         let mainKVScale = (Estimator.kvTypeScale(cacheTypeK) + Estimator.kvTypeScale(cacheTypeV)) / 2
         let vramGB = Double(selected.reduce(0) { $0 + $1.vramMB }) / 1024
-        let reserveGB = honorReserve ? Double(vramReserveMB * max(1, selected.count)) / 1024 : 0
+        let reserveGB = honorReserve
+            ? Double(selected.reduce(0) { $0 + Self.effectiveVramReserveMB(vramReserveMB, vramMB: $1.vramMB) }) / 1024 : 0
         return DflashMemoryPlanner.plan(
             vramGB: vramGB, reserveGB: reserveGB,
             baseFileGB: baseBytes / 1_073_741_824, baseLayers: baseLayers, ncmoe: ncmoe,
@@ -1360,12 +1444,43 @@ struct ServerSettings {
     }
 
     /// Whether to offer the projector control for a model: it has a paired or
-    /// pinned projector, an explicit choice (incl. off), or is a catalog vision model.
+    /// pinned projector, an explicit choice (incl. off), a projector beside it that
+    /// matches its dimension, or is a catalog vision model.
     nonisolated static func mightSupportVision(modelPath: String) -> Bool {
         if mmprojOverride(forModel: modelPath) != nil { return true }
         if mmprojPath(forModel: modelPath) != nil { return true }
+        if !compatibleProjectors(forModel: modelPath).isEmpty { return true }
         let name = URL(fileURLWithPath: modelPath).lastPathComponent
         return Catalog.models.contains { $0.fileName == name && $0.isVision }
+    }
+
+    /// Whether a projector named after this model sits beside it, as a download saves it.
+    nonisolated static func hasOwnProjector(forModel modelPath: String) -> Bool {
+        func core(_ s: String) -> String {
+            String(s.lowercased().replacingOccurrences(of: "mmproj", with: "").filter { $0.isLetter || $0.isNumber })
+        }
+        let url = URL(fileURLWithPath: modelPath)
+        let mn = core(url.deletingPathExtension().lastPathComponent)
+        guard !mn.isEmpty,
+              let files = try? FileManager.default.contentsOfDirectory(at: url.deletingLastPathComponent(), includingPropertiesForKeys: nil)
+        else { return false }
+        return files.contains {
+            $0.pathExtension.lowercased() == "gguf" && $0.lastPathComponent.lowercased().contains("mmproj")
+                && core($0.deletingPathExtension().lastPathComponent) == mn
+        }
+    }
+
+    /// Projectors beside the model whose output matches its embedding, by name. Auto-pairing
+    /// also asks for a matching name, so these are the ones a user may pick by hand.
+    nonisolated static func compatibleProjectors(forModel modelPath: String) -> [String] {
+        guard !modelPath.isEmpty, let embd = ggufUInt32("embedding_length", at: modelPath) else { return [] }
+        let dir = URL(fileURLWithPath: modelPath).deletingLastPathComponent()
+        guard let files = try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) else { return [] }
+        return files
+            .filter { $0.pathExtension.lowercased() == "gguf" && $0.lastPathComponent.lowercased().contains("mmproj") }
+            .filter { ggufUInt32("projection_dim", at: $0.path) == embd && !isIncompatibleMmproj(model: modelPath, projector: $0.path) }
+            .map(\.path)
+            .sorted { URL(fileURLWithPath: $0).lastPathComponent < URL(fileURLWithPath: $1).lastPathComponent }
     }
 
     /// The DFlash draft downloaded for a model, saved as `<model>.dflash.gguf`.
@@ -1866,8 +1981,11 @@ final class ServerController: ObservableObject {
                 }
             }
             var planned = settings
-            if settings.usesAutoPlan {
-                guard let plan = await AutoMemoryPlan.preview(settings: settings) else {
+            // The placement is resolved again here: the settings may have come
+            // from a profile or from a screen that never asked for a placement.
+            planned.placement = settings.resolvePlacement(on: hardware)
+            if planned.usesAutoPlan {
+                guard let plan = await AutoMemoryPlan.preview(settings: planned) else {
                     self?.failAutoPlan(nil)
                     return
                 }
@@ -1990,6 +2108,12 @@ final class ServerController: ObservableObject {
             : "ncmoe=\(settings.ncmoe)"
         var gpuSel = settings.multiGPU ? "split-all" : (settings.gpuIndex >= 0 ? "index \(settings.gpuIndex)" : "default (macOS picks)")
         if settings.isSplitting { gpuSel += " · split-mode \(settings.effectiveSplitMode)" }
+        // A model that does not fit in the VRAM this run may use runs on the host;
+        // the log has to say so, because the card path is where it would collapse.
+        let placementLine = settings.placement == .host
+            ? "host (the model does not fit in \(String(format: "%.1f", settings.vramBudgetGB)) GB of VRAM, so it runs on the CPU)"
+            : "card"
+        if settings.placement == .host { gpuSel = "none (host placement)" }
         if settings.tensorSplitDowngraded {
             gpuSel += " (tensor needs \(settings.splitDeviceCount) way split of experts this model only divides \(settings.tensorSplitLimit ?? 1) ways)"
         }
@@ -2001,7 +2125,8 @@ final class ServerController: ObservableObject {
          GPUs detected:
         \(gpus.isEmpty ? "    (none)" : gpus)
          GPU select: \(gpuSel) | force-VRAM-buffers: \(env["GGML_METAL_SHARED_BUFFERS_DISABLE"] == "1" ? "yes" : "no")
-         settings: ngl=\(settings.ngl) \(moeLine) ctx=\(settings.ctx) fa=\(settings.flashAttn) ctk=\(settings.cacheTypeK) ctv=\(settings.cacheTypeV) cacheRAM=\(settings.cacheRAM)
+         settings: ngl=\(settings.effectiveNgl) \(moeLine) ctx=\(settings.ctx) fa=\(settings.flashAttn) ctk=\(settings.cacheTypeK) ctv=\(settings.cacheTypeV) cacheRAM=\(settings.cacheRAM)
+         placement: \(placementLine)
          dflash : \(settings.routerMode ? "per-model router plan" : settings.dflashPlanSummary)
          env: \(envLine)
          args: \(redact(args).joined(separator: " "))

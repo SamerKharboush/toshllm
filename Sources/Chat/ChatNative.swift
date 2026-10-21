@@ -93,6 +93,8 @@ struct ChatMessage: Identifiable, Codable, Equatable {
     /// An agent's request for the map of this answer, sent back as it came, and the map once fetched.
     var mapRequest: String? = nil
     var map: ChatMap? = nil
+    /// A figure the agent drew with the answer in a plane of its own, such as a tract from its deed's calls.
+    var sketches: [ChatSketch]? = nil
 
     var estimatedTokens: Int {
         let text = role == "assistant" ? parts.body + (settledInterim ?? "") : wireContent
@@ -435,7 +437,7 @@ final class ChatStore: ObservableObject {
 
     /// A progress event of the server agent: the calls it ran show as cards, ahead of the answer.
     func agentEvent(_ event: [String: Any], conversation id: UUID) {
-        lastStreamActivity = Date()
+        liveness.note(text: false)
         switch event["type"] as? String {
         case "intent":
             lastMathIntent = (event["intent"] as? String).flatMap(MathIntent.init(rawValue:))
@@ -483,8 +485,9 @@ final class ChatStore: ObservableObject {
     private var watchdog: Task<Void, Never>?
     /// Where the running reply is streamed from, so Stop can cancel it on the engine too.
     private var activeStream: (port: Int, identity: String)?
-    private var lastStreamActivity = Date()
-    private var sawFirstToken = false
+    private var liveness = StreamLiveness()
+    /// Estimated tokens of the tool definitions the last request sent, which the context holds before any reply.
+    @Published private(set) var toolTokens = 0
     private var slotConvID: UUID?
     private var agentContext: AgentRunContext?
 
@@ -835,8 +838,12 @@ final class ChatStore: ObservableObject {
         let userTexts = conversations[i].messages.filter { $0.role == "user" }.map(\.wireContent)
         let request = agentRun == nil ? userTexts.last : nil
         let agentHistory = Self.agentHistory(system: systemWithCwd, summary: conversations[i].summary,
-                                             messages: conversations[i].messages, from: conversations[i].summarizedCount ?? 0)
-        let agentAllowed = agentRun == nil && continuationInstruction == nil && !Self.serverAgentMissing && !agentDeclined
+                                             messages: conversations[i].messages, from: conversations[i].summarizedCount ?? 0,
+                                             modalities: modalities)
+        // an agent that takes the chat's tools also gets the rounds after the chat runs the calls it handed back
+        let clientToolsAgent = EngineExtensions.active().contains(where: \.agentTakesClientTools)
+        let agentAllowed = (agentRun == nil || clientToolsAgent && agentRun?.instruction == nil && agentRun?.finalizing != true)
+            && continuationInstruction == nil && !Self.serverAgentMissing && !agentDeclined
         var history = Self.requestHistory(system: systemWithCwd,
                                           summary: conversations[i].summary,
                                           messages: conversations[i].messages,
@@ -869,7 +876,7 @@ final class ChatStore: ObservableObject {
                 self?.live.update(reasoning: snap.reasoning, visible: snap.visible, speed: snap.speed)
                 let prefilling = snap.reasoning.isEmpty && snap.visible.isEmpty
                 self?.live.setPrefillProgress(prefilling ? snap.progress : nil)
-                self?.noteStreamActivity()
+                self?.noteStreamActivity(text: !prefilling)
                 let n = snap.visible.count
                 let ms = n > 12000 ? 600 : n > 6000 ? 350 : n > 2500 ? 180 : 80
                 try? await Task.sleep(for: .milliseconds(ms))
@@ -887,6 +894,8 @@ final class ChatStore: ObservableObject {
             var availableTools = agentRun?.tools ?? []
             var hold = holdText
             var dropLeadingSpace = false
+            // text of an agent pass that may still end in tool calls: shown live, replaced by the answer
+            var drafted = false
             var gate = false
             var agentTurn = false
             var retryWithoutAgent = false
@@ -933,7 +942,7 @@ final class ChatStore: ObservableObject {
                     // between the passes the agent sends keep-alives, which show it is working
                     if agentTurn, line.hasPrefix(":") {
                         let owner = self
-                        await MainActor.run { owner?.lastStreamActivity = Date() }
+                        await MainActor.run { owner?.liveness.note(text: false) }
                         continue
                     }
                     if agentTurn, line.hasPrefix("data: "), line.contains("\"tosh\""),
@@ -941,6 +950,12 @@ final class ChatStore: ObservableObject {
                        let tosh = object["tosh"] as? [String: Any] {
                         guard let event = tosh["event"] as? [String: Any] else {
                             agentMeta = tosh
+                            // a turn that ends with no answer after a draft keeps none of it
+                            if drafted {
+                                accumulator.visible = ""
+                                drafted = false
+                                flush()
+                            }
                             if let event = try accumulator.consume(line), event.completed { return true }
                             continue
                         }
@@ -952,13 +967,22 @@ final class ChatStore: ObservableObject {
                             hold = event["live"] as? Bool != true
                         } else if event["type"] as? String == "retract" {
                             accumulator.visible = ""
+                            drafted = false
                             dropLeadingSpace = true
                             lastFlush = .distantPast
+                            flush()
+                        } else if event["type"] as? String == "draft", let text = event["content"] as? String, !text.isEmpty {
+                            drafted = true
+                            accumulator.visible += text
                             flush()
                         }
                         let owner = self
                         await MainActor.run { owner?.agentEvent(event, conversation: convID) }
                         continue
+                    }
+                    if drafted, line.hasPrefix("data: "), line.contains("\"content\":\""), !line.contains("\"content\":\"\"") {
+                        accumulator.visible = ""
+                        drafted = false
                     }
                     guard let event = try accumulator.consume(line) else { continue }
                     // the engine separates the answer from retracted text for clients that keep it
@@ -1067,10 +1091,15 @@ final class ChatStore: ObservableObject {
                 if !samplerOrder.isEmpty { body["samplers"] = samplerOrder }
                 if let activeModel { body["model"] = activeModel }
                 // a request for a computed result may not be answered before a math tool is called
+                // what the agent cannot run itself: its extension's servers and the math ones are on its side
+                let clientTools = availableTools.filter { tool in
+                    !MathTranscriptionService.isMathTool(tool.name)
+                        && !EngineExtensions.chatToolPrefixes(active).contains { tool.name.hasPrefix($0) }
+                }
                 if agentTurn {
-                    body["messages"] = agentHistory
+                    body["messages"] = clientToolsAgent ? history : agentHistory
                     var tosh: [String: Any] = ["max_rounds": agentTurnLimit]
-                    if Self.hasOwnTools(availableTools) { tosh["client_tools"] = true }
+                    if !clientToolsAgent && Self.hasOwnTools(availableTools) { tosh["client_tools"] = true }
                     body["tosh"] = tosh
                 } else if let request, availableTools.contains(where: { MathTranscriptionService.isMathTool($0.name) }) {
                     let (intent, asked) = await MathIntent.decide(request, context: Array(userTexts.dropLast()), port: port)
@@ -1083,7 +1112,13 @@ final class ChatStore: ObservableObject {
                     let owner = self
                     await MainActor.run { owner?.lastMathIntent = nil }
                 }
-                if agentTurn || agentRun?.finalizing == true {
+                if agentTurn && clientToolsAgent {
+                    let definitions = clientTools.compactMap(\.openAIDefinition)
+                    if !definitions.isEmpty {
+                        body["tools"] = definitions
+                        body["tool_choice"] = "auto"
+                    }
+                } else if agentTurn || agentRun?.finalizing == true {
                     // no tools: the agent's are on the server, and a last round only states what was validated
                 } else if gate || agentRun?.mathGuard.next == .mathOnly {
                     // after a refused math call: correct it or ask, never answer from memory
@@ -1094,6 +1129,11 @@ final class ChatStore: ObservableObject {
                     body["tools"] = availableTools.compactMap(\.openAIDefinition)
                     body["tool_choice"] = "auto"
                 }
+                let schemas = (body["tools"] as? [[String: Any]])
+                    .flatMap { try? JSONSerialization.data(withJSONObject: $0) }?.count ?? 0
+                // about four characters per token in a JSON schema
+                let toolOwner = self
+                await MainActor.run { toolOwner?.toolTokens = schemas / 4 }
                 if reasoningOff {
                     body["chat_template_kwargs"] = ["enable_thinking": false]
                     // For templates that ignore enable_thinking (Qwen3.6 still
@@ -1314,6 +1354,11 @@ final class ChatStore: ObservableObject {
                               toolCalls: finalToolCalls, interim: round.interim)
                 if wasAgentTurn, followUp == nil, let request = finalMeta?["map_request"] as? [String: Any] {
                     store?.attachMapRequest(request, conversation: convID, port: port)
+                }
+                if wasAgentTurn, followUp == nil,
+                   let sketches = (finalMeta?["sketches"] as? [[String: Any]])?.compactMap(ChatSketch.init),
+                   !sketches.isEmpty {
+                    store?.attachSketches(sketches, conversation: convID)
                 }
                 if shouldDeliverQueued {
                     if !finalToolCalls.isEmpty { store?.interruptPendingToolCalls(conversation: convID) }
@@ -1705,24 +1750,19 @@ final class ChatStore: ObservableObject {
 
     // MARK: stall watchdog
 
-    /// Called from the stream whenever a token reaches the UI; resets the
-    /// inactivity timer and marks that generation (not prefill) has begun.
-    func noteStreamActivity() {
-        lastStreamActivity = Date()
-        sawFirstToken = true
+    /// Called from the stream whenever something reaches the UI: prompt progress or text.
+    func noteStreamActivity(text: Bool) {
+        liveness.note(text: text)
     }
 
     private func startWatchdog(port: Int) {
         watchdog?.cancel()
-        lastStreamActivity = Date()
-        sawFirstToken = false
+        liveness = StreamLiveness()
         watchdog = Task { [weak self] in
             while true {
                 try? await Task.sleep(for: .seconds(5))
                 guard let self, !Task.isCancelled, self.generating else { return }
-                let idle = Date().timeIntervalSince(self.lastStreamActivity)
-                let limit: TimeInterval = self.sawFirstToken ? 30 : 180
-                if idle > limit {
+                if self.liveness.stalled() {
                     self.handleStreamStall()
                     return
                 }
@@ -1738,15 +1778,18 @@ final class ChatStore: ObservableObject {
         task = nil
         watchdog = nil
         ServerManager.shared.active.stop()
-        lastError = Self.stallMessage
+        lastError = Self.stallMessage(moe: ServerSettings.modelIsMoE(
+            at: UserDefaults.standard.string(forKey: SettingsKeys.modelPath) ?? ""))
         generating = false
         generatingConvID = nil
         live.reset()
         save()
     }
 
-    nonisolated static var stallMessage: String {
-        "El motor dejó de responder y se detuvo para liberar memoria. Suele pasar con modelos MoE grandes en GPU AMD: usa un modelo denso (8B) o sube 'Expertos MoE en CPU'. / The engine stopped responding and was stopped to free memory. This happens with large MoE models on AMD GPUs: use a dense model (8B) or raise 'MoE experts on CPU'."
+    nonisolated static func stallMessage(moe: Bool) -> String {
+        moe
+            ? "El motor dejó de responder y se detuvo para liberar memoria. Suele pasar con modelos MoE grandes en GPU AMD: usa un modelo denso (8B) o sube 'Expertos MoE en CPU'. / The engine stopped responding and was stopped to free memory. This happens with large MoE models on AMD GPUs: use a dense model (8B) or raise 'MoE experts on CPU'."
+            : "El motor dejó de responder y se detuvo para liberar memoria. / The engine stopped responding and was stopped to free memory."
     }
 
     /// Tools the chat runs itself, beyond the math ones the agent covers; the map tools never count, so turning
@@ -1766,17 +1809,20 @@ final class ChatStore: ObservableObject {
     // MARK: auto-compaction
 
     /// The conversation as the server agent takes it: what the user and the answers said. Tool calls
-    /// stay out, since the agent refuses them: the tools run on the server.
-    nonisolated static func agentHistory(system: String, summary: String?, messages: [ChatMessage], from start: Int)
-        -> [[String: Any]] {
+    /// stay out, since the agent refuses them: the tools run on the server. Only the last request carries
+    /// its images and audio; an agent that cannot use them hands the turn back.
+    nonisolated static func agentHistory(system: String, summary: String?, messages: [ChatMessage], from start: Int,
+                                         modalities: ModelModalities? = nil) -> [[String: Any]] {
         var sys = system.trimmingCharacters(in: .whitespaces)
         if let summary, !summary.isEmpty {
             sys += (sys.isEmpty ? "" : "\n\n") + "Summary of the earlier part of this conversation:\n" + summary
         }
         var history: [[String: Any]] = sys.isEmpty ? [] : [["role": "system", "content": sys]]
-        for message in messages[min(max(0, start), messages.count)...] {
+        let last = messages.lastIndex { $0.role == "user" }
+        for (index, message) in messages.enumerated() where index >= min(max(0, start), messages.count) {
             if message.role == "user" {
-                history.append(["role": "user", "content": message.wireContent])
+                let parts = index == last ? mediaParts(message, text: message.wireContent, modalities: modalities) : nil
+                history.append(["role": "user", "content": parts ?? message.wireContent])
             } else if message.role == "assistant", (message.toolCalls ?? []).isEmpty {
                 let body = message.parts.body.trimmingCharacters(in: .whitespacesAndNewlines)
                 if !body.isEmpty { history.append(["role": "assistant", "content": body]) }
@@ -1820,33 +1866,38 @@ final class ChatStore: ObservableObject {
             }
             guard m.role != "assistant" || !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             else { return nil }
-            // A user turn with images uses the OpenAI multimodal content array
-            // (text part + image_url parts); everything else stays a plain string.
-            let media = m.attachments?.filter { $0.mediaKind != nil && $0.base64Payload != nil } ?? []
-            if m.role == "user", !(m.imageURIs ?? []).isEmpty || !media.isEmpty {
-                var parts: [[String: Any]] = []
-                if !text.isEmpty { parts.append(["type": "text", "text": text]) }
-                if modalities?.vision != false {
-                    for uri in m.imageURIs ?? [] {
-                        parts.append(["type": "image_url", "image_url": ["url": uri]])
-                    }
-                }
-                for attachment in media {
-                    guard let data = attachment.base64Payload else { continue }
-                    if attachment.mediaKind == "audio" {
-                        guard modalities?.audio != false else { continue }
-                        parts.append(["type": "input_audio",
-                                      "input_audio": ["data": data, "format": attachment.audioInputFormat]])
-                    } else if modalities?.video != false {
-                        parts.append(["type": "input_video",
-                                      "input_video": ["data": data, "format": attachment.videoInputFormat]])
-                    }
-                }
+            if m.role == "user", let parts = mediaParts(m, text: text, modalities: modalities) {
                 return ["role": m.role, "content": parts]
             }
             return ["role": m.role, "content": text]
         }
         return history
+    }
+
+    /// A user turn with images, audio or video as the OpenAI multimodal content array (text part + media
+    /// parts), or nil when the model takes none of them and it stays a plain string.
+    nonisolated static func mediaParts(_ m: ChatMessage, text: String, modalities: ModelModalities?) -> [[String: Any]]? {
+        let media = m.attachments?.filter { $0.mediaKind != nil && $0.base64Payload != nil } ?? []
+        guard !(m.imageURIs ?? []).isEmpty || !media.isEmpty else { return nil }
+        var parts: [[String: Any]] = []
+        if !text.isEmpty { parts.append(["type": "text", "text": text]) }
+        if modalities?.vision != false {
+            for uri in m.imageURIs ?? [] {
+                parts.append(["type": "image_url", "image_url": ["url": uri]])
+            }
+        }
+        for attachment in media {
+            guard let data = attachment.base64Payload else { continue }
+            if attachment.mediaKind == "audio" {
+                guard modalities?.audio != false else { continue }
+                parts.append(["type": "input_audio",
+                              "input_audio": ["data": data, "format": attachment.audioInputFormat]])
+            } else if modalities?.video != false {
+                parts.append(["type": "input_video",
+                              "input_video": ["data": data, "format": attachment.videoInputFormat]])
+            }
+        }
+        return parts.contains { $0["type"] as? String != "text" } ? parts : nil
     }
 
     /// Plain text of a message's content, whether it's a string or the
@@ -2264,6 +2315,12 @@ final class ChatStore: ObservableObject {
     func enableAllTools() {
         guard let i = currentIndex else { return }
         conversations[i].enabledToolNames = nil
+        save()
+    }
+
+    func disableAllTools() {
+        guard let i = currentIndex else { return }
+        conversations[i].enabledToolNames = []
         save()
     }
 
@@ -3152,6 +3209,9 @@ struct NativeChatView: View {
                         chat.deleteMessageAndFollowing(msg.id)
                     })
                     .equatable()
+                if msg.role == "assistant", let sketches = msg.sketches, !sketches.isEmpty {
+                    ChatSketchList(sketches: sketches)
+                }
                 if msg.role == "assistant", msg.map != nil || msg.mapRequest != nil {
                     ChatMapSection(message: msg, loading: chat.mapLoading.contains(msg.id),
                                    failed: chat.mapFailed.contains(msg.id),
@@ -3707,8 +3767,8 @@ struct NativeChatView: View {
                         customJSON = ""
                         agenticMaxTurns = 10
                         pasteLongTextLength = 2500
-                        maxImageMegapixels = 1
-                        pdfAsImages = false
+                        maxImageMegapixels = ProductDefaults.double(SettingsKeys.chatMaxImageMegapixels, or: 1)
+                        pdfAsImages = ProductDefaults.bool(SettingsKeys.chatPDFAsImages, or: false)
                     }
                     .buttonStyle(.link)
                     .font(.caption)
@@ -4067,16 +4127,35 @@ struct NativeChatView: View {
     }
 
     private var toolsPopover: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Label(loc.t("Herramientas del chat", "Chat tools"),
-                      systemImage: "wrench.and.screwdriver")
-                    .font(.headline)
-                Spacer()
-                Button(loc.t("Activar todas", "Enable all"), systemImage: "checkmark.circle") {
-                    chat.enableAllTools()
+        let selected = chat.current?.enabledToolNames.map(Set.init)
+        let enabledCount = selected.map { s in availableTools.filter { s.contains($0.name) }.count }
+            ?? availableTools.count
+        return VStack(alignment: .leading, spacing: 10) {
+            Label(loc.t("Herramientas del chat", "Chat tools"),
+                  systemImage: "wrench.and.screwdriver")
+                .font(.headline)
+            if !availableTools.isEmpty {
+                HStack(spacing: 12) {
+                    Button(loc.t("Activar todas", "Enable all"), systemImage: "checkmark.circle") {
+                        chat.enableAllTools()
+                    }
+                    .disabled(enabledCount == availableTools.count)
+                    .help(loc.t("Marca todas las herramientas para esta conversación",
+                                "Checks every tool for this conversation"))
+                    Button(loc.t("Desactivar todas", "Disable all"), systemImage: "circle") {
+                        chat.disableAllTools()
+                    }
+                    .disabled(enabledCount == 0)
+                    .help(loc.t("Desmarca todas las herramientas para elegir solo las que necesites",
+                                "Unchecks every tool so you can pick only the ones you need"))
+                    Spacer()
+                    Text(loc.t("%@ de %@", "%@ of %@", "\(enabledCount)", "\(availableTools.count)"))
+                        .font(.caption)
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.borderless)
+                .controlSize(.small)
             }
             if let agent = EngineExtensions.active().first(where: \.hasAgent) {
                 Label(loc.t("%@ recibe cada mensaje primero; los que no son de lo suyo pueden volver a estas herramientas.",
@@ -4625,7 +4704,7 @@ struct NativeChatView: View {
                 }
 
                 if server.state == .running && contextLimit > 0 {
-                    let used = chat.contextUsed ?? 0
+                    let used = chat.contextUsed ?? chat.toolTokens
                     let fraction = Double(used) / Double(contextLimit)
                     HStack(spacing: 5) {
                         Label(loc.t("Contexto", "Context"), systemImage: "memorychip")
@@ -4638,7 +4717,12 @@ struct NativeChatView: View {
                             .foregroundStyle(fraction > 0.8 ? .orange : .secondary)
                     }
                     .help(loc.t("Tokens usados por el historial y la última respuesta. Al superar 70%, la app intenta resumir los turnos antiguos.",
-                                "Tokens used by history and the latest response. Past 70%, the app attempts to summarize older turns."))
+                                "Tokens used by history and the latest response. Past 70%, the app attempts to summarize older turns.")
+                          + (chat.toolTokens >= 1000
+                             ? " " + loc.t("Las definiciones de las herramientas activas ocupan unos %@k.",
+                                           "The definitions of the active tools take about %@k of it.",
+                                           "\(chat.toolTokens / 1000)")
+                             : ""))
                 }
 
                 if server.state == .running && contextMaySlowGeneration && chat.canCompactCurrent {

@@ -1,0 +1,251 @@
+diff --git a/ggml/src/ggml-metal/ggml-metal-device.h b/ggml/src/ggml-metal/ggml-metal-device.h
+index 1806555c9..7508ef2e6 100644
+--- a/ggml/src/ggml-metal/ggml-metal-device.h
++++ b/ggml/src/ggml-metal/ggml-metal-device.h
+@@ -114,16 +114,18 @@ ggml_metal_library_t ggml_metal_library_init            (ggml_metal_device_t dev
+ ggml_metal_library_t ggml_metal_library_init_from_source(ggml_metal_device_t dev, const char * source, bool verbose);
+ 
+ void ggml_metal_library_free(ggml_metal_library_t lib);
+ 
+ ggml_metal_device_t ggml_metal_library_get_device(ggml_metal_library_t lib);
+ 
+ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline    (ggml_metal_library_t lib, const char * name);
+ struct ggml_metal_pipeline_with_params ggml_metal_library_compile_pipeline(ggml_metal_library_t lib, const char * base, const char * name, ggml_metal_cv_t cv);
++// same, but a kernel the driver refuses to build is not logged: the caller has a fallback
++struct ggml_metal_pipeline_with_params ggml_metal_library_compile_pipeline_quiet(ggml_metal_library_t lib, const char * base, const char * name, ggml_metal_cv_t cv);
+ 
+ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_base              (ggml_metal_library_t lib, enum ggml_op op);
+ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_cpy               (ggml_metal_library_t lib, enum ggml_type tsrc, enum ggml_type tdst, bool contig);
+ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_pool_1d           (ggml_metal_library_t lib, const struct ggml_tensor * op, enum ggml_op_pool op_pool);
+ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_pool_2d           (ggml_metal_library_t lib, const struct ggml_tensor * op, enum ggml_op_pool op_pool);
+ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_get_rows          (ggml_metal_library_t lib, enum ggml_type tsrc);
+ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_set_rows          (ggml_metal_library_t lib, const struct ggml_tensor * op, bool wave64);
+ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_diag              (ggml_metal_library_t lib, const struct ggml_tensor * op);
+diff --git a/ggml/src/ggml-metal/ggml-metal-device.m b/ggml/src/ggml-metal/ggml-metal-device.m
+index 559126338..4ec61f38d 100644
+--- a/ggml/src/ggml-metal/ggml-metal-device.m
++++ b/ggml/src/ggml-metal/ggml-metal-device.m
+@@ -853,17 +853,21 @@ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline(ggml_meta
+ 
+     res.pipeline = ggml_metal_pipelines_get(lib->pipelines, name);
+ 
+     [lib->lock unlock];
+ 
+     return res;
+ }
+ 
+-struct ggml_metal_pipeline_with_params ggml_metal_library_compile_pipeline(ggml_metal_library_t lib, const char * base, const char * name, ggml_metal_cv_t cv) {
++// A kernel the driver refuses to build (it asks for more threadgroup memory than the card
++// has) is an outcome the caller can plan for, so the quiet variant leaves that refusal out
++// of the log and lets the caller say what it uses instead. A kernel that is missing from the
++// library is a defect and stays an error either way.
++static struct ggml_metal_pipeline_with_params ggml_metal_library_compile_pipeline_impl(ggml_metal_library_t lib, const char * base, const char * name, ggml_metal_cv_t cv, bool quiet) {
+     struct ggml_metal_pipeline_with_params res = {
+         /*.pipeline =*/ nil,
+         /*.nsg      =*/ 0,
+         /*.nr0      =*/ 0,
+         /*.nr1      =*/ 0,
+         /*.smem     =*/ 0,
+         /*.c4       =*/ false,
+         /*.cnt      =*/ false,
+@@ -925,19 +929,21 @@ struct ggml_metal_pipeline_with_params ggml_metal_library_compile_pipeline(ggml_
+         id<MTLDevice> device = ggml_metal_device_get_obj(lib->dev);
+         id<MTLComputePipelineState> obj = [device newComputePipelineStateWithFunction:mtl_function error:&error];
+ 
+         [mtl_function release];
+ 
+         if (!obj) {
+             [lib->lock unlock];
+ 
+-            GGML_LOG_ERROR("%s: failed to create pipeline state: base = '%s', name = '%s'\n", __func__, base, name);
+-            if (error) {
+-                GGML_LOG_ERROR("%s: %s\n", __func__, [[error description] UTF8String]);
++            if (!quiet) {
++                GGML_LOG_ERROR("%s: failed to create pipeline state: base = '%s', name = '%s'\n", __func__, base, name);
++                if (error) {
++                    GGML_LOG_ERROR("%s: %s\n", __func__, [[error description] UTF8String]);
++                }
+             }
+ 
+             return res;
+         }
+ 
+         GGML_LOG_DEBUG("%s: loaded %-40s %16p | th_max = %4d | th_width = %4d\n", __func__, name,
+                 (void *) obj,
+                 (int)    obj.maxTotalThreadsPerThreadgroup,
+@@ -959,16 +965,24 @@ struct ggml_metal_pipeline_with_params ggml_metal_library_compile_pipeline(ggml_
+         ggml_metal_pipelines_add(lib->pipelines, name, res.pipeline);
+     }
+ 
+     [lib->lock unlock];
+ 
+     return res;
+ }
+ 
++struct ggml_metal_pipeline_with_params ggml_metal_library_compile_pipeline(ggml_metal_library_t lib, const char * base, const char * name, ggml_metal_cv_t cv) {
++    return ggml_metal_library_compile_pipeline_impl(lib, base, name, cv, false);
++}
++
++struct ggml_metal_pipeline_with_params ggml_metal_library_compile_pipeline_quiet(ggml_metal_library_t lib, const char * base, const char * name, ggml_metal_cv_t cv) {
++    return ggml_metal_library_compile_pipeline_impl(lib, base, name, cv, true);
++}
++
+ //
+ // MTLComputeCommandEncoder wrapper
+ //
+ 
+ struct ggml_metal_encoder {
+     id<MTLComputeCommandEncoder> obj;
+     bool concurrent;
+ };
+diff --git a/ggml/src/ggml-metal/ggml-metal-ops.cpp b/ggml/src/ggml-metal/ggml-metal-ops.cpp
+index dcd26e245..508a2378f 100644
+--- a/ggml/src/ggml-metal/ggml-metal-ops.cpp
++++ b/ggml/src/ggml-metal/ggml-metal-ops.cpp
+@@ -4535,24 +4535,36 @@ static ggml_metal_pipeline_with_params ggml_metal_fa_amd_pipeline(ggml_metal_lib
+         return pipeline;
+     }
+     {
+         std::lock_guard<std::mutex> lock(refused_mtx);
+         if (refused.count(name)) {
+             return pipeline;
+         }
+     }
+-    pipeline = ggml_metal_library_compile_pipeline(lib, name, name, nullptr);
++    // the refusal is not logged here: every caller has a fallback and says which one
++    pipeline = ggml_metal_library_compile_pipeline_quiet(lib, name, name, nullptr);
+     if (!pipeline.pipeline) {
+         std::lock_guard<std::mutex> lock(refused_mtx);
+         refused.insert(name);
+     }
+     return pipeline;
+ }
+ 
++// The attention path runs once per layer per token, so a line about a kernel is printed
++// once, not once per call. The kind is part of the key: a kernel that was refused and then
++// dropped is two different lines, and the second one must not be swallowed by the first.
++static bool ggml_metal_fa_amd_first_time(const char * kind, const char * key) {
++    static std::mutex mtx;
++    static std::unordered_set<std::string> seen;
++
++    std::lock_guard<std::mutex> lock(mtx);
++    return seen.insert(std::string(kind) + " " + key).second;
++}
++
+ // Suffix for the AMD vec FA pipeline name, or nullptr for types we don't instantiate.
+ static const char * ggml_metal_fa_amd_type_suffix(enum ggml_type t) {
+     switch (t) {
+         case GGML_TYPE_F16:  return "f16";
+         case GGML_TYPE_Q8_0: return "q8_0";
+         case GGML_TYPE_Q4_0: return "q4_0";
+         case GGML_TYPE_TURBO2_0: return "turbo2";
+         case GGML_TYPE_TURBO3_0: return "turbo3";
+@@ -5112,23 +5124,27 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
+                     TOSH_ENV("TOSH_FA_PF_W64_DISABLE") == nullptr) {
+                     char w64_name[96];
+                     if (pf_bq > 0) {
+                         snprintf(w64_name, sizeof(w64_name), "%s_w64_lg%dq%dk%d", fa_pf_pipeline, pf_lg, pf_bq,
+                                  pf_bk > 0 ? pf_bk : 64);
+                     } else {
+                         snprintf(w64_name, sizeof(w64_name), "%s_w64_lg%d", fa_pf_pipeline, pf_lg);
+                     }
+-                    if (ggml_metal_library_get_pipeline(lib, w64_name).pipeline ||
+-                        ggml_metal_library_compile_pipeline(lib, w64_name, w64_name, nullptr).pipeline) {
++                    // the cached helper: a kernel this card refuses is asked once, not once
++                    // per layer per prompt
++                    if (ggml_metal_fa_amd_pipeline(lib, w64_name).pipeline) {
+                         snprintf(fa_pf_pipeline, sizeof(fa_pf_pipeline), "%s", w64_name);
+                         // the grid steps in query blocks, so it has to follow the twin
+                         if (pf_bq > 0) {
+                             fa_pf_bq = pf_bq;
+                         }
++                    } else if (ggml_metal_fa_amd_first_time("pf-refused", w64_name)) {
++                        GGML_LOG_WARN("%s: the driver refused %s; the tile kernel takes the prefill\n",
++                                      __func__, w64_name);
+                     }
+                 }
+             }
+ 
+             // the asymmetric heads compose their name in the branches above, so their twin is
+             // picked here instead. Same group of sixteen; the fallback is the 32-lane kernel.
+             if (fa_pf_asym && props_dev->simd_width == 64 &&
+                 TOSH_ENV("TOSH_FA_PF_W64_DISABLE") == nullptr) {
+@@ -5168,16 +5184,20 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
+                 ggml_metal_encoder_set_buffer  (enc, bid_pad,  6);
+                 ggml_metal_encoder_set_buffer  (enc, bid_dst,  7);
+ 
+                 ggml_metal_encoder_dispatch_threadgroups(enc, (ne01 + fa_pf_bq - 1)/fa_pf_bq, ne02, ne03,
+                                                          props_dev->simd_width, 256/props_dev->simd_width, 1);
+ 
+                 return 1;
+             }
++            if (ggml_metal_fa_amd_first_time("pf-fallback", fa_pf_pipeline)) {
++                GGML_LOG_WARN("%s: %s is not available on this card; the tile kernel takes the prefill\n",
++                              __func__, fa_pf_pipeline);
++            }
+         }
+ 
+         // prefill goes to the tile kernel (K/V shared across 16 queries);
+         // decode keeps the per-query vec kernel
+         if (ne01 >= 16 && TOSH_ENV("TOSH_FA_TILE_DISABLE") == NULL) {
+             char fa_tile_pipeline[80];
+             if (ne20 != ne00) {
+                 // MLA heads carry the value width in the name: 576/512 and 320/256
+@@ -5315,40 +5335,49 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
+             // whole simdgroups only: a partial one loses its slice of the count
+             const int nwi = props_dev->simd_width;
+             nthi = std::max(nwi, (nthi/nwi)*nwi);
+ 
+             ggml_metal_encoder_dispatch_threadgroups(enc, ne31, ne32, ne33, nthi, 1, 1);
+             ggml_metal_op_concurrency_reset(ctx);
+         }
+ 
+-        auto pipeline = ggml_metal_fa_amd_pipeline(lib, fa_amd_nwg > 1 ? fa_amd_wg_pipeline : fa_amd_pipeline);
++        char lds_pipeline[112] = {0};
++        const char * fa_amd_name = fa_amd_nwg > 1 ? fa_amd_wg_pipeline : fa_amd_pipeline;
++        auto pipeline = ggml_metal_fa_amd_pipeline(lib, fa_amd_name);
+         // 32 KB of threadgroup memory (GCN 1.0) does not hold the 64-lane kernel; its twin
+         // with half the simdgroups does. TOSH_FA_AMD_LDS32=1 takes the twin on any wave64 card.
+         static const bool lds32_force = TOSH_ENV("TOSH_FA_AMD_LDS32") != NULL;
+         if ((!pipeline.pipeline || lds32_force) && props_dev->simd_width == 64) {
+-            char lds_pipeline[112];
+-            snprintf(lds_pipeline, sizeof(lds_pipeline), "%s_lds32", fa_amd_nwg > 1 ? fa_amd_wg_pipeline : fa_amd_pipeline);
++            snprintf(lds_pipeline, sizeof(lds_pipeline), "%s_lds32", fa_amd_name);
+             auto lds = ggml_metal_fa_amd_pipeline(lib, lds_pipeline);
+             if (lds.pipeline) {
++                if (!lds32_force && ggml_metal_fa_amd_first_time("refused", lds_pipeline)) {
++                    GGML_LOG_WARN("%s: the driver refused %s; using %s\n", __func__, fa_amd_name, lds_pipeline);
++                }
+                 pipeline = lds;
++                fa_amd_name = lds_pipeline;
+                 fa_amd_nsg /= 2;
+             }
+         }
+ 
+         // dispatching more threads than the pipeline admits hangs the GPU, and how many
+         // it admits depends on the K type's dequant; fall through rather than risk it
+         if (!pipeline.pipeline) {
+             // a missed instantiation leaves a null pipeline; fall through rather than crash
+-            GGML_LOG_WARN("%s: %s is not instantiated; using the generic kernels\n",
+-                          __func__, fa_amd_nwg > 1 ? fa_amd_wg_pipeline : fa_amd_pipeline);
++            if (ggml_metal_fa_amd_first_time("drop", fa_amd_name)) {
++                GGML_LOG_ERROR("%s: %s is not instantiated; using the generic kernels\n",
++                               __func__, fa_amd_name);
++            }
+         } else if (ggml_metal_pipeline_max_theads_per_threadgroup(pipeline) < fa_amd_nsg*props_dev->simd_width) {
+-            GGML_LOG_WARN("%s: %s wants %d threads, pipeline allows %d; using the generic kernels\n",
+-                          __func__, fa_amd_pipeline, fa_amd_nsg*props_dev->simd_width,
+-                          ggml_metal_pipeline_max_theads_per_threadgroup(pipeline));
++            if (ggml_metal_fa_amd_first_time("drop", fa_amd_name)) {
++                GGML_LOG_ERROR("%s: %s wants %d threads, pipeline allows %d; using the generic kernels\n",
++                               __func__, fa_amd_name, fa_amd_nsg*props_dev->simd_width,
++                               ggml_metal_pipeline_max_theads_per_threadgroup(pipeline));
++            }
+         } else {
+ 
+         ggml_metal_encoder_set_pipeline(enc, pipeline);
+         ggml_metal_encoder_set_bytes   (enc, &args, sizeof(args), 0);
+         ggml_metal_encoder_set_buffer  (enc, bid_src0, 1);
+         ggml_metal_encoder_set_buffer  (enc, bid_src1, 2);
+         ggml_metal_encoder_set_buffer  (enc, bid_src2, 3);
+         ggml_metal_encoder_set_buffer  (enc, bid_src3, 4);

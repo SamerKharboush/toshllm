@@ -1,0 +1,21 @@
+noise floor (measured): tools/calibrate/results/calibration-3cell-2026-10-18.csv
+  4B-Q4_K_M      sigma 0.0151 t/s  from n=20 invocations of tg128
+  4B-Q6_K        sigma 0.0529 t/s  from n=20 invocations of tg128
+  14B-Q4_K_M     sigma 0.0749 t/s  from n=20 invocations of tg128
+
+n=3  p=2  dof=1
+slope=10.3978 ms/GB   (= 96.2 GB/s if read as a rate)   intercept=23.456 ms
+sigma per cell (ms): [0.039, 0.166, 1.031]
+
+cell                       x         y     resid        z  leverage    cookD
+4B-Q4_K_M         2491323904.0000    50.988    +1.628    41.35     0.570  1134.47
+4B-Q6_K           3306260704.0000    55.973    -1.861   -11.22     0.439    49.14
+14B-Q4_K_M        9001753376.0000   117.287    +0.233     0.23     0.991     2.88
+
+sum of leverage = 2.000000  (must equal p = 2)  OK
+leave-one-out slope swing (max) = 41.2%   *** DOMINATED ***
+R^2 = 0.9977   (printed for context only; never a pass criterion)
+worst |z| = 41.3x the noise floor
+reduced chi-squared = 1835.6
+
+VERDICT: REJECT (worst |z| 41.3 > 3; chi2_red 1835.6 > 3; leverage > 0.9; LOO swing 41.2% > 20%)

@@ -206,6 +206,14 @@ def test_tool_messages_from_a_client_are_refused():
     assert reply["status"] == 400, reply
 
 
+def test_an_attachment_the_agent_cannot_read_goes_back_to_the_client():
+    for content in ([{"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}}],
+                    [{"type": "text", "text": "Solve the equation in the photo."},
+                     {"type": "input_audio", "input_audio": {"data": "AAAA", "format": "wav"}}]):
+        reply = agent.run({"request": {"messages": [{"role": "user", "content": content}]}, "base_url": "http://127.0.0.1:9"})
+        assert reply["tosh"]["outcome"] == "declined" and reply["choices"][0]["message"]["content"] == "", reply
+
+
 def test_the_texts_tosh_writes_follow_the_conversation():
     assert policy.language(["Calcula la integral de x^2 entre 0 y 1."]) == "es"
     assert policy.language(["Calculate the integral of x^2 from 0 to 1."]) == "en"
@@ -260,8 +268,10 @@ def _events(engine, question):
 def test_a_turn_that_needs_no_tools_streams_its_answer():
     engine = Engine([{"content": "An eigenvalue is a scale factor."}], {})
     events, content, outcome = _events(engine, "What is an eigenvalue?")
-    deltas = [e for e in events if e["type"] == "delta"]
-    assert "".join(e.get("content", "") for e in deltas) == content and outcome == "answered", events
+    # the tools were offered, so the text is a draft until the pass ends without calls
+    drafts = [e for e in events if e["type"] == "draft"]
+    assert "".join(e.get("content", "") for e in drafts) == content and outcome == "answered", events
+    assert not any(e["type"] == "delta" and e.get("content") for e in events), events
     assert [e["live"] for e in events if e["type"] == "pass" and e["state"] == "start"] == [True], events
     assert not any(e["type"] == "retract" for e in events), events
     # without the math tools every answer goes out as it is generated
@@ -290,8 +300,8 @@ def test_text_streamed_before_a_math_call_is_retracted():
     events, content, outcome = _events(engine, "What is an eigenvalue?")
     kinds = [e["type"] for e in events]
     assert kinds.index("retract") == kinds.index("tool_call") - 1, kinds
-    # once a math tool has run the answer is checked, so it is no longer streamed
-    assert engine.live == [0] and kinds.count("delta") == 1, (engine.live, kinds)
+    # the retracted text was only ever a draft, and once a math tool has run the answer is not streamed at all
+    assert engine.live == [0] and kinds.count("draft") == 1 and "delta" not in kinds, (engine.live, kinds)
     assert content == "It factors as (x - 3)*(x - 2).", content
 
 
@@ -336,6 +346,61 @@ def test_a_streamed_reply_is_read_like_a_complete_one():
                                       "function": {"name": "sympy_expression", "arguments": '{"x": 1}'}}], message
     assert reply["usage"] == {"prompt_tokens": 7, "completion_tokens": 3}, reply
     assert pieces == [("content", "Hi"), ("reasoning_content", "hm"), ("content", " there")], pieces
+
+
+def test_a_cancel_stops_every_request_in_flight():
+    import http.server
+    import socketserver
+    import threading
+    import time
+    arrived = threading.Semaphore(0)
+    release = threading.Event()
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):
+            self.rfile.read(int(self.headers["Content-Length"]))
+            arrived.release()
+            release.wait(10)
+            try:
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(b"{}")
+            except OSError:
+                pass
+
+        def log_message(self, *args):
+            pass
+
+    class Server(socketserver.ThreadingMixIn, http.server.HTTPServer):
+        daemon_threads = True
+
+    server = Server(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    engine = agent.Engine(f"http://127.0.0.1:{server.server_port}", "")
+    outcomes = []
+
+    def ask():
+        try:
+            engine.complete({"messages": []})
+            outcomes.append("answered")
+        except agent.Cancelled:
+            outcomes.append("cancelled")
+
+    threads = [threading.Thread(target=ask) for _ in range(2)]
+    try:
+        for t in threads:
+            t.start()
+        assert arrived.acquire(timeout=5) and arrived.acquire(timeout=5), "both requests should be in flight"
+        start = time.monotonic()
+        engine.cancel()
+        for t in threads:
+            t.join(5)
+        assert outcomes == ["cancelled", "cancelled"], outcomes
+        assert time.monotonic() - start < 2, "a cancelled request waited for its answer"
+    finally:
+        release.set()
+        server.shutdown()
+        server.server_close()
 
 
 def test_every_pass_goes_to_the_requested_model_with_its_sampling():
@@ -514,6 +579,13 @@ def test_intent_reads_the_examples_of_the_brief():
     }
     for text, intent in expected.items():
         assert policy.classify(text) == intent, (text, policy.classify(text))
+
+
+def test_the_engine_reads_every_address_the_server_hands_it():
+    for url, host in (("http://127.0.0.1:8080", "127.0.0.1"), ("http://localhost:8080", "localhost"),
+                      ("http://[::1]:8080", "::1"), ("http://[fe80::1%25lo0]:8080", "fe80::1%lo0")):
+        engine = agent.Engine(url, "")
+        assert (engine.host, engine.port) == (host, 8080), (url, engine.host, engine.port)
 
 
 def main():

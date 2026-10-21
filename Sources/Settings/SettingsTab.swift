@@ -34,7 +34,7 @@ struct SettingsView: View {
     @AppStorage(SettingsKeys.flashAttn) private var flashAttn = "auto"
     @AppStorage(SettingsKeys.noMmap) private var noMmap = true
     @AppStorage(SettingsKeys.jinja) private var jinja = true
-    @AppStorage(SettingsKeys.vramReserve) private var vramReserve = 1024
+    @AppStorage(SettingsKeys.vramReserve) private var vramReserve = 0
     @AppStorage(SettingsKeys.gpuIndex) private var gpuIndex = -1
     @AppStorage(SettingsKeys.multiGPU) private var multiGPU = ServerSettings.defaultMultiGPU
     @AppStorage(SettingsKeys.multiGPUCount) private var multiGPUCount = 0
@@ -53,6 +53,7 @@ struct SettingsView: View {
     @AppStorage(SettingsKeys.cacheRAM) private var cacheRAM = 2048
     @AppStorage(SettingsKeys.imageMaxTokens) private var imageMaxTokens = 0
     @AppStorage(SettingsKeys.parallelSlots) private var parallelSlots = 1
+    @AppStorage(SettingsKeys.separateKV) private var separateKV = false
     @AppStorage(SettingsKeys.reasoningInline) private var reasoningInline = false
     @AppStorage(SettingsKeys.serverDefaultReasoning) private var serverDefaultReasoning = "model"
     @AppStorage(SettingsKeys.serverDefaultMaxTokens) private var serverDefaultMaxTokens = 0
@@ -789,11 +790,13 @@ struct SettingsView: View {
                     .infoTip(loc.t("Solo modelos MoE: capas cuyos 'expertos' viven en RAM y los procesa el CPU. Se ajusta solo al elegir modelo; súbelo si la VRAM se satura, bájalo si te sobra. (Deshabilitado en modelos densos, donde el motor lo ignora.)",
                                 "MoE models only: layers whose 'experts' live in RAM and run on the CPU. Auto-set when picking a model; raise if VRAM saturates, lower if you have headroom. (Disabled on dense models, where the engine ignores it.)"))
                     .disabled(!modelIsMoE || (dynamicMoeEnabled && executionMode != "legacy"))
-                Stepper(loc.t("Reserva de VRAM: %@ MB", "VRAM reserve: %@ MB", "\(vramReserve)"),
-                        value: $vramReserve, in: 256...4096, step: 256)
+                Stepper(vramReserve == 0
+                            ? loc.t("Reserva de VRAM: automática", "VRAM reserve: automatic")
+                            : loc.t("Reserva de VRAM: %@ MB", "VRAM reserve: %@ MB", "\(vramReserve)"),
+                        value: $vramReserve, in: 0...4096, step: 256)
                     .settingsGlyph("gauge.with.needle")
-                    .infoTip(loc.t("VRAM que se deja libre para el sistema y la interfaz. 1024 MB es un margen seguro.",
-                                "VRAM left free for the system and UI. 1024 MB is a safe margin."))
+                    .infoTip(loc.t("VRAM que se deja libre para el sistema y la interfaz. La respetan el plan de Dynamic MoE, el modo router y DFlash en Auto. Automática deja un 8% de la tarjeta, entre 768 y 1536 MB.",
+                                "VRAM left free for the system and UI. The Dynamic MoE plan, router mode and DFlash in Auto keep it. Automatic leaves 8% of the card, between 768 and 1536 MB."))
                 Toggle(loc.t("Copiar pesos a VRAM (--no-mmap, recomendado)",
                              "Copy weights to VRAM (--no-mmap, recommended)"), isOn: $noMmap)
                     .settingsGlyph("arrow.down.to.line")
@@ -975,6 +978,11 @@ struct SettingsView: View {
                 }
                 .infoTip(loc.t("Cuántas peticiones procesa el motor a la vez. Con 1, las peticiones hacen cola en vez de competir por la GPU, y un prompt enorme interrumpido por el timeout de un cliente (VS Code) se retoma donde iba al reintentar. Sube el valor solo si varios clientes usan el servidor a la vez.",
                             "How many requests the engine processes at once. With 1, requests queue instead of competing for the GPU, and a huge prompt interrupted by a client timeout (VS Code) resumes where it was on retry. Raise it only if several clients use the server at the same time."))
+                if parallelSlots > 1 {
+                    Toggle(loc.t("Contexto separado por petición", "Separate context per request"), isOn: $separateKV)
+                        .infoTip(loc.t("Cada petición simultánea tiene su propia parte del contexto (el contexto dividido entre las peticiones) en vez de compartirlo. Medido en una Radeon RX 6700 XT con varias peticiones a la vez: entre un 7 y un 11% más rápido al generar y entre un 11 y un 18% menos de espera con prompts largos. A cambio, ninguna conversación puede pasar de su parte; apagado, el chat conserva su ventana completa.",
+                                    "Each simultaneous request gets its own share of the context (the context divided by the requests) instead of sharing it. Measured on a Radeon RX 6700 XT with several requests at once: 7 to 11% faster generation and 11 to 18% less wait with long prompts. In exchange, no conversation can grow past its share; off, the chat keeps its full window."))
+                }
                 Toggle(loc.t("Razonamiento como texto (clientes externos)",
                              "Reasoning as plain text (external clients)"), isOn: $reasoningInline)
                     .settingsGlyph("brain")

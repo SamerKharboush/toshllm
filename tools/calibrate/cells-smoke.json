@@ -1,0 +1,15 @@
+{
+  "binary": "/Users/sam/firellama/vendor/llama.cpp/build-static/bin/llama-bench",
+  "env": {
+    "GGML_METAL_DEVICES": "2",
+    "GGML_METAL_VRAM_RESERVE_MB": "1024",
+    "GGML_METAL_SIMDGROUP_REDUCTION_DISABLE": "1"
+  },
+  "extra_args": ["-sm", "tensor"],
+  "pp": 32,
+  "tg": 16,
+  "reps_per_invocation": 1,
+  "cells": [
+    { "label": "smoke", "model": "/Users/sam/models/Qwen3-0.6B-Q8_0.gguf" }
+  ]
+}

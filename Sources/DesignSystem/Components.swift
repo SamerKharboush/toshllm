@@ -29,6 +29,9 @@ struct EstimateLine: View {
 
     private var badge: some View {
         let (text, color): (String, Color) = {
+            // A model on the host is not "slow" because it is on the CPU: the card
+            // path is the slow one for a model that does not fit.
+            if est.placement == .host { return (loc.t("Solo CPU", "CPU only"), .orange) }
             switch est.level {
             case .ideal: return (loc.t("GPU completa", "Full GPU"), .green)
             case .good: return (loc.t("Híbrido GPU+CPU", "GPU+CPU hybrid"), .blue)

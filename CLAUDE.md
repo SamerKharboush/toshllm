@@ -27,6 +27,15 @@ Single-context. See `docs/agents/domain.md`.
    confirm the flag takes effect on the path actually being run. `TOSH_MGPU_NOWAIT=1` returns a
    bit-identical result on an unbridged pair because it is inert there, and that null result was
    once reported as evidence that the collective wait is free.
+3. **A fit's residuals are a test, not a receipt.** A fit whose residuals exceed five times the
+   measurement noise is rejected, not validated. State the noise floor next to the residuals or
+   do not quote the fit. Corollary: two probes that disagree by more than the noise floor are two
+   observations, not one quantity — publish what each one measured and do not average them into a
+   rate. This is how a 94.6 GB/s "marginal rate" and an 80/20 decomposition reached the release
+   notes with residuals thirty times the noise floor, and then had to be withdrawn.
+4. **State which configurations cannot be run.** A flag rejected at load time, or a required
+   environment variable, belongs in the method line next to the numbers, not in a footnote. A
+   sweep is only as wide as the environment it holds fixed.
 
 Never say "faster" or "speedup" for a split-mode pair. Tensor split and layer split are different
 constraints, not two settings of one thing; see the split-modes section of `dist/beta24-notes.md`.

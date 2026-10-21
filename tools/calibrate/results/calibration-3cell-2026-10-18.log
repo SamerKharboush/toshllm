@@ -1,0 +1,102 @@
+binary   : /Users/sam/firellama/vendor/llama.cpp/build-static/bin/llama-bench
+env      : {'GGML_METAL_DEVICES': '2', 'GGML_METAL_VRAM_RESERVE_MB': '1024', 'GGML_METAL_SIMDGROUP_REDUCTION_DISABLE': '1', 'TOSH_FA_AMD': '1'}
+warmup   : 3 discarded, then 20 measured
+cells    : 3
+settling : 60s idle
+  warmup 4B-Q6_K 1/3
+  warmup 4B-Q6_K 2/3
+  warmup 4B-Q6_K 3/3
+  4B-Q6_K rep 1/20: pp512=141.600 pp512_sd=0.553 tg128=17.859 tg128_sd=0.001
+  4B-Q6_K rep 2/20: pp512=141.540 pp512_sd=0.334 tg128=17.796 tg128_sd=0.024
+  4B-Q6_K rep 3/20: pp512=140.452 pp512_sd=1.550 tg128=17.700 tg128_sd=0.025
+  4B-Q6_K rep 4/20: pp512=141.334 pp512_sd=0.066 tg128=17.854 tg128_sd=0.010
+  4B-Q6_K rep 5/20: pp512=141.568 pp512_sd=0.231 tg128=17.784 tg128_sd=0.124
+  4B-Q6_K rep 6/20: pp512=141.584 pp512_sd=0.201 tg128=17.842 tg128_sd=0.018
+  4B-Q6_K rep 7/20: pp512=141.402 pp512_sd=0.096 tg128=17.870 tg128_sd=0.008
+  4B-Q6_K rep 8/20: pp512=141.186 pp512_sd=0.512 tg128=17.858 tg128_sd=0.000
+  4B-Q6_K rep 9/20: pp512=141.603 pp512_sd=0.004 tg128=17.860 tg128_sd=0.009
+  4B-Q6_K rep 10/20: pp512=141.535 pp512_sd=0.206 tg128=17.878 tg128_sd=0.037
+  4B-Q6_K rep 11/20: pp512=141.508 pp512_sd=0.030 tg128=17.887 tg128_sd=0.016
+  4B-Q6_K rep 12/20: pp512=141.605 pp512_sd=0.090 tg128=17.905 tg128_sd=0.003
+  4B-Q6_K rep 13/20: pp512=141.531 pp512_sd=0.074 tg128=17.903 tg128_sd=0.003
+  4B-Q6_K rep 14/20: pp512=141.888 pp512_sd=0.216 tg128=17.909 tg128_sd=0.001
+  4B-Q6_K rep 15/20: pp512=141.586 pp512_sd=0.144 tg128=17.910 tg128_sd=0.001
+  4B-Q6_K rep 16/20: pp512=141.830 pp512_sd=0.405 tg128=17.903 tg128_sd=0.016
+  4B-Q6_K rep 17/20: pp512=141.844 pp512_sd=0.286 tg128=17.901 tg128_sd=0.007
+  4B-Q6_K rep 18/20: pp512=141.865 pp512_sd=0.305 tg128=17.904 tg128_sd=0.001
+  4B-Q6_K rep 19/20: pp512=141.618 pp512_sd=0.055 tg128=17.893 tg128_sd=0.014
+  4B-Q6_K rep 20/20: pp512=141.691 pp512_sd=0.066 tg128=17.901 tg128_sd=0.006
+  warmup 4B-Q4_K_M 1/3
+  warmup 4B-Q4_K_M 2/3
+  warmup 4B-Q4_K_M 3/3
+  4B-Q4_K_M rep 1/20: pp512=149.165 pp512_sd=0.146 tg128=19.594 tg128_sd=0.013
+  4B-Q4_K_M rep 2/20: pp512=148.966 pp512_sd=0.484 tg128=19.615 tg128_sd=0.023
+  4B-Q4_K_M rep 3/20: pp512=149.313 pp512_sd=0.014 tg128=19.610 tg128_sd=0.012
+  4B-Q4_K_M rep 4/20: pp512=149.258 pp512_sd=0.142 tg128=19.589 tg128_sd=0.014
+  4B-Q4_K_M rep 5/20: pp512=149.154 pp512_sd=0.120 tg128=19.611 tg128_sd=0.005
+  4B-Q4_K_M rep 6/20: pp512=149.077 pp512_sd=0.134 tg128=19.578 tg128_sd=0.029
+  4B-Q4_K_M rep 7/20: pp512=149.283 pp512_sd=0.017 tg128=19.605 tg128_sd=0.004
+  4B-Q4_K_M rep 8/20: pp512=149.236 pp512_sd=0.166 tg128=19.619 tg128_sd=0.004
+  4B-Q4_K_M rep 9/20: pp512=149.007 pp512_sd=0.298 tg128=19.616 tg128_sd=0.040
+  4B-Q4_K_M rep 10/20: pp512=149.107 pp512_sd=0.052 tg128=19.640 tg128_sd=0.011
+  4B-Q4_K_M rep 11/20: pp512=149.171 pp512_sd=0.218 tg128=19.615 tg128_sd=0.015
+  4B-Q4_K_M rep 12/20: pp512=149.147 pp512_sd=0.106 tg128=19.618 tg128_sd=0.010
+  4B-Q4_K_M rep 13/20: pp512=149.328 pp512_sd=0.074 tg128=19.611 tg128_sd=0.039
+  4B-Q4_K_M rep 14/20: pp512=149.188 pp512_sd=0.026 tg128=19.618 tg128_sd=0.007
+  4B-Q4_K_M rep 15/20: pp512=149.131 pp512_sd=0.139 tg128=19.609 tg128_sd=0.025
+  4B-Q4_K_M rep 16/20: pp512=149.241 pp512_sd=0.158 tg128=19.597 tg128_sd=0.014
+  4B-Q4_K_M rep 17/20: pp512=149.377 pp512_sd=0.167 tg128=19.619 tg128_sd=0.005
+  4B-Q4_K_M rep 18/20: pp512=149.080 pp512_sd=0.175 tg128=19.638 tg128_sd=0.003
+  4B-Q4_K_M rep 19/20: pp512=149.254 pp512_sd=0.150 tg128=19.631 tg128_sd=0.015
+  4B-Q4_K_M rep 20/20: pp512=149.199 pp512_sd=0.302 tg128=19.618 tg128_sd=0.023
+  warmup 14B-Q4_K_M 1/3
+  warmup 14B-Q4_K_M 2/3
+  warmup 14B-Q4_K_M 3/3
+  14B-Q4_K_M rep 1/20: pp512=41.409 pp512_sd=0.018 tg128=8.446 tg128_sd=0.000
+  14B-Q4_K_M rep 2/20: pp512=41.413 pp512_sd=0.006 tg128=8.459 tg128_sd=0.016
+  14B-Q4_K_M rep 3/20: pp512=41.415 pp512_sd=0.008 tg128=8.455 tg128_sd=0.014
+  14B-Q4_K_M rep 4/20: pp512=41.412 pp512_sd=0.004 tg128=8.443 tg128_sd=0.005
+  14B-Q4_K_M rep 5/20: pp512=41.414 pp512_sd=0.004 tg128=8.435 tg128_sd=0.002
+  14B-Q4_K_M rep 6/20: pp512=41.422 pp512_sd=0.004 tg128=8.597 tg128_sd=0.003
+  14B-Q4_K_M rep 7/20: pp512=41.403 pp512_sd=0.010 tg128=8.598 tg128_sd=0.001
+  14B-Q4_K_M rep 8/20: pp512=41.396 pp512_sd=0.001 tg128=8.569 tg128_sd=0.057
+  14B-Q4_K_M rep 9/20: pp512=41.341 pp512_sd=0.044 tg128=8.433 tg128_sd=0.001
+  14B-Q4_K_M rep 10/20: pp512=41.433 pp512_sd=0.005 tg128=8.442 tg128_sd=0.004
+  14B-Q4_K_M rep 11/20: pp512=41.403 pp512_sd=0.013 tg128=8.454 tg128_sd=0.012
+  14B-Q4_K_M rep 12/20: pp512=41.400 pp512_sd=0.008 tg128=8.452 tg128_sd=0.017
+  14B-Q4_K_M rep 13/20: pp512=41.408 pp512_sd=0.002 tg128=8.548 tg128_sd=0.070
+  14B-Q4_K_M rep 14/20: pp512=41.388 pp512_sd=0.021 tg128=8.597 tg128_sd=0.003
+  14B-Q4_K_M rep 15/20: pp512=41.414 pp512_sd=0.002 tg128=8.598 tg128_sd=0.001
+  14B-Q4_K_M rep 16/20: pp512=41.402 pp512_sd=0.005 tg128=8.599 tg128_sd=0.001
+  14B-Q4_K_M rep 17/20: pp512=41.413 pp512_sd=0.004 tg128=8.599 tg128_sd=0.001
+  14B-Q4_K_M rep 18/20: pp512=41.398 pp512_sd=0.015 tg128=8.600 tg128_sd=0.002
+  14B-Q4_K_M rep 19/20: pp512=41.379 pp512_sd=0.012 tg128=8.597 tg128_sd=0.003
+  14B-Q4_K_M rep 20/20: pp512=41.404 pp512_sd=0.002 tg128=8.600 tg128_sd=0.000
+
+raw csv -> /tmp/ab/calib-3cell.csv
+
+per cell, across invocations:
+  4B-Q6_K      pp512    mean  141.539  sigma 0.3096  CV  0.22%  within-run sd 0.2712  n=20
+  4B-Q6_K      tg128    mean   17.866  sigma 0.0529  CV  0.30%  within-run sd 0.0162  n=20
+                        ^ between-invocation spread is 3.3x the within-run spread
+  4B-Q4_K_M    pp512    mean  149.184  sigma 0.1060  CV  0.07%  within-run sd 0.1545  n=20
+  4B-Q4_K_M    tg128    mean   19.612  sigma 0.0151  CV  0.08%  within-run sd 0.0155  n=20
+  14B-Q4_K_M   pp512    mean   41.403  sigma 0.0187  CV  0.05%  within-run sd 0.0093  n=20
+  14B-Q4_K_M   tg128    mean    8.526  sigma 0.0749  CV  0.88%  within-run sd 0.0106  n=20
+                        ^ between-invocation spread is 7.1x the within-run spread
+
+noise floor for the gate (sigma in t/s, one number per cell/test):
+{
+  "4B-Q6_K": {
+    "pp512": 0.309609,
+    "tg128": 0.052946
+  },
+  "4B-Q4_K_M": {
+    "pp512": 0.106031,
+    "tg128": 0.015143
+  },
+  "14B-Q4_K_M": {
+    "pp512": 0.018723,
+    "tg128": 0.074916
+  }
+}

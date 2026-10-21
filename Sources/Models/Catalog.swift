@@ -112,15 +112,22 @@ enum Catalog {
 
     /// Spec for a local file: reuses catalog metadata when the filename matches.
     static func spec(forLocal model: LocalModel) -> ModelSpec {
-        let kv = ModelSpec.kvBytesPerToken(atPath: model.url.path)
-        if let match = models.first(where: { $0.fileName == model.name }) {
+        spec(forPath: model.url.path, fileBytes: model.sizeBytes, isMoE: model.isMoE)
+    }
+
+    /// Spec for a model file on disk, by path. Reuses catalog metadata when the
+    /// filename matches a known model, otherwise estimates from the file and its
+    /// GGUF header.
+    static func spec(forPath path: String, fileBytes: Int64, isMoE: Bool) -> ModelSpec {
+        let name = URL(fileURLWithPath: path).lastPathComponent
+        let kv = ModelSpec.kvBytesPerToken(atPath: path)
+        if let match = models.first(where: { $0.fileName == name }) {
             var spec = match.spec
             spec.kvBytesPerToken = kv
-            spec.apply(GGUFMetadataCache.weightSplit(at: model.url.path))
+            spec.apply(GGUFMetadataCache.weightSplit(at: path))
             return spec
         }
-        return ModelSpec.estimated(fileBytes: model.sizeBytes, isMoE: model.isMoE,
-                                   name: model.name, path: model.url.path)
+        return ModelSpec.estimated(fileBytes: fileBytes, isMoE: isMoE, name: name, path: path)
     }
 
     /// A recommended model tailored to a use case.

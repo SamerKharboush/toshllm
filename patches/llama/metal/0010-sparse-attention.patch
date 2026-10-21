@@ -255,7 +255,7 @@ index 44519f5aa..8bd07ad25 100644
 +    const bool amd_sparse  = amd_n_kv_max > 0 && ne01 == 1;
 +    const int amd_n_kv_pad = amd_sparse ? GGML_PAD(amd_n_kv_max, OP_FLASH_ATTN_EXT_VEC_NCPSG) : 0;
 +
-     if (TOSH_ENV("TOSH_FA_AMD") != NULL && fa_amd_pipeline[0] != '\0' &&
+     if (TOSH_ENV("TOSH_FA_AMD_DISABLE") == NULL && fa_amd_pipeline[0] != '\0' &&
          !props_dev->has_simdgroup_mm && fa_amd_width_ok &&
          !has_bias && !has_scap) {
  

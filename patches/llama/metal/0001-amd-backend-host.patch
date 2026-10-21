@@ -2691,7 +2691,7 @@ index 827d92622..0982546c9 100644
 +            const bool fa_amd_width_ok = dev->props.simd_width == 32
 +                ? has_simdgroup_reduction
 +                : wave64_decode;
-+            if (TOSH_ENV("TOSH_FA_AMD") != NULL &&
++            if (TOSH_ENV("TOSH_FA_AMD_DISABLE") == NULL &&
 +                !has_simdgroup_mm && fa_amd_width_ok &&
 +                float max_bias = 0.0f;
 +                float softcap  = 0.0f;
@@ -4193,7 +4193,7 @@ index dfe46bac6..bcfa97af5 100644
  
 +    // AMD discrete GPUs miscompile the templated vec kernel, so route attention (decode
 +    // and prefill) to the dedicated AMD kernel for the standard K/V pairs it covers.
-+    // Keeps quantized KV on the GPU instead of the CPU fallback. Gated by TOSH_FA_AMD.
++    // Keeps quantized KV on the GPU instead of the CPU fallback. On by default on wave64; disable with TOSH_FA_AMD_DISABLE=1.
 +    char fa_amd_pipeline[80] = {0};
 +    // dk 72 is instantiated for f16 K/V only (vision towers); see the .metal side.
 +        op->src[1]->type == GGML_TYPE_F16 && op->src[2]->type == GGML_TYPE_F16;
@@ -4210,7 +4210,7 @@ index dfe46bac6..bcfa97af5 100644
 +    const bool fa_amd_width_ok = props_dev->simd_width == 32
 +        ? props_dev->has_simdgroup_reduction
 +        : props_dev->wave64_decode;
-+    if (TOSH_ENV("TOSH_FA_AMD") != NULL && fa_amd_pipeline[0] != '\0' &&
++    if (TOSH_ENV("TOSH_FA_AMD_DISABLE") == NULL && fa_amd_pipeline[0] != '\0' &&
 +        !props_dev->has_simdgroup_mm && fa_amd_width_ok &&
 +        !has_bias && !has_scap) {
 +
@@ -4603,7 +4603,7 @@ index 1112ad885..e5f589668 100644
 +        !ggml_is_quantized(v->type) ||
 +        (v_alloc != nullptr && !ggml_backend_buft_is_host(ggml_backend_buffer_get_type(v_alloc->buffer)));
 +    const bool amd_prefill_decomposed =
-+        getenv("TOSH_FA_AMD") != nullptr &&
++        getenv("TOSH_FA_AMD_DISABLE") == nullptr &&
 +        decomposed_v_on_device &&
 +        getenv("TOSH_FA_AMD_PREFILL_DECOMPOSED_DISABLE") == nullptr &&
 +        getenv("TOSH_FA_AMD_HEAD64_PREFILL_DISABLE") == nullptr &&

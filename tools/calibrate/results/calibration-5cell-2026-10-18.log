@@ -1,0 +1,169 @@
+binary   : /Users/sam/firellama/vendor/llama.cpp/build-static/bin/llama-bench
+env      : {'GGML_METAL_DEVICES': '2', 'GGML_METAL_VRAM_RESERVE_MB': '1024', 'GGML_METAL_SIMDGROUP_REDUCTION_DISABLE': '1', 'TOSH_FA_AMD': '1'}
+warmup   : 3 discarded, then 20 measured
+cells    : 5
+settling : 600s idle before 0.6B-Q8_0
+cell 0.6B-Q8_0: load1 3.29  CPU_Scheduler_Limit 	= 100 CPU_Speed_Limit 	= 100
+  warmup 0.6B-Q8_0 1/3
+  warmup 0.6B-Q8_0 2/3
+  warmup 0.6B-Q8_0 3/3
+  0.6B-Q8_0 rep 1/20: split_mode=tensor pp512=830.448 pp512_sd=2.188 tg128=54.468 tg128_sd=0.050
+  0.6B-Q8_0 rep 2/20: split_mode=tensor pp512=830.012 pp512_sd=1.527 tg128=54.733 tg128_sd=0.142
+  0.6B-Q8_0 rep 3/20: split_mode=tensor pp512=832.094 pp512_sd=0.470 tg128=54.677 tg128_sd=0.556
+  0.6B-Q8_0 rep 4/20: split_mode=tensor pp512=823.706 pp512_sd=2.253 tg128=55.230 tg128_sd=0.208
+  0.6B-Q8_0 rep 5/20: split_mode=tensor pp512=827.837 pp512_sd=5.938 tg128=54.694 tg128_sd=0.225
+  0.6B-Q8_0 rep 6/20: split_mode=tensor pp512=831.029 pp512_sd=6.632 tg128=55.525 tg128_sd=0.951
+  0.6B-Q8_0 rep 7/20: split_mode=tensor pp512=831.043 pp512_sd=6.289 tg128=56.078 tg128_sd=0.201
+  0.6B-Q8_0 rep 8/20: split_mode=tensor pp512=832.878 pp512_sd=2.898 tg128=55.886 tg128_sd=0.239
+  0.6B-Q8_0 rep 9/20: split_mode=tensor pp512=831.842 pp512_sd=6.774 tg128=55.102 tg128_sd=0.798
+  0.6B-Q8_0 rep 10/20: split_mode=tensor pp512=830.064 pp512_sd=1.175 tg128=54.272 tg128_sd=0.201
+  0.6B-Q8_0 rep 11/20: split_mode=tensor pp512=825.620 pp512_sd=2.494 tg128=55.090 tg128_sd=0.643
+  0.6B-Q8_0 rep 12/20: split_mode=tensor pp512=825.473 pp512_sd=2.023 tg128=55.085 tg128_sd=0.115
+  0.6B-Q8_0 rep 13/20: split_mode=tensor pp512=829.790 pp512_sd=4.000 tg128=55.470 tg128_sd=0.774
+  0.6B-Q8_0 rep 14/20: split_mode=tensor pp512=824.326 pp512_sd=0.148 tg128=54.267 tg128_sd=0.516
+  0.6B-Q8_0 rep 15/20: split_mode=tensor pp512=824.509 pp512_sd=3.563 tg128=54.404 tg128_sd=0.691
+  0.6B-Q8_0 rep 16/20: split_mode=tensor pp512=827.701 pp512_sd=4.976 tg128=54.338 tg128_sd=0.607
+  0.6B-Q8_0 rep 17/20: split_mode=tensor pp512=826.834 pp512_sd=3.897 tg128=54.222 tg128_sd=0.402
+  0.6B-Q8_0 rep 18/20: split_mode=tensor pp512=828.691 pp512_sd=2.102 tg128=54.500 tg128_sd=0.235
+  0.6B-Q8_0 rep 19/20: split_mode=tensor pp512=826.759 pp512_sd=2.354 tg128=56.031 tg128_sd=0.102
+  0.6B-Q8_0 rep 20/20: split_mode=tensor pp512=833.015 pp512_sd=2.099 tg128=55.352 tg128_sd=1.148
+settling : 600s idle before 4B-Q4_K_M
+cell 4B-Q4_K_M: load1 3.42  CPU_Scheduler_Limit 	= 100 CPU_Speed_Limit 	= 100
+  warmup 4B-Q4_K_M 1/3
+  warmup 4B-Q4_K_M 2/3
+  warmup 4B-Q4_K_M 3/3
+  4B-Q4_K_M rep 1/20: split_mode=tensor pp512=149.048 pp512_sd=0.194 tg128=19.398 tg128_sd=0.106
+  4B-Q4_K_M rep 2/20: split_mode=tensor pp512=149.218 pp512_sd=0.280 tg128=19.518 tg128_sd=0.020
+  4B-Q4_K_M rep 3/20: split_mode=tensor pp512=149.145 pp512_sd=0.071 tg128=19.384 tg128_sd=0.191
+  4B-Q4_K_M rep 4/20: split_mode=tensor pp512=148.702 pp512_sd=0.259 tg128=19.229 tg128_sd=0.112
+  4B-Q4_K_M rep 5/20: split_mode=tensor pp512=148.446 pp512_sd=0.189 tg128=19.330 tg128_sd=0.018
+  4B-Q4_K_M rep 6/20: split_mode=tensor pp512=148.259 pp512_sd=0.119 tg128=19.332 tg128_sd=0.037
+  4B-Q4_K_M rep 7/20: split_mode=tensor pp512=148.542 pp512_sd=0.065 tg128=19.320 tg128_sd=0.013
+  4B-Q4_K_M rep 8/20: split_mode=tensor pp512=148.129 pp512_sd=0.181 tg128=19.328 tg128_sd=0.017
+  4B-Q4_K_M rep 9/20: split_mode=tensor pp512=148.449 pp512_sd=0.096 tg128=19.267 tg128_sd=0.047
+  4B-Q4_K_M rep 10/20: split_mode=tensor pp512=148.652 pp512_sd=0.085 tg128=19.282 tg128_sd=0.010
+  4B-Q4_K_M rep 11/20: split_mode=tensor pp512=148.611 pp512_sd=0.176 tg128=19.284 tg128_sd=0.062
+  4B-Q4_K_M rep 12/20: split_mode=tensor pp512=148.349 pp512_sd=0.171 tg128=19.307 tg128_sd=0.015
+  4B-Q4_K_M rep 13/20: split_mode=tensor pp512=148.434 pp512_sd=0.151 tg128=19.322 tg128_sd=0.009
+  4B-Q4_K_M rep 14/20: split_mode=tensor pp512=148.512 pp512_sd=0.193 tg128=19.315 tg128_sd=0.003
+  4B-Q4_K_M rep 15/20: split_mode=tensor pp512=148.218 pp512_sd=0.113 tg128=19.279 tg128_sd=0.059
+  4B-Q4_K_M rep 16/20: split_mode=tensor pp512=148.377 pp512_sd=0.074 tg128=19.392 tg128_sd=0.047
+  4B-Q4_K_M rep 17/20: split_mode=tensor pp512=148.668 pp512_sd=0.592 tg128=19.402 tg128_sd=0.116
+  4B-Q4_K_M rep 18/20: split_mode=tensor pp512=148.899 pp512_sd=0.155 tg128=19.499 tg128_sd=0.067
+  4B-Q4_K_M rep 19/20: split_mode=tensor pp512=149.229 pp512_sd=0.226 tg128=19.473 tg128_sd=0.002
+  4B-Q4_K_M rep 20/20: split_mode=tensor pp512=149.225 pp512_sd=0.148 tg128=19.471 tg128_sd=0.025
+settling : 600s idle before 4B-Q6_K
+cell 4B-Q6_K: load1 2.29  CPU_Scheduler_Limit 	= 100 CPU_Speed_Limit 	= 100
+  warmup 4B-Q6_K 1/3
+  warmup 4B-Q6_K 2/3
+  warmup 4B-Q6_K 3/3
+  4B-Q6_K rep 1/20: split_mode=tensor pp512=140.845 pp512_sd=0.117 tg128=17.668 tg128_sd=0.238
+  4B-Q6_K rep 2/20: split_mode=tensor pp512=141.542 pp512_sd=0.261 tg128=17.783 tg128_sd=0.014
+  4B-Q6_K rep 3/20: split_mode=tensor pp512=141.261 pp512_sd=0.577 tg128=17.759 tg128_sd=0.127
+  4B-Q6_K rep 4/20: split_mode=tensor pp512=141.402 pp512_sd=0.706 tg128=17.822 tg128_sd=0.004
+  4B-Q6_K rep 5/20: split_mode=tensor pp512=140.675 pp512_sd=0.247 tg128=17.736 tg128_sd=0.109
+  4B-Q6_K rep 6/20: split_mode=tensor pp512=141.284 pp512_sd=0.263 tg128=17.597 tg128_sd=0.120
+  4B-Q6_K rep 7/20: split_mode=tensor pp512=140.215 pp512_sd=0.071 tg128=17.566 tg128_sd=0.058
+  4B-Q6_K rep 8/20: split_mode=tensor pp512=140.814 pp512_sd=0.511 tg128=17.631 tg128_sd=0.048
+  4B-Q6_K rep 9/20: split_mode=tensor pp512=141.053 pp512_sd=0.339 tg128=17.741 tg128_sd=0.013
+  4B-Q6_K rep 10/20: split_mode=tensor pp512=141.043 pp512_sd=0.158 tg128=17.657 tg128_sd=0.131
+  4B-Q6_K rep 11/20: split_mode=tensor pp512=141.407 pp512_sd=0.050 tg128=17.712 tg128_sd=0.081
+  4B-Q6_K rep 12/20: split_mode=tensor pp512=141.390 pp512_sd=0.756 tg128=17.774 tg128_sd=0.085
+  4B-Q6_K rep 13/20: split_mode=tensor pp512=141.454 pp512_sd=0.141 tg128=17.858 tg128_sd=0.001
+  4B-Q6_K rep 14/20: split_mode=tensor pp512=141.771 pp512_sd=0.441 tg128=17.846 tg128_sd=0.034
+  4B-Q6_K rep 15/20: split_mode=tensor pp512=141.380 pp512_sd=0.162 tg128=17.846 tg128_sd=0.006
+  4B-Q6_K rep 16/20: split_mode=tensor pp512=141.680 pp512_sd=0.345 tg128=17.834 tg128_sd=0.008
+  4B-Q6_K rep 17/20: split_mode=tensor pp512=141.538 pp512_sd=0.183 tg128=17.648 tg128_sd=0.020
+  4B-Q6_K rep 18/20: split_mode=tensor pp512=141.328 pp512_sd=0.474 tg128=17.840 tg128_sd=0.025
+  4B-Q6_K rep 19/20: split_mode=tensor pp512=141.645 pp512_sd=0.153 tg128=17.609 tg128_sd=0.059
+  4B-Q6_K rep 20/20: split_mode=tensor pp512=141.760 pp512_sd=0.316 tg128=17.762 tg128_sd=0.055
+settling : 600s idle before 8B-Q4_K_M
+cell 8B-Q4_K_M: load1 2.23  CPU_Scheduler_Limit 	= 100 CPU_Speed_Limit 	= 100
+  warmup 8B-Q4_K_M 1/3
+  warmup 8B-Q4_K_M 2/3
+  warmup 8B-Q4_K_M 3/3
+  8B-Q4_K_M rep 1/20: split_mode=tensor pp512=73.980 pp512_sd=0.059 tg128=14.518 tg128_sd=0.002
+  8B-Q4_K_M rep 2/20: split_mode=tensor pp512=74.068 pp512_sd=0.119 tg128=14.489 tg128_sd=0.018
+  8B-Q4_K_M rep 3/20: split_mode=tensor pp512=74.002 pp512_sd=0.063 tg128=14.514 tg128_sd=0.005
+  8B-Q4_K_M rep 4/20: split_mode=tensor pp512=74.034 pp512_sd=0.017 tg128=14.533 tg128_sd=0.020
+  8B-Q4_K_M rep 5/20: split_mode=tensor pp512=74.097 pp512_sd=0.041 tg128=14.522 tg128_sd=0.034
+  8B-Q4_K_M rep 6/20: split_mode=tensor pp512=74.024 pp512_sd=0.010 tg128=14.506 tg128_sd=0.019
+  8B-Q4_K_M rep 7/20: split_mode=tensor pp512=74.052 pp512_sd=0.027 tg128=14.510 tg128_sd=0.020
+  8B-Q4_K_M rep 8/20: split_mode=tensor pp512=74.025 pp512_sd=0.029 tg128=14.509 tg128_sd=0.006
+  8B-Q4_K_M rep 9/20: split_mode=tensor pp512=74.071 pp512_sd=0.059 tg128=14.514 tg128_sd=0.019
+  8B-Q4_K_M rep 10/20: split_mode=tensor pp512=73.994 pp512_sd=0.041 tg128=14.564 tg128_sd=0.019
+  8B-Q4_K_M rep 11/20: split_mode=tensor pp512=74.078 pp512_sd=0.075 tg128=14.478 tg128_sd=0.090
+  8B-Q4_K_M rep 12/20: split_mode=tensor pp512=73.996 pp512_sd=0.009 tg128=14.511 tg128_sd=0.009
+  8B-Q4_K_M rep 13/20: split_mode=tensor pp512=74.114 pp512_sd=0.098 tg128=14.609 tg128_sd=0.010
+  8B-Q4_K_M rep 14/20: split_mode=tensor pp512=74.144 pp512_sd=0.024 tg128=14.571 tg128_sd=0.008
+  8B-Q4_K_M rep 15/20: split_mode=tensor pp512=74.134 pp512_sd=0.067 tg128=14.562 tg128_sd=0.014
+  8B-Q4_K_M rep 16/20: split_mode=tensor pp512=74.098 pp512_sd=0.060 tg128=14.552 tg128_sd=0.023
+  8B-Q4_K_M rep 17/20: split_mode=tensor pp512=74.132 pp512_sd=0.043 tg128=14.573 tg128_sd=0.017
+  8B-Q4_K_M rep 18/20: split_mode=tensor pp512=74.098 pp512_sd=0.013 tg128=14.585 tg128_sd=0.014
+  8B-Q4_K_M rep 19/20: split_mode=tensor pp512=74.094 pp512_sd=0.074 tg128=14.644 tg128_sd=0.140
+  8B-Q4_K_M rep 20/20: split_mode=tensor pp512=74.094 pp512_sd=0.050 tg128=14.568 tg128_sd=0.028
+settling : 600s idle before 14B-Q4_K_M
+cell 14B-Q4_K_M: load1 2.01  CPU_Scheduler_Limit 	= 100 CPU_Speed_Limit 	= 100
+  warmup 14B-Q4_K_M 1/3
+  warmup 14B-Q4_K_M 2/3
+  warmup 14B-Q4_K_M 3/3
+  14B-Q4_K_M rep 1/20: split_mode=tensor pp512=41.407 pp512_sd=0.018 tg128=8.480 tg128_sd=0.030
+  14B-Q4_K_M rep 2/20: split_mode=tensor pp512=41.435 pp512_sd=0.012 tg128=8.513 tg128_sd=0.068
+  14B-Q4_K_M rep 3/20: split_mode=tensor pp512=41.202 pp512_sd=0.046 tg128=8.465 tg128_sd=0.014
+  14B-Q4_K_M rep 4/20: split_mode=tensor pp512=41.427 pp512_sd=0.011 tg128=8.468 tg128_sd=0.006
+  14B-Q4_K_M rep 5/20: split_mode=tensor pp512=41.427 pp512_sd=0.016 tg128=8.463 tg128_sd=0.006
+  14B-Q4_K_M rep 6/20: split_mode=tensor pp512=41.436 pp512_sd=0.001 tg128=8.470 tg128_sd=0.012
+  14B-Q4_K_M rep 7/20: split_mode=tensor pp512=41.426 pp512_sd=0.003 tg128=8.562 tg128_sd=0.027
+  14B-Q4_K_M rep 8/20: split_mode=tensor pp512=41.432 pp512_sd=0.006 tg128=8.584 tg128_sd=0.004
+  14B-Q4_K_M rep 9/20: split_mode=tensor pp512=41.437 pp512_sd=0.004 tg128=8.567 tg128_sd=0.039
+  14B-Q4_K_M rep 10/20: split_mode=tensor pp512=41.406 pp512_sd=0.009 tg128=8.600 tg128_sd=0.001
+  14B-Q4_K_M rep 11/20: split_mode=tensor pp512=41.414 pp512_sd=0.012 tg128=8.595 tg128_sd=0.000
+  14B-Q4_K_M rep 12/20: split_mode=tensor pp512=41.412 pp512_sd=0.005 tg128=8.596 tg128_sd=0.004
+  14B-Q4_K_M rep 13/20: split_mode=tensor pp512=41.405 pp512_sd=0.001 tg128=8.596 tg128_sd=0.001
+  14B-Q4_K_M rep 14/20: split_mode=tensor pp512=41.424 pp512_sd=0.014 tg128=8.595 tg128_sd=0.002
+  14B-Q4_K_M rep 15/20: split_mode=tensor pp512=41.417 pp512_sd=0.013 tg128=8.596 tg128_sd=0.001
+  14B-Q4_K_M rep 16/20: split_mode=tensor pp512=41.400 pp512_sd=0.021 tg128=8.599 tg128_sd=0.002
+  14B-Q4_K_M rep 17/20: split_mode=tensor pp512=41.409 pp512_sd=0.013 tg128=8.600 tg128_sd=0.003
+  14B-Q4_K_M rep 18/20: split_mode=tensor pp512=41.408 pp512_sd=0.010 tg128=8.597 tg128_sd=0.002
+  14B-Q4_K_M rep 19/20: split_mode=tensor pp512=41.417 pp512_sd=0.000 tg128=8.596 tg128_sd=0.005
+  14B-Q4_K_M rep 20/20: split_mode=tensor pp512=41.398 pp512_sd=0.013 tg128=8.600 tg128_sd=0.002
+
+raw csv -> tools/calibrate/results/calibration-5cell-2026-10-18.csv
+
+per cell, across invocations:
+  0.6B-Q8_0    pp512    mean  828.684  sigma 2.9623  CV  0.36%  within-run sd 3.1901  n=20
+  0.6B-Q8_0    tg128    mean   54.971  sigma 0.6053  CV  1.10%  within-run sd 0.4402  n=20
+  4B-Q4_K_M    pp512    mean  148.656  sigma 0.3549  CV  0.24%  within-run sd 0.1767  n=20
+  4B-Q4_K_M    tg128    mean   19.357  sigma 0.0823  CV  0.43%  within-run sd 0.0487  n=20
+  4B-Q6_K      pp512    mean  141.274  sigma 0.3973  CV  0.28%  within-run sd 0.3135  n=20
+  4B-Q6_K      tg128    mean   17.734  sigma 0.0936  CV  0.53%  within-run sd 0.0618  n=20
+  8B-Q4_K_M    pp512    mean   74.066  sigma 0.0505  CV  0.07%  within-run sd 0.0489  n=20
+  8B-Q4_K_M    tg128    mean   14.542  sigma 0.0424  CV  0.29%  within-run sd 0.0258  n=20
+  14B-Q4_K_M   pp512    mean   41.407  sigma 0.0498  CV  0.12%  within-run sd 0.0115  n=20
+                        ^ between-invocation spread is 4.3x the within-run spread
+  14B-Q4_K_M   tg128    mean    8.557  sigma 0.0560  CV  0.65%  within-run sd 0.0116  n=20
+                        ^ between-invocation spread is 4.8x the within-run spread
+
+noise floor for the gate (sigma in t/s, one number per cell/test):
+{
+  "0.6B-Q8_0": {
+    "pp512": 2.962293,
+    "tg128": 0.605283
+  },
+  "4B-Q4_K_M": {
+    "pp512": 0.354924,
+    "tg128": 0.082327
+  },
+  "4B-Q6_K": {
+    "pp512": 0.397318,
+    "tg128": 0.093642
+  },
+  "8B-Q4_K_M": {
+    "pp512": 0.050515,
+    "tg128": 0.042443
+  },
+  "14B-Q4_K_M": {
+    "pp512": 0.049777,
+    "tg128": 0.055954
+  }
+}

@@ -1,7 +1,201 @@
 # Changelog
 
+
+## [0.87.27-beta.2] - 2026-10-21
+
+The beta before this one put a model that does not fit in VRAM on the card, where it is
+between 18x and 76x slower than the host on this machine, and on a dense model answers with
+zeros. The app now places the model where it belongs, and says so in the log.
+
+### Changed
+
+- **A model whose weights do not fit in the VRAM the run may use now runs on the host.**
+  The rule is the one the measurements give: the VRAM the run may use is the combined VRAM
+  of the cards it splits across and one card's VRAM otherwise, less a 1 GB reserve per card,
+  and the host has to have room for the weights, the KV cache and the compute buffers. On
+  the FirePro D700 the card keeps a fraction of the weights and pays for the whole model on
+  every token: the same 35B Q6_K decodes at 0.1450 tok/s on one card and 11.1015 tok/s with
+  everything on the host, and a 27B Q8_0 at 0.0883 against 1.5972. A model that fits stays
+  on the card: the 8B decodes at 8.2632 tok/s there. The rule is keyed on the cards this
+  fork measured, so a card it has not measured keeps the path it had.
+  The launch the app builds for the 35B is now `-ngl 0`, with no expert offload, no split
+  and no card in the environment; the estimate in the Models tab says "CPU only", and the
+  server log names the placement and the VRAM budget it was decided against.
+- **The 35B on the host is measured with the launch the app builds**: prompt eval
+  23.1305 tok/s, decode 10.1353 tok/s, the answer coherent. The 8B on the cards is
+  39.6722 tok/s of prompt eval and 9.0028 tok/s of decode.
+
+### Measured
+
+- **The card path for the 35B is unchanged on the engine this release ships.** The same
+  cell, the same flags and the same prompt give prompt eval 6.5625 tok/s (sd 0.0500) and
+  decode 0.1454 tok/s (sd 0.0013) against the 6.5073 and 0.1465 tok/s the row before
+  recorded; the two decodes are 0.8% apart, inside a standard deviation.
+- **The 35B's decode re-faults 0.293 MB/s from the disk on this engine**, 2.03 MB per
+  token, against an idle control of 24.0 pages/s on the same warm server. The row before
+  recorded 0.24 MB/s and 1.6 MB per token; both are the same quantity measured twice, and
+  neither is averaged with the other.
+
+## [0.87.27-beta.1] - 2026-10-20
+
+Upstream 0.87.27 merged. The 0.87.26-beta.1 fork release stays as its own release, and the
+0.87.24-beta.1 fixes this fork carries are unchanged.
+
+### Changed
+
+- **`TOSH_FA_AMD` is gone; FA AMD is on by default on wave64.** The old flag was
+  presence-tested, so `TOSH_FA_AMD=0` turned Flash Attention on and leaving it unset
+  turned it off - the opposite of what the name implies. Flash Attention on the AMD
+  path is now enabled whenever the kernels and pipeline are available, and the single
+  escape hatch is `TOSH_FA_AMD_DISABLE=1` for debugging. Nothing else about the flag
+  changes: the sub-flags (`TOSH_FA_AMD_NSG_64`, `_NSG_128`, `_NSG_WIDE`, `_LDS32`,
+  `_PREFILL_DECOMPOSED_DISABLE`, `_HEAD64_PREFILL_DISABLE`) keep their meanings.
+- **llama.cpp stays pinned at `d8123504938`** (v0.6.0). The upstream tag moved; the engine
+  pin did not.
+- **This fork's patches keep their numbers**: 0035 (timestep GCN parity), 0036 (xdev stall
+  and `NSMakeRange`), 0037 (the Metal memset range test), 0038 (tensor split falls back to
+  layers), 0039 (a refused attention kernel falls back loudly). All 50 patches verified to
+  apply to a pristine worktree of `d8123504938`: the 40 this fork carried before the
+  upstream merge, plus the 10 the 0.87.27 merge brought (the MTP head scored over the
+  whole vocabulary, the Q2_K mat-vec that reads only the two shorts it uses, the constant
+  time key comparison, the MCP timeout, the GLM-4 tool calls, the MCP server that is
+  replaced when it stops answering, the web chat that shows the agent draft, and the
+  checkpoint that keeps the prefix it already holds).
+
+### Fixed
+
+- **A refused Flash Attention kernel now falls back loudly instead of vanishing.** The
+  driver refuses the 64-lane attention kernel on a GCN 1.0 card because it asks for about
+  33 KB of threadgroup memory and the card has 32 KB, and it refuses the wide prefill
+  kernel for the same reason. The host already recovered into the half-simdgroup twin and
+  into the tile kernel, but the recovery was invisible: the refusal was printed as an error
+  by the shared compile helper, and the prefill path recompiled the refused kernel once per
+  layer per prompt, so one 35B run printed 52 of them. The compile helper grew a quiet
+  variant, the attention path names the kernel it falls back to once per kernel, and a
+  kernel with no fallback is an error that says so. The 35B's attention log went from 52
+  refusal errors to 2 named warnings, and the decode is unchanged (6.5073 and 0.1465 tok/s
+  before and after, 0.3 and 1.1 standard deviations apart).
+- **The engine gate counts drops, not refusals.** It counted `failed to create pipeline
+  state`, which is the refusal the code recovers from, so every good build failed the gate
+  written to catch a missing kernel. It counts the drop now, and the preflight proves it
+  can fail: a forced drop reads 1.
+
+### Measured
+
+- **A 35B Q6_K belongs on the host, not on the card.** The same model, the same prompt and
+  the same eight threads give 0.1450 tok/s on one D700, 0.4387 tok/s with a tensor split
+  across both, and 11.1015 tok/s with everything on the host. The 35B is a 256-expert MoE
+  that uses 8 experts per token, and the card path pays for more of the model than the
+  token uses. The card is 41% busy and the host 17.9% busy in the slow path, so this is
+  not a bandwidth limit.
+- **Enrolling the second D700 is worth 3.03x on that model**, and the card is not enrolled
+  by default: `GGML_METAL_DEVICES=2` with `GGML_METAL_DEVICE_LIST=0,1` registers it.
+- **`--n-cpu-moe` and `-cmoe` do not compute the model.** They are 34x to 71x faster
+  because the answer starts right and then collapses into one token repeated to the end.
+  The engine does not refuse the combination yet, and it should.
+- **This build answers the shipped build's prompts the same way**: 6 of 6 prompts, 64
+  tokens each, byte for byte, and 7.7% faster on the 8B's decode. The shipped build
+  aborts in a tensor split, where this build runs the cell.
+- **Speculative decoding fires and loses**: 138 tokens drafted, 45 accepted (32.6%), and
+  2.6250 tok/s against 8.3239 tok/s without a draft. The draft on the second card is 4.3%
+  better than the draft on the target's card, and neither is worth having.
+- **A model that does not fit in VRAM belongs on the host.** A dense 27B Q8_0 (28.4 GB)
+  decodes at 1.5972 tok/s on the host with a coherent answer, and at 0.0883 tok/s on one
+  D700 with an answer that degenerates into zeros: the card holds 4 GB of the model, the
+  host re-faults 128 MB from the disk over the decode, and the card is 26% busy the whole
+  time. Splitting it across the two cards does not run at all, the GPU times out during
+  the load. The 35B row above is the same rule with a model that partly fits.
+- **The shipped 0.87.26 build answers that model with zeros** on the host, and aborts in
+  a tensor split on the card, where this build runs the cell. This build answers it.
+- **The wide prefill kernel that fits 32 KB of threadgroup memory is not faster than the
+  tile kernel it replaces**, at head 128 (39.6 against 40.5 tok/s) and at head 256 (6.68
+  against 6.66 tok/s on the 35B, with the same decode and the same text), so it is not
+  carried: a new kernel in the release path that buys nothing is a risk and not a
+  feature. The host can already ask for it by name, and the 256-head instantiation that
+  fits was written and measured for this question.
+- **This tag is not signed.** The only SSH key on the build machine is passphrase-protected
+  and the agent was empty, and gpg is not installed on it, so the tag could not be signed
+  without a person at the keyboard. It is annotated, like `v0.87.24-beta.1` and every
+  earlier release tag in this fork, and the gap is recorded here rather than papered over.
+  The digest of the DMG is published with the release, and `tools/ab.sh assert_artifact`
+  checks that the engine in the bundle is the engine that was measured.
+
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
+
+## [0.87.27] - 2026-10-19
+
+### Added
+
+- **MCP: each server is told how long the engine waits for a call.** It gets `TOSH_MCP_TIMEOUT_MS` in its environment, so an agent can end its turn and answer before the engine gives up on it.
+- **Settings: with two or more concurrent requests, each one can keep its own share of the context.** "Separate context per request" generates 7 to 11% faster with several requests at once on a Radeon RX 6700 XT, but no conversation can grow past its share. It is off by default.
+
+### Improved
+
+- **LLMs: Qwen 3.5 to 3.8 models start a follow-up answer sooner.** On a Radeon RX 6700 XT the prompt of a short turn takes half as long (Qwen3.8-9B 500 to 250 ms, Qwen3.5-4B 430 to 180 ms), and an agent's turn about 14% less.
+- **LLMs: with two or more requests at once, a long prompt no longer stops the others for seconds.** A reply in progress pauses under a second instead of up to three, and first words come 15 to 35% sooner; a single request runs as before.
+- **LLMs: requests that start alike, such as an agent's passes with their instructions and tools, reuse that start from one another while they run.** With four agent turns at once on Qwen3.8-9B, 25% more turns per minute and the slowest one 45% shorter.
+- **Models: a vision projector beside a model can be picked for it when it matches the model's dimension, even from another family.** One projector serves several models without a copy for each, and a catalog model can still download its own.
+
+### Fixed
+
+- **LLMs: GLM-4-0414 models call tools instead of writing the call as text.** The name and arguments of a tool came out in the answer, sometimes with a result the model made up; the call now runs and the answer uses what it returned. Reported by [andruwa13](https://github.com/andruwa13) in [#129](https://github.com/engeldlgado/toshllm/issues/129).
+- **LLMs: Qwen 3.5 to 3.8 models split across GPUs by tensor start again with MTP.** They stopped at startup since 0.87.13. Reported by [Basten7](https://github.com/Basten7) in [#130](https://github.com/engeldlgado/toshllm/issues/130).
+- **LLMs on Radeon RX 400/500, Vega, Radeon VII and Radeon Pro Vega/WX: Q2_K models no longer write past an array in the matrix-vector kernel.** Reported by [SergeySlice](https://github.com/SergeySlice) in [#131](https://github.com/engeldlgado/toshllm/issues/131).
+- **Engine and math: the agent answers on a server that listens on an IPv6 address.** Every turn failed on an address such as `::1`.
+- **Engine: API keys and the agent's key are compared in constant time.** How long a refusal takes no longer depends on how much of a guessed key is right.
+- **MCP: calls waiting for a server that is slow to start can be cancelled, and a start that fails is not retried by each of them.** Every queued call used to wait the full timeout again; now they fail together, and the start is tried again a few seconds later.
+- **MCP: a server that stops answering is replaced.** After two calls in a row time out and it misses a ping, new calls go to a fresh process while the old one finishes the calls it had; one that hangs again waits 10 s, then 20 and so on up to 5 minutes before it starts again.
+- **Math: an API client that only reads the text no longer gets words the agent took back.** Text of a pass that may still end in a tool call goes out as a draft, which the app and the web chat show as before until the answer replaces it; cancelling a turn also stops every request the agent has in flight.
+
+## [0.87.26] - 2026-10-17
+
+### Added
+
+- **Russian interface.** Contributed by [SergeySlice](https://github.com/SergeySlice) in [#127](https://github.com/engeldlgado/toshllm/issues/127).
+- **Chat: a figure an agent places in a coordinate system, such as a State Plane zone, exports at those coordinates.** Its DXF drawing and its CSV of corners carry the system's X and Y, so they open in place in CAD or GIS.
+- **Chat: a figure an agent sends exports as a shapefile, in a ZIP.** It is a polygon when the figure should close and a line otherwise, with its title and notice as attributes and, when the agent gives its coordinate system, a .prj, in the app and the web chat.
+- **Chat: a figure an agent sends can carry a notice that each of its exports repeats.** It goes under the drawing in the PNG, as text on a layer of its own in the DXF and as a column in the CSV, in the app and the web chat.
+- **Engine: `--tiles-path` serves a folder of map files at `/tiles/`, in byte ranges.** A map reads a PMTiles file of many gigabytes a piece at a time instead of loading it whole.
+- **Engine: a server listening beyond this computer without an API key says so once at startup.** It names the addresses others can reach and the MCP servers they can use; nothing is blocked and no key is made.
+- **Math: the runtime lists each helper module with its SHA-256 in `HELPERS.sha256`.** In the app it sits in `Contents/Resources/tosh-sympy`, so anyone can check which relay and math helpers an install runs.
+- **Settings: a folder of offline maps and a base map style, with the map options.** The folder's PMTiles regions draw the background of maps in the app and the web chat without internet, with place names when their fonts sit in an assets subfolder, and the app hands the folder to the server on its own. A style of `none` draws a plain background without connecting.
+- **Engine and chat: an extension's agent can take the chat's own tools with every turn.** With `--mcp-agent-client-tools`, a request that brings tools reaches the agent, which offers them to the model beside its own and hands back the calls to them, streamed like any tool call. The app sends its tools, MCP servers included, to an agent whose extension asks for them, runs the calls it gets back and sends the next round to the agent again.
+- **Chat: the tools popover can uncheck every tool at once.** With many MCP servers on, one click starts from none so you pick only the few you need; the popover also shows how many are on. Requested in [#126](https://github.com/engeldlgado/toshllm/issues/126).
+
+### Improved
+
+- **Web chat: maps draw with MapLibre, on OpenFreeMap online and on map files the server holds without internet.** OpenFreeMap takes the place of the OpenStreetMap tiles, whose policy is for light use; a server can name its own style instead, or PMTiles regions with their fonts under `--tiles-path`, and with neither reachable the layers still show on a plain ground. A server can also name an index of its regions, read each time a map opens, so regions it adds while running show without a restart.
+- **Chat: maps in the app draw with MapLibre too, and only road routes stay on Apple Maps.** Apple's terms keep its route data on its own map; every other map uses OpenFreeMap online, a style of your own or the offline regions, and a click on a feature still shows its attributes.
+- **Chat: a Markdown table gives each column the width of its text, wrapping past a limit, and scrolls sideways when it is wider than the answer.** Long words that cannot wrap, such as slugs, no longer squeeze the other columns, and the table has no widths left to work out as the window changes.
+
+### Fixed
+
+- **MCP: a remote server can no longer send your headers or requests to another address (security fix).** The app and the engine's relay refuse an endpoint or a redirect on another scheme, host or port, which up to 0.87.25 could receive them; update earlier installs, and check that a `remote.py` you run from a path of your own matches `HELPERS.sha256`.
+- **MCP: a local server that stops answering no longer holds a request past its timeout.** Cancelling returns at once too, later requests keep working, idle servers no longer stall the app, and one that closes its input no longer ends it.
+- **MCP: servers on the older HTTP+SSE transport connect from the app.** Connecting used to wait without end.
+- **Engine: an MCP tool call through `/tools` stops when its client goes away.** The server is told within half a second and the next call to it no longer waits out the abandoned one's timeout, so cancelling an agent's turn also stops its tool call.
+- **Math: after a calculation the answer is written in the language of the question, and an integral or a root the exact tools can give is computed exactly.** A note added after each tool call made the model answer in English, and the numerical tool came first for definite integrals.
+- **Engine: with the server open to the local network and no API key, other computers no longer get the built-in shell and file tools.** They still chat and use the agent and the tools of extensions; this computer, or a request with the API key, keeps every tool.
+- **Settings: the VRAM reserve reaches the engine.** The app passed it in a variable the engine never read, so only router mode and DFlash kept it; Dynamic MoE's memory plan now leaves what you set. Automatic, the new default, keeps the engine's own 8% of the card. Reported in [#124](https://github.com/engeldlgado/toshllm/issues/124).
+- **Web chat: an agent's answer survives a phone locking or switching apps.** The agent kept going only while the browser stayed connected, so a long turn such as reading a scanned deed failed when the page went to the background; it now runs to its end and the page picks the answer up when it comes back.
+
+## [0.87.25] - 2026-10-15
+
+### Added
+
+- **Chat: an agent can draw figures that no map places under its answer, such as each tract of a deed.** They show small, several to a row, and each one, like a map, can be enlarged; their corners are numbered from the start and, when a figure should close and does not, what it lacks shows in red; each exports as a PNG image, a DXF drawing for CAD and a CSV of its corners.
+- **Web chat: the engine's agent answers from the browser as it does in the app.** The web chat no longer sends tools of its own unless you add them, so requests reach the agent; its steps, figures and maps show under the answer with the same exports. A new browser starts with the app's image size and PDF handling, and a PDF's pages are drawn at that size, so a scanned deed reads as in the app.
+
+### Improved
+
+- **Chat: a map exports one GeoJSON file per layer and kind of geometry.** ArcGIS Pro's JSON To Features tool reads one kind per run, so each file now goes in at once.
+
+### Fixed
+
+- **Chat: a long prompt on a slower GPU is no longer stopped as if the engine had hung.** Each batch of prompt the engine reported counted as the answer starting, which left 30 seconds for the next one, and a Radeon Pro 580X takes longer with a large context. The engine is now stopped only when neither prompt nor answer comes for three minutes, and the message names MoE models only when one is loaded. Reported in [#123](https://github.com/engeldlgado/toshllm/issues/123).
+- **Chat: the context meter counts the definitions of the active tools before the first reply.** With several MCP servers on they can take tens of thousands of tokens, and the meter showed 0 until an answer came back; its tooltip now says how much they take. Reported in [#123](https://github.com/engeldlgado/toshllm/issues/123).
+- **Chat: a photo or recording reaches the model when the math tools run the turn.** The turn went to the math agent with the text alone, so the answer ignored the attachment and a message with only a photo failed.
 
 ## [0.87.24-beta.1] - 2026-10-15
 
