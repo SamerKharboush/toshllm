@@ -59,6 +59,20 @@ Upstream 0.87.27 merged. The 0.87.26-beta.1 fork release stays as its own releas
 - **Speculative decoding fires and loses**: 138 tokens drafted, 45 accepted (32.6%), and
   2.6250 tok/s against 8.3239 tok/s without a draft. The draft on the second card is 4.3%
   better than the draft on the target's card, and neither is worth having.
+- **A model that does not fit in VRAM belongs on the host.** A dense 27B Q8_0 (28.4 GB)
+  decodes at 1.5972 tok/s on the host with a coherent answer, and at 0.0883 tok/s on one
+  D700 with an answer that degenerates into zeros: the card holds 4 GB of the model, the
+  host re-faults 128 MB from the disk over the decode, and the card is 26% busy the whole
+  time. Splitting it across the two cards does not run at all, the GPU times out during
+  the load. The 35B row above is the same rule with a model that partly fits.
+- **The shipped 0.87.26 build answers that model with zeros** on the host, and aborts in
+  a tensor split on the card, where this build runs the cell. This build answers it.
+- **The wide prefill kernel that fits 32 KB of threadgroup memory is not faster than the
+  tile kernel it replaces**, at head 128 (39.6 against 40.5 tok/s) and at head 256 (6.68
+  against 6.66 tok/s on the 35B, with the same decode and the same text), so it is not
+  carried: a new kernel in the release path that buys nothing is a risk and not a
+  feature. The host can already ask for it by name, and the 256-head instantiation that
+  fits was written and measured for this question.
 
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).

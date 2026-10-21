@@ -242,7 +242,7 @@ machine was sized as if it were single-card. That is fixed too.
 
 ### Measured on this hardware
 
-Every row names the evidence it comes from. The rows marked `R1` to `R18` are in
+Every row names the evidence it comes from. The rows marked `R1` to `R23` are in
 `.scratch/firellama-maxperf/evidence/rows-2026-10-20.csv`.
 
 | | | |
@@ -251,8 +251,13 @@ Every row names the evidence it comes from. The rows marked `R1` to `R18` are in
 | 35B Q6_K, both D700s, a tensor split | R3 | generate 0.4387 tok/s, 3.03x the one-device cell |
 | 35B Q6_K, everything on the host | R2 | prompt 23.4130 tok/s, generate 11.1015 tok/s |
 | 35B decode, re-faults from the disk | R4 | 52.4 MB over a 219 s decode, 0.24 MB/s, 1.6 MB per token |
+| 27B Q8_0 (28.4 GB), everything on the host | R19 | prompt 4.9964 tok/s, generate 1.5972 tok/s, the answer is coherent |
+| 27B Q8_0, one D700 | R20 | generate 0.0883 tok/s, 18x slower, and the answer degenerates into zeros |
+| 27B Q8_0, split across the two cards | R21 | the GPU times out during the load; a layer split gives an internal error |
+| 27B Q8_0, the shipped build on the host | R22 | every token is zero; this build answers it |
 | 8B Q4_K_M, the AMD Flash Attention path off | R5 | 7.6384 tok/s, 8.18% below, 15 sigma |
 | 35B, the attention log | R7 | 52 refusal errors before, 2 named warnings after |
+| the prefill variant that fits 32 KB | R23 | 8B 39.6 against 40.5 tok/s, 35B 6.68 against 6.66: inside the noise, not carried |
 | 8B Q4_K_M, this build against the shipped build | R15 | 6 of 6 prompts identical, 64 tokens each |
 | 8B Q4_K_M, a tensor split on the card | R16 | the shipped build aborts; this build runs it at 8.39 tok/s |
 | 8B Q4_K_M, the draft on the second card | R13 | 2.6250 tok/s, 138 drafted and 45 accepted, 3.17x slower than not drafting |
@@ -284,6 +289,24 @@ backend then calls the devices `MTL0` and `MTL1`.
 **`--n-cpu-moe` and `-cmoe` do not compute the model** (R12). They are 34x to 71x faster
 than the card path because the output collapses into one token repeated to the end of the
 answer after a correct first paragraph. The host-only row above is the placement to use.
+
+### A model that does not fit in VRAM belongs on the host too
+
+A dense 27B Q8_0 (28.4 GB) makes the point sharper than the 35B does, because the card
+cannot hold it at all. On the host it decodes at **1.5972 tok/s** with a coherent answer
+(R19). On one D700 it decodes at **0.0883 tok/s**, 18x slower, and the answer degenerates
+into zeros after the first sentence (R20): the card holds 4 GB of a 28.4 GB model, the
+host re-faults 128 MB from the disk over the decode, and the card is 26% busy the whole
+time. Splitting it across the two cards does not run either: the GPU times out during the
+load, and a layer split gives an internal error (R21).
+
+So the rule on this machine is not "big models on the GPU" or "big models on the CPU". It
+is: **a model that does not fit in VRAM is not half on the card, it is a model whose every
+token crosses the bus, and on this card the answer that comes back is zeros.** The host
+has 64 GB and the page cache holds the weights; the cards have 12 GB between them.
+
+The shipped 0.87.26 build answers the same model with zeros on the host (R22), and cannot
+run it on the card at all. This build answers it.
 
 ### Retracted claims
 
