@@ -116,7 +116,8 @@ The 50-patch series is what the release ships, and the 35B's prompt eval in the 
 - Engine: `vendor/llama.cpp/build-static/bin/llama-server`, built by
   `scripts/build-engines.sh` at the pin `d81235049384534c167caea52b85a694f6103d14` with the
   fork's patch series. The 8B cells ran on the 40-patch engine, the 35B cells on the
-  41-patch engine that carried the candidate patch, which the release does not. Apple clang 17, 0 AVX2/FMA mnemonics.
+  41-patch engine that carried the candidate patch, which the release does not. Both of
+  those engines predate the 0.87.27 merge, and the branch carries 50 patches now. Apple clang 17, 0 AVX2/FMA mnemonics.
 - Models: Qwen3-8B-Q4_K_M (head 128) and Ornith-1.0-35B Q6_K (head 256).
 - Flags: `-ngl 99 -sm tensor -c 4096 -t 8`, temperature 0, seed 1234 for the text check.
   The prompt is "Explain what a binary search tree is." repeated 24 times (about 190 tokens)

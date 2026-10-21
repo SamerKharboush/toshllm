@@ -7,7 +7,7 @@ engine, one device, decode 0.1465 tok/s. Every cell below is a delta against it.
 
 | | |
 |---|---|
-| engine | this branch's llama-server, upstream pin `d81235049` + the 40-patch series, sha256 `6c67657f2f5469bbe5262768d07d1df34553e7f851ba5db8c6157ca8307f8d61` |
+| engine | this branch's llama-server, upstream pin `d81235049` + the 40-patch series, sha256 `6c67657f2f5469bbe5262768d07d1df34553e7f851ba5db8c6157ca8307f8d61`. This is the engine built before the 0.87.27 merge; the branch carries 50 patches now, and the one-device cell was measured again on the 50-patch engine (`the-35b-baseline-is-the-spine-2026-10-20.md`, R26) |
 | model | `ornith-1.0-35b-Q6_K.gguf`, 27 GB, `qwen35moe`, 40 blocks, 256 experts, 8 used per token |
 | machine | Intel Xeon E5-2697 v2, 12 physical cores, 64 GB RAM, two AMD FirePro D700 (6 GB each) |
 | flags | `-ngl 99 -c 4096 -t 8`, `-sm tensor` where the cell says so, temperature 0 |

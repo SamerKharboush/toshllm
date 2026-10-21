@@ -13,7 +13,7 @@ to be signed so that the artifact and the evidence can be tied together later.
 ## Change
 
 - Weekly upstream tag check; merge the newest tag with two parents.
-- The 40-patch series applies to the pinned commit (`scripts/check-patch-series.sh` exits 0).
+- The 50-patch series applies to the pinned commit (`scripts/check-patch-series.sh` exits 0: 50 of 50).
 - `assert_artifact()` passes for the engine and for the app bundle.
 - `make dmg`, sha256 of the image, a GPG-signed tag, the evidence attached.
 - The README is written last, one sentence per row of the CSV, with the retractions listed.

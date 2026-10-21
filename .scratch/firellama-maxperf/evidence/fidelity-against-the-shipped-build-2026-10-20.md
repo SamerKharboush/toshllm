@@ -4,7 +4,7 @@
 
 | | |
 |---|---|
-| this build | `vendor/llama.cpp/build-static/bin/llama-server`, upstream pin `d81235049` + the 40-patch series, sha256 `6c67657f2f5469bbe5262768d07d1df34553e7f851ba5db8c6157ca8307f8d61`, AppleClang 17.0.0 |
+| this build | `vendor/llama.cpp/build-static/bin/llama-server`, upstream pin `d81235049` + the 40-patch series, sha256 `6c67657f2f5469bbe5262768d07d1df34553e7f851ba5db8c6157ca8307f8d61`, AppleClang 17.0.0. This is the engine built before the 0.87.27 merge; the branch carries 50 patches now, and the cells that the release depends on were measured again on the 50-patch engine (`the-35b-baseline-is-the-spine-2026-10-20.md`, R26) |
 | the shipped build | `/Applications/ToshLLM.app/Contents/Resources/bin/llama-server`, the app in Applications (ToshLLM 0.87.26), sha256 `c232e4763a6a462e03131457e92d1cb51a3b2be8383216272f8a0dcdf8af93e1`, same upstream pin, AppleClang 21.0.0 |
 
 The shipped build is a fork build: it has the wave64 kernels (45 matching strings) and the
