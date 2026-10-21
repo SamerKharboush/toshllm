@@ -1,6 +1,6 @@
 # 62: speculative decoding with the draft on the second card
 
-Status: ready-for-agent
+Status: resolved
 Type: task
 Spec: ../spec.md (Revision 8)
 
@@ -26,3 +26,28 @@ the ratio.
 - Either the ratio is reproduced on two cards, or the ticket closes with "gated on
   dual-device; measured 3.5x loss on one device" and the two-card attempt.
 - The draft's own memory and offload settings are in the method line.
+
+## Answer
+
+**The draft fires on the second card and loses.** The evidence is in
+`../evidence/speculative-decoding-on-the-second-card-2026-10-20.md`.
+
+| placement | decode tok/s | drafted | accepted |
+|---|---|---|---|
+| the draft on the second card | 2.6250 | 138 | 45 (32.6%) |
+| the draft on the target's card | 2.5168 | | |
+| no draft at all | 8.3239 | 0 | 0 |
+
+The draft on the second card is 4.3% better than the draft on the target's card, and both
+are 3.17x worse than not drafting. The acceptance rate is 32.6%, so the draft is not
+free, and the second card cannot make it pay: the target is the bottleneck, not the
+draft.
+
+The 35B could not be speculated at all on this machine: the engine logs "the target and
+draft vocabs are not compatible" and "failed to initialize speculative decoding context",
+and the server continues without a draft. The ticket's fallback clause applies: the
+dual-device attempt was made and measured, and the loss is on one device as well as on
+two.
+
+`--spec-draft-device` takes device names (`MTL0` / `MTL1`), not indices: `--spec-draft-device 1`
+is rejected with "invalid device: 1".
