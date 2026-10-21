@@ -809,4 +809,14 @@ spine row is a row about the artifact and not only about the branch: prompt eval
 6.5625 tok/s and decode 0.1454 tok/s (R26), against the 6.5073 and 0.1465 the earlier
 engine gave, and a page-in pair with a clean control (R27).
 
-The 0.87.27-beta.2 release carries the rule and that engine.
+The 0.87.27-beta.2 release carries the rule and that engine. It is published at
+<https://github.com/SamerKharboush/toshllm/releases/tag/v0.87.27-beta.2> as a prerelease
+with the DMG (`sha256 fd8c28df0d3260746c734279379608757b68b5657494ec67b696f2cccb454c8c`),
+the checksums and the notes. `assert_artifact` reads the pin `d81235049` from the engine
+and `0.87.27-beta.2` from the bundle, and the preflight gate passes on the shipped engine
+with the forced-drop control reading 1.
+
+**The tag is not signed, again.** gpg is not installed on this machine and the only SSH
+key is passphrase-protected with an empty agent, so `git tag -s` cannot run unattended.
+The tag is annotated, like `v0.87.27-beta.1` and every earlier release tag in this fork,
+and the gap is written in the CHANGELOG, the release notes, ticket 69 and here.
