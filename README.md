@@ -242,15 +242,19 @@ machine was sized as if it were single-card. That is fixed too.
 
 ### Measured on this hardware
 
-Every row names the evidence it comes from. The rows marked `R1` to `R23` are in
-`.scratch/firellama-maxperf/evidence/rows-2026-10-20.csv`.
+Every row names the evidence it comes from. The rows marked `R1` to `R27` are in
+`.scratch/firellama-maxperf/evidence/rows-2026-10-21.csv`.
 
 | | | |
 |---|---|---|
 | 35B Q6_K, one D700 (the headless card), the card path | R1 | prompt 6.5073 tok/s, generate 0.1465 tok/s, n=5 |
 | 35B Q6_K, both D700s, a tensor split | R3 | generate 0.4387 tok/s, 3.03x the one-device cell |
 | 35B Q6_K, everything on the host | R2 | prompt 23.4130 tok/s, generate 11.1015 tok/s |
+| 35B Q6_K, the launch the app builds, on the host | R24 | prompt 23.1305 tok/s, generate 10.1353 tok/s, the answer is coherent |
+| 8B Q4_K_M, the launch the app builds, on the cards | R25 | prompt 39.6722 tok/s, generate 9.0028 tok/s |
 | 35B decode, re-faults from the disk | R4 | 52.4 MB over a 219 s decode, 0.24 MB/s, 1.6 MB per token |
+| 35B Q6_K, the card path on the shipped engine | R26 | prompt 6.5625 tok/s, generate 0.1454 tok/s, n=5 |
+| 35B decode re-faults, on the shipped engine | R27 | 0.293 MB/s, 2.03 MB per token, against an idle control of 24.0 pages/s |
 | 27B Q8_0 (28.4 GB), everything on the host | R19 | prompt 4.9964 tok/s, generate 1.5972 tok/s, the answer is coherent |
 | 27B Q8_0, one D700 | R20 | generate 0.0883 tok/s, 18x slower, and the answer degenerates into zeros |
 | 27B Q8_0, split across the two cards | R21 | the GPU times out during the load; a layer split gives an internal error |
@@ -288,7 +292,9 @@ backend then calls the devices `MTL0` and `MTL1`.
 
 **`--n-cpu-moe` and `-cmoe` do not compute the model** (R12). They are 34x to 71x faster
 than the card path because the output collapses into one token repeated to the end of the
-answer after a correct first paragraph. The host-only row above is the placement to use.
+answer after a correct first paragraph. The host-only row above is the placement to use,
+and it is the placement the app now chooses on its own: see "Where the app puts a model"
+below.
 
 ### A model that does not fit in VRAM belongs on the host too
 
@@ -307,6 +313,29 @@ has 64 GB and the page cache holds the weights; the cards have 12 GB between the
 
 The shipped 0.87.26 build answers the same model with zeros on the host (R22), and cannot
 run it on the card at all. This build answers it.
+
+### Where the app puts a model
+
+The app resolves the placement before every launch, and the rule is the one the rows give:
+**a model whose weights do not fit in the VRAM the run may use runs on the host.** The VRAM
+the run may use is the combined VRAM of the cards the run splits across and one card's VRAM
+otherwise, less a 1 GB reserve per card, and the host has to have room for the weights, the
+KV cache and the compute buffers, or the host is not a fallback either.
+
+| model | weights | the launch the app builds |
+|---|---|---|
+| 35B Q6_K | 26.56 GiB | `-ngl 0`, no expert offload, no split, no card in the environment (R24) |
+| 27B Q8_0 | 27.74 GiB | the same |
+| 14B Q4_K_M | 8.38 GiB | `-ngl 99 --split-mode layer` across the two D700s |
+| 8B Q4_K_M | 4.68 GiB | `-ngl 99 --split-mode layer` across the two D700s (R25) |
+
+The 35B row is the launch the app builds, run as it is: **10.1353 tok/s** with a coherent
+answer (R24), against 0.1450 tok/s for the same model on one card (R1). The 8B row is the
+same launch on the cards: **9.0028 tok/s** (R25).
+
+The rule is keyed on the cards this fork measured, the FirePro D700. A card it has not
+measured keeps the path it had, because the host link and the decode on it were not
+measured.
 
 ### Retracted claims
 

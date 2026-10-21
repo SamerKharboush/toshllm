@@ -1,6 +1,41 @@
 # Changelog
 
 
+## [0.87.27-beta.2] - 2026-10-21
+
+The beta before this one put a model that does not fit in VRAM on the card, where it is
+between 18x and 76x slower than the host on this machine, and on a dense model answers with
+zeros. The app now places the model where it belongs, and says so in the log.
+
+### Changed
+
+- **A model whose weights do not fit in the VRAM the run may use now runs on the host.**
+  The rule is the one the measurements give: the VRAM the run may use is the combined VRAM
+  of the cards it splits across and one card's VRAM otherwise, less a 1 GB reserve per card,
+  and the host has to have room for the weights, the KV cache and the compute buffers. On
+  the FirePro D700 the card keeps a fraction of the weights and pays for the whole model on
+  every token: the same 35B Q6_K decodes at 0.1450 tok/s on one card and 11.1015 tok/s with
+  everything on the host, and a 27B Q8_0 at 0.0883 against 1.5972. A model that fits stays
+  on the card: the 8B decodes at 8.2632 tok/s there. The rule is keyed on the cards this
+  fork measured, so a card it has not measured keeps the path it had.
+  The launch the app builds for the 35B is now `-ngl 0`, with no expert offload, no split
+  and no card in the environment; the estimate in the Models tab says "CPU only", and the
+  server log names the placement and the VRAM budget it was decided against.
+- **The 35B on the host is measured with the launch the app builds**: prompt eval
+  23.1305 tok/s, decode 10.1353 tok/s, the answer coherent. The 8B on the cards is
+  39.6722 tok/s of prompt eval and 9.0028 tok/s of decode.
+
+### Measured
+
+- **The card path for the 35B is unchanged on the engine this release ships.** The same
+  cell, the same flags and the same prompt give prompt eval 6.5625 tok/s (sd 0.0500) and
+  decode 0.1454 tok/s (sd 0.0013) against the 6.5073 and 0.1465 tok/s the row before
+  recorded; the two decodes are 0.8% apart, inside a standard deviation.
+- **The 35B's decode re-faults 0.293 MB/s from the disk on this engine**, 2.03 MB per
+  token, against an idle control of 24.0 pages/s on the same warm server. The row before
+  recorded 0.24 MB/s and 1.6 MB per token; both are the same quantity measured twice, and
+  neither is averaged with the other.
+
 ## [0.87.27-beta.1] - 2026-10-20
 
 Upstream 0.87.27 merged. The 0.87.26-beta.1 fork release stays as its own release, and the
