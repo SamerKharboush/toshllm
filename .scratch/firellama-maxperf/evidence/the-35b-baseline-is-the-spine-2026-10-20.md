@@ -56,6 +56,42 @@ go of.
 The control is what makes the row quotable: without it the decode window reads 0.34 MB/s, and
 the part of that which is the machine and not the model is not known.
 
+## Re-measured on the engine the release ships (R26, R27)
+
+The rows above were taken on the 40-patch engine. The release ships the 50-patch series,
+so the same cell was measured again on the engine that is in the bundle
+(sha256 `8ebda2454b4df9ac348dc289cc44cb7e82af1885aa1c3c2ea78acbc5550b9d0d`), with the same
+flags, the same model and the same protocol: N=5, a 192-token prompt eval with
+`cache_prompt: false`, an 8-token prompt with 32 generated tokens, temperature 0.
+
+| | mean | sd | n | the row above |
+|---|---|---|---|---|
+| prompt eval | 6.5625 tok/s | 0.0500 | 5 | 6.5073 (sd 0.0883) |
+| decode | 0.1454 tok/s | 0.0013 | 5 | 0.1465 (sd 0.0007) |
+
+The two decodes are 0.8% apart, which is 0.8 of the new row's own standard deviation and
+0.8 of the old one's. They are two observations of the same cell, not two estimates of one
+number, and they are not averaged.
+
+The page-in pair was measured again in the same run, on the same warm server:
+
+| window | pages | MB | window | rate |
+|---|---|---|---|---|
+| idle control, the server up and nothing asked of it | 2,884 | 11.8 | 120.1 s | 24.0 pages/s |
+| a warm 32-token decode | 21,198 | 86.8 | 221.7 s | 95.6 pages/s |
+
+The control reads 24.0 pages/s, the same ambient as the 24.2 pages/s of the run above, so
+the machine was quiet for this pair too. The decode's own re-faults are the excess:
+**71.6 pages/s, 0.293 MB/s, 2.03 MB per token**, against the 0.24 MB/s and 1.64 MB per
+token of the run above. The two are the same quantity measured twice on a machine whose
+page cache holds the 27 GB of weights and whose other nine users come and go; the
+difference is 22%, and the row above stays as it was measured.
+
+A third pair was taken earlier the same day while the machine was busy (load average 3.1
+and rising, 9 users): its control read 141.0 pages/s against a decode window of 277.3
+pages/s, an excess of 0.558 MB/s. That control was not the machine's own paging, so that
+pair is not comparable with these two and is not published as a row.
+
 ## What this baseline says about where the 35B is bound
 
 - **Not VRAM.** 4.44 GB of a 6 GB card, and there is nowhere else to put 27 GB of weights.

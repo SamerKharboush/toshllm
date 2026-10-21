@@ -781,7 +781,7 @@ quietly dropped.
 Two other clauses of the definition of done did not hold, and both are named in the
 records rather than edited away:
 
-- **"Every README claim cites a row in the evidence."** It does, for the rows R1 to R23
+- **"Every README claim cites a row in the evidence."** It does, for the rows R1 to R27
   that are in the CSV, and the README says which file they come from. The rows in
   `docs/bench-baseline-2026-09-30.md` are cited by that file's name, since they were
   measured before this round's CSV existed.
@@ -794,3 +794,19 @@ records rather than edited away:
 The two placements that were measured and are not what the plan expected are the two
 findings of this round: a 35B MoE and a 27B dense Q8_0 both belong on the host on this
 machine, and the cells that put part of the model on the card answer with zeros.
+
+## Revision 8, continued: the app places the model where the rows say it belongs
+
+Ticket 67 was the one the plan did not finish. The rows said a 35B belongs on the host, and
+the app put it on the card, 76x away from the placement that was measured. The rule is
+now in the app (`ServerSettings.resolvePlacement(on:)`, `Estimator.prefersHostPlacement`),
+and the launch the app builds was measured with it: the 35B on the host at 10.1353 tok/s
+(R24) and the 8B on the cards at 9.0028 tok/s (R25), both with the arguments the app
+itself builds, both with a coherent answer.
+
+The card path for the 35B was measured again on the engine the release ships, so the
+spine row is a row about the artifact and not only about the branch: prompt eval
+6.5625 tok/s and decode 0.1454 tok/s (R26), against the 6.5073 and 0.1465 the earlier
+engine gave, and a page-in pair with a clean control (R27).
+
+The 0.87.27-beta.2 release carries the rule and that engine.
