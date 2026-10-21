@@ -344,6 +344,14 @@ final class WhisperTranscriptTests: XCTestCase {
 
 // MARK: - Memory estimator
 
+/// The machine this fork's rows were taken on: two FirePro D700s (6 GB each)
+/// and 64 GB of RAM.
+private let d700HW = HardwareInfo(
+    cpuBrand: "Intel Xeon E5-2697 v2", physicalCores: 12, logicalCores: 24,
+    ramGB: 64, arch: "x86_64", model: "", osVersion: "",
+    gpus: [GPUDevice(index: 0, name: "AMD Radeon HD - FirePro D700", vramMB: 6144),
+           GPUDevice(index: 1, name: "AMD Radeon HD - FirePro D700", vramMB: 6144)])
+
 final class EstimatorTests: XCTestCase {
     /// Reference hardware: the development machine (RX 6700 XT 12 GB + 32 GB RAM).
     private let referenceHW = HardwareInfo(
@@ -541,6 +549,32 @@ final class EstimatorTests: XCTestCase {
         XCTAssertLessThan(quant.vramGB, f16.vramGB)
         XCTAssertEqual(Estimator.kvTypeScale("f16"), 1.0)
         XCTAssertEqual(Estimator.kvTypeScale("q8_0"), 0.53, accuracy: 0.01)
+    }
+
+    func testAModelThatDoesNotFitInTheCardRunsOnTheHost() {
+        // The 35B Q6_K: 26.56 GiB of weights against 6 GB of VRAM. Rows R1, R2 and
+        // R11: 0.1450 tok/s on the card against 11.1015 with everything on the host.
+        let spec = ModelSpec(fileGB: 26.56, paramsB: 35.4, layers: 40, isMoE: true, activeParamsB: 3.0)
+        XCTAssertTrue(Estimator.prefersHostPlacement(spec: spec, hw: d700HW))
+        XCTAssertEqual(Estimator.estimate(spec: spec, hw: d700HW).placement, .host)
+        // Two cards together still do not hold it.
+        XCTAssertEqual(Estimator.estimate(spec: spec, hw: d700HW, multiGPU: true).placement, .host)
+    }
+
+    func testAModelThatFitsStaysOnTheCard() {
+        // Qwen3-8B Q4_K_M: 4.68 GiB against 6 GB of VRAM (row R5).
+        let spec = ModelSpec(fileGB: 4.68, paramsB: 8.2, layers: 36, isMoE: false)
+        XCTAssertFalse(Estimator.prefersHostPlacement(spec: spec, hw: d700HW))
+        XCTAssertEqual(Estimator.estimate(spec: spec, hw: d700HW).placement, .card)
+        XCTAssertEqual(Estimator.estimate(spec: spec, hw: d700HW, multiGPU: true).placement, .card)
+    }
+
+    func testThe14BFitsAcrossBothCardsAndStaysOnThem() {
+        // Qwen3-14B Q4_K_M: 8.38 GiB. It does not fit on one card, but it does
+        // across both, and it runs there (docs/bench-baseline-2026-09-30.md).
+        let spec = ModelSpec(fileGB: 8.38, paramsB: 14.8, layers: 40, isMoE: false)
+        XCTAssertEqual(Estimator.estimate(spec: spec, hw: d700HW, multiGPU: true).placement, .card)
+        XCTAssertEqual(Estimator.estimate(spec: spec, hw: d700HW).placement, .host)
     }
 }
 
@@ -1015,6 +1049,43 @@ final class ServerSettingsTests: XCTestCase {
             string(key); u32(4); u32(value)
         }
         try data.write(to: url)
+    }
+
+    /// A sparse file of the given size: the placement rule reads the size, not the data.
+    private func sparseModel(bytes: Int64) throws -> URL {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("tosh-placement-\(UUID().uuidString).gguf")
+        FileManager.default.createFile(atPath: url.path, contents: Data())
+        let handle = try FileHandle(forWritingTo: url)
+        try handle.truncate(atOffset: UInt64(bytes))
+        try handle.close()
+        addTeardownBlock { try? FileManager.default.removeItem(at: url) }
+        return url
+    }
+
+    func testAModelThatDoesNotFitIsLaunchedOnTheHost() throws {
+        // The 35B Q6_K: 26.56 GiB of weights against the 6 GB of one D700.
+        let url = try sparseModel(bytes: Int64(26.56 * 1_073_741_824))
+        var s = makeSettings()
+        s.modelPath = url.path
+        s.placement = s.resolvePlacement(on: d700HW)
+        XCTAssertEqual(s.placement, .host)
+        let args = s.arguments
+        XCTAssertEqual(args[args.firstIndex(of: "-ngl")! + 1], "0")
+        XCTAssertFalse(args.contains("--n-cpu-moe"), "a model on the host has no experts on a card")
+        XCTAssertFalse(args.contains("--split-mode"), "a model on the host does not split")
+    }
+
+    func testAModelThatFitsIsLaunchedOnTheCard() throws {
+        // Qwen3-8B Q4_K_M: 4.68 GiB against the 6 GB of one D700.
+        let url = try sparseModel(bytes: Int64(4.68 * 1_073_741_824))
+        var s = makeSettings()
+        s.modelPath = url.path
+        s.placement = s.resolvePlacement(on: d700HW)
+        XCTAssertEqual(s.placement, .card)
+        let args = s.arguments
+        XCTAssertEqual(args[args.firstIndex(of: "-ngl")! + 1], "99")
+        XCTAssertTrue(args.contains("--n-cpu-moe"))
     }
 
     func testSlotsShareOneContextUnlessSeparated() {
