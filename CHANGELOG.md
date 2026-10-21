@@ -73,6 +73,12 @@ Upstream 0.87.27 merged. The 0.87.26-beta.1 fork release stays as its own releas
   carried: a new kernel in the release path that buys nothing is a risk and not a
   feature. The host can already ask for it by name, and the 256-head instantiation that
   fits was written and measured for this question.
+- **This tag is not signed.** The only SSH key on the build machine is passphrase-protected
+  and the agent was empty, and gpg is not installed on it, so the tag could not be signed
+  without a person at the keyboard. It is annotated, like `v0.87.24-beta.1` and every
+  earlier release tag in this fork, and the gap is recorded here rather than papered over.
+  The digest of the DMG is published with the release, and `tools/ab.sh assert_artifact`
+  checks that the engine in the bundle is the engine that was measured.
 
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
