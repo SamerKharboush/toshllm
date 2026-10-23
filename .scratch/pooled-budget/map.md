@@ -32,10 +32,14 @@ models bigger than the cards fast on the **pooled budget** (both D700s, 64 GB RA
 
 ## Decisions so far
 
+- [The Qwythos-9B draft trial](issues/08-the-qwythos-draft-trial.md): the draft makes the dense 27B slower (1.33 against 1.94 tok/s) despite 64% acceptance; each verify round costs about four host tokens
+- [Which draft to try for the dense 27B](issues/06-which-draft-to-try-for-the-dense-27b.md): quantise Qwythos-9B to Q3_K_M and run a measured trial, target on the host, draft on the non-display card
 - [Expert parallelism across GPUs that cannot see each other](issues/04-expert-parallel-across-gpus-that-cannot-see-each-other.md): no engine has a no-peer-link expert-parallel path; layer-split arenas cost 8 KiB/token across the cards against about 656 KiB for true expert parallelism; vLLM, SGLang and kt-kernel cannot run here (AVX2, no Metal)
 - [A draft model for the dense 27B on the host](issues/05-a-draft-model-for-the-dense-27b.md): nothing small on disk shares its vocabulary (Qwen3 small models do not); Qwythos-9B BF16 matches exactly, a Qwen3.5 0.8B would need a download; the engine can put a draft on a card with the target at -ngl 0 (source only)
 
 ## Not yet specified
+
+- Dense models bigger than VRAM: no lever left after the draft trial. A Qwen3.5 0.8B draft (download) or splitting a draft round's cost are the only open threads.
 
 - Prefill on both cards while the experts stay in RAM.
 - Whether ticket 68 (the dense two-card split answers zeros) has to be fixed for any lever on

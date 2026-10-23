@@ -1,7 +1,7 @@
 # 06: Which draft to try for the dense 27B
 
 Type: grilling
-Status: open
+Status: resolved
 Blocked by: 05
 
 ## Question
@@ -15,3 +15,12 @@ the draft on the non-display card?
 
 The trial's gate also has to show what the per-round checkpoint costs when the target is in
 host RAM.
+
+## Answer
+
+(b), decided by the user on 2026-10-23: quantise Qwythos-9B, which is already on disk, and
+give it a measured trial as the draft. The 27B target stays on the host, and the draft sits on
+the non-display card.
+- **Quant: Q3_K_M**, about 4.1 GiB. Q4_K_M would be about 5 GiB, which with the draft's cache
+  is too tight for one 6 GB card.
+- **Who does it:** the work is delegated to OpenCode. The orchestrator verifies the gate.

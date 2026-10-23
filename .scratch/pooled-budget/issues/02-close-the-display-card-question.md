@@ -1,7 +1,7 @@
 # 02: Close the display-card question with an alternating A/B
 
 Type: task
-Status: open
+Status: claimed
 Blocked by:
 
 ## Question

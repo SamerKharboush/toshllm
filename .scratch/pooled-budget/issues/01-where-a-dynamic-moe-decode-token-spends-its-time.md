@@ -1,7 +1,7 @@
 # 01: Where a Dynamic MoE decode token spends its time
 
 Type: task
-Status: open
+Status: claimed
 Blocked by:
 
 ## Question
@@ -22,3 +22,17 @@ The facts that matter:
 - a host job takes about 351 µs.
 
 This needs both cards free: HITL only for stopping the user's own server.
+
+## Method (2026-10-23)
+
+The timeline records host jobs only for prefill, and the GPU's join wait sits inside its
+compute command buffer, so the timeline cannot split a decode token. Instead, this is a
+sensitivity run (scratchpad `exec_sens.sh`, delegated to OpenCode):
+- slow the host executor (`TOSH_DMOE_THREADS` 12, 6, 3, 1) on card 1;
+- regress token time against the measured host time per token (40 × host time per job).
+
+Readings:
+- a slope near 1 means the CPU experts are on the critical path;
+- a slope near 0 means the GPU side is.
+
+The existing stats already bound the host share: about 40 × 351 µs ≈ 14 ms of a 76 ms token.
