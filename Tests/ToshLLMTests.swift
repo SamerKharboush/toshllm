@@ -551,13 +551,21 @@ final class EstimatorTests: XCTestCase {
         XCTAssertEqual(Estimator.kvTypeScale("q8_0"), 0.53, accuracy: 0.01)
     }
 
-    func testAModelThatDoesNotFitInTheCardRunsOnTheHost() {
-        // The 35B Q6_K: 26.56 GiB of weights against 6 GB of VRAM. Rows R1, R2 and
-        // R11: 0.1450 tok/s on the card against 11.1015 with everything on the host.
+    func testAMoEModelThatDoesNotFitInTheCardTakesTheExpertTier() {
+        // The 35B Q6_K: 26.56 GiB of weights against 6 GB of VRAM. 0.1450 tok/s on the
+        // card, 11.6169 on the host, 13.3412 with one card and the experts in RAM.
         let spec = ModelSpec(fileGB: 26.56, paramsB: 35.4, layers: 40, isMoE: true, activeParamsB: 3.0)
         XCTAssertTrue(Estimator.prefersHostPlacement(spec: spec, hw: d700HW))
-        XCTAssertEqual(Estimator.estimate(spec: spec, hw: d700HW).placement, .host)
+        XCTAssertEqual(Estimator.estimate(spec: spec, hw: d700HW).placement, .expertTier)
         // Two cards together still do not hold it.
+        XCTAssertEqual(Estimator.estimate(spec: spec, hw: d700HW, multiGPU: true).placement, .expertTier)
+    }
+
+    func testADenseModelThatDoesNotFitInTheCardRunsOnTheHost() {
+        // A 27B Q6_K: 20.86 GiB with no experts to keep in RAM.
+        let spec = ModelSpec(fileGB: 20.86, paramsB: 27.0, layers: 64, isMoE: false)
+        XCTAssertTrue(Estimator.prefersHostPlacement(spec: spec, hw: d700HW))
+        XCTAssertEqual(Estimator.estimate(spec: spec, hw: d700HW).placement, .host)
         XCTAssertEqual(Estimator.estimate(spec: spec, hw: d700HW, multiGPU: true).placement, .host)
     }
 
@@ -1074,6 +1082,55 @@ final class ServerSettingsTests: XCTestCase {
         XCTAssertEqual(args[args.firstIndex(of: "-ngl")! + 1], "0")
         XCTAssertFalse(args.contains("--n-cpu-moe"), "a model on the host has no experts on a card")
         XCTAssertFalse(args.contains("--split-mode"), "a model on the host does not split")
+    }
+
+    func testAMoEModelThatDoesNotFitIsLaunchedOnOneCardWithItsExpertsInRAM() throws {
+        // The 35B Q6_K's size with a MoE header; the default settings split across both cards.
+        let url = try sparseModel(bytes: Int64(26.56 * 1_073_741_824))
+        try writeMinimalMoEGGUF(url)
+        let handle = try FileHandle(forWritingTo: url)
+        try handle.truncate(atOffset: UInt64(26.56 * 1_073_741_824))
+        try handle.close()
+        var s = makeSettings()
+        s.modelPath = url.path
+        s.multiGPU = true
+        s.placement = s.resolvePlacement(on: d700HW)
+        XCTAssertEqual(s.placement, .expertTier)
+        XCTAssertTrue(s.usesAutoPlan, "the expert tier plans even with Dynamic MoE off in Settings")
+        XCTAssertFalse(s.isSplitting, "Dynamic MoE plans one card")
+        let args = s.arguments
+        XCTAssertTrue(args.contains("--dynamic-moe"))
+        XCTAssertFalse(args.contains("--n-cpu-moe"), "the plan owns the expert placement (ticket 66)")
+        XCTAssertFalse(args.contains("--split-mode"))
+        XCTAssertFalse(args.contains("--ubatch-size"), "the plan picks the batch")
+        let env = s.environment
+        XCTAssertNil(env["GGML_METAL_DEVICES"], "one card, not the split")
+        XCTAssertNil(env["GGML_METAL_DEVICE_LIST"])
+    }
+
+    func testTheExpertTierTakesTheCardWithTheMostFreeVRAM() {
+        // The pair measured on 2026-10-22: the display card had 3.88 GiB free, the other 5.77.
+        let display = GPUStat(id: 0, name: "AMD Radeon HD - FirePro D700", usedMB: 2_175, totalMB: 6_144)
+        let other   = GPUStat(id: 1, name: "AMD Radeon HD - FirePro D700", usedMB: 238, totalMB: 6_144)
+        XCTAssertEqual(ServerSettings.expertTierCard([display, other]), 1)
+        XCTAssertEqual(ServerSettings.expertTierCard([other, display].map {
+            GPUStat(id: 1 - $0.id, name: $0.name, usedMB: $0.usedMB, totalMB: $0.totalMB)
+        }), 0)
+        XCTAssertNil(ServerSettings.expertTierCard([]))
+    }
+
+    func testAPickedCardOverridesTheExpertTierChoice() throws {
+        let url = try sparseModel(bytes: Int64(26.56 * 1_073_741_824))
+        try writeMinimalMoEGGUF(url)
+        let handle = try FileHandle(forWritingTo: url)
+        try handle.truncate(atOffset: UInt64(26.56 * 1_073_741_824))
+        try handle.close()
+        var s = makeSettings()
+        s.modelPath = url.path
+        s.gpuIndex = 0
+        s.placement = s.resolvePlacement(on: d700HW)
+        XCTAssertEqual(s.placement, .expertTier)
+        XCTAssertEqual(s.environment["GGML_METAL_DEVICE_INDEX"], "0")
     }
 
     func testAModelThatFitsIsLaunchedOnTheCard() throws {

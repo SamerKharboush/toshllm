@@ -166,7 +166,10 @@ struct ServerSettings {
 
     /// One model served across several GPUs, either by the all/N toggle or by an
     /// explicit selection of at least two cards.
-    var isSplitting: Bool { multiGPU || gpuList.count >= 2 }
+    /// The split the settings ask for, before the placement rule has had its say.
+    var wantsSplit: Bool { multiGPU || gpuList.count >= 2 }
+    /// Dynamic MoE plans one card, so the expert tier does not split.
+    var isSplitting: Bool { wantsSplit && placement != .expertTier }
     /// Guards against a stale or hand-edited value: llama.cpp only takes these two,
     /// and a tensor split the model cannot take falls back instead of aborting.
     var effectiveSplitMode: String {
@@ -215,18 +218,22 @@ struct ServerSettings {
     /// a fraction of the weights and pay for the whole model on every token (the 35B
     /// Q6_K decodes at 0.1450 tok/s on one D700 and 11.1015 tok/s with everything on
     /// the host). A model that fits stays on the card (the 8B at 8.2632 tok/s).
+    /// A MoE model that does not fit takes the expert tier instead: one card keeps
+    /// attention and the hot experts and the CPU computes the rest, 13.3412 tok/s
+    /// against 11.6169 on the host alone for the same 35B.
     func resolvePlacement(on hw: HardwareInfo) -> ModelPlacement {
         guard !routerMode, !manualFullGPU, let spec = modelSpec else { return .card }
         let kvScale = (Estimator.kvTypeScale(launchKV.k) + Estimator.kvTypeScale(launchKV.v)) / 2
-        let budget = Estimator.usableVRAM(hw: hw, splitting: isSplitting, devices: splitDeviceCount)
-        return Estimator.prefersHostPlacement(spec: spec, hw: hw, ctx: ctx,
-                                              kvScale: kvScale,
-                                              vramBudgetGB: budget) ? .host : .card
+        let budget = Estimator.usableVRAM(hw: hw, splitting: wantsSplit, devices: splitDeviceCount)
+        guard Estimator.prefersHostPlacement(spec: spec, hw: hw, ctx: ctx,
+                                             kvScale: kvScale,
+                                             vramBudgetGB: budget) else { return .card }
+        return spec.isMoE ? .expertTier : .host
     }
 
     /// True when the cards are part of this run. A model on the host leaves them
     /// out: no split, no device selection, no expert offload.
-    var usesGPUs: Bool { placement == .card }
+    var usesGPUs: Bool { placement != .host }
 
     /// The GPU offload the launch asks for. A model that does not fit in the VRAM
     /// this run may use runs on the host, so nothing is offloaded.
@@ -759,6 +766,13 @@ struct ServerSettings {
         return ["--path", ui, "--ui-config", String(decoding: data, as: UTF8.self)] + tiles
     }
 
+    /// The card the expert tier runs on when none is picked. The card that drives the display
+    /// holds about 2 GB of its VRAM, and with what is left the planner falls back to
+    /// `--n-cpu-moe` or refuses (ticket 72).
+    static func expertTierCard(_ cards: [GPUStat]) -> Int? {
+        cards.max { $0.freeMB < $1.freeMB }?.id
+    }
+
     var environment: [String: String] {
         var env = ProcessInfo.processInfo.environment
         env.merge(EngineExtensions.environment()) { $1 }
@@ -775,7 +789,15 @@ struct ServerSettings {
         // these to MTLCopyAllDevices() — the same order as the app's GPU picker).
         // A model that runs on the host leaves the cards out of the run entirely.
         let gpus = ServerController.availableGPUs()
-        if usesGPUs, gpuList.count >= 2 {
+        if placement == .expertTier {
+            // Dynamic MoE plans the first card it sees: give it one, the user's if one is picked,
+            // else the one with the most free VRAM.
+            if gpuIndex >= 0 {
+                env["GGML_METAL_DEVICE_INDEX"] = String(gpuIndex)
+            } else if let card = Self.expertTierCard(VRAMMonitor.snapshot()) {
+                env["GGML_METAL_DEVICE_INDEX"] = String(card)
+            }
+        } else if usesGPUs, gpuList.count >= 2 {
             // Split across exactly these GPUs; slot i maps to the i-th listed index.
             env["GGML_METAL_DEVICE_LIST"] = gpuList.map(String.init).joined(separator: ",")
         } else if usesGPUs, multiGPU {
@@ -1069,8 +1091,10 @@ struct ServerSettings {
     }
     /// The engine plans memory: MoE models under Auto or forced Dynamic MoE, on one GPU.
     /// A model that runs on the host has no card to plan for.
+    /// The expert tier always plans: it is the placement for a MoE model that does not fit.
     var usesAutoPlan: Bool {
-        dynamicMoeEnabled && (executionMode == "auto" || executionMode == "dmoe")
+        if placement == .expertTier && !routerMode { return true }
+        return dynamicMoeEnabled && (executionMode == "auto" || executionMode == "dmoe")
             && !routerMode && !isSplitting && usesGPUs && Self.modelIsMoE(at: modelPath)
     }
     /// Full GPU chosen by hand: no expert offload, even where Auto would reject the headroom.
@@ -2112,6 +2136,8 @@ final class ServerController: ObservableObject {
         // the log has to say so, because the card path is where it would collapse.
         let placementLine = settings.placement == .host
             ? "host (the model does not fit in \(String(format: "%.1f", settings.vramBudgetGB)) GB of VRAM, so it runs on the CPU)"
+            : settings.placement == .expertTier
+            ? "expert tier (MoE, does not fit in VRAM: one card holds attention and the hot experts, the CPU computes the rest)"
             : "card"
         if settings.placement == .host { gpuSel = "none (host placement)" }
         if settings.tensorSplitDowngraded {

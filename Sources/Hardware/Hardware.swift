@@ -191,15 +191,18 @@ struct MemoryEstimate {
     let suggestedNcmoe: Int
     let level: FitLevel
     let expectedSpeed: String   // estimated t/s range
-    /// Where the model should run. The card when it fits, the host when it does not
-    /// and the card is one this fork measured.
+    /// Where the model should run. The card when it fits; when it does not and the card
+    /// is one this fork measured, the host for a dense model and the expert tier for MoE.
     var placement: ModelPlacement = .card
 }
 
-/// Where a model runs: on the card, or on the host.
+/// Where a model runs: on the card, on the host, or split by experts between them.
 enum ModelPlacement: String {
     case card
     case host
+    /// One card holds attention, the KV cache and the most-used experts; RAM holds every
+    /// expert and the CPU computes the ones the card does not (Dynamic MoE, mixed execution).
+    case expertTier
 }
 
 /// Conservative preflight for DFlash. llama.cpp cannot currently measure a
@@ -354,9 +357,13 @@ enum Estimator {
             let active = spec.activeParamsB > 0 ? spec.activeParamsB : spec.paramsB * 0.11
             let activeGB = active * (spec.weightsGB / max(1, spec.paramsB))
             let tg = clampSpeed(1 / max(0.0001, activeGB / bwRAM), effective: effectiveBW)
-            return MemoryEstimate(vramGB: 0, ramGB: spec.weightsGB + kvGB + computeGB,
+            // A MoE model keeps one card for attention and its hot experts while RAM holds
+            // the rest: the same 35B decodes at 13.3412 tok/s that way against 11.6169 on
+            // the host alone, and reads a 2402-token prompt at 71.9468 against 28.2874.
+            let oneCard = usableVRAM(hw: hw, splitting: false, devices: 1)
+            return MemoryEstimate(vramGB: spec.isMoE ? oneCard : 0, ramGB: spec.weightsGB + kvGB + computeGB,
                                   suggestedNcmoe: 0, level: .slow, expectedSpeed: speedRange(tg),
-                                  placement: .host)
+                                  placement: spec.isMoE ? .expertTier : .host)
         }
 
         if !spec.isMoE {
