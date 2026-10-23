@@ -106,3 +106,13 @@ Card 1 showed it in 0 of 6. At a 1-in-3 rate, 0 of 6 happens by chance about 9% 
 So this is strong support for the display card being the cause, not proof. The app now
 avoids that card. To close the ticket, the A/B needs to be repeated with the cards
 alternating.
+
+## 2026-10-23: no slow mode in 12 servers, with the display asleep
+
+The alternating card A/B (pooled-budget ticket 02) ran 6 servers per card with the display
+asleep (power state 0). It showed no slow mode and no stall on either card. Card 0 gave
+12.7829 tok/s short decode (sd 0.0240), card 1 gave 12.8712 (sd 0.0364).
+
+The hypothesis is now an awake display drawing on card 0. Next: the same A/B with the
+display kept awake and an animation on screen. `caffeinate -d` keeps the display awake; the
+animation is the user's part. Record the display state in the method line.

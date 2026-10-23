@@ -32,6 +32,7 @@ models bigger than the cards fast on the **pooled budget** (both D700s, 64 GB RA
 
 ## Decisions so far
 
+- [Close the display-card question with an alternating A/B](issues/02-close-the-display-card-question.md): not reproduced with the display asleep (0 slow servers in 12); card 0 is 0.09 tok/s behind card 1 and gets a smaller arena; the slow mode stays open as an awake-display effect (ticket 72)
 - [The Qwythos-9B draft trial](issues/08-the-qwythos-draft-trial.md): the draft makes the dense 27B slower (1.33 against 1.94 tok/s) despite 64% acceptance; each verify round costs about four host tokens
 - [Which draft to try for the dense 27B](issues/06-which-draft-to-try-for-the-dense-27b.md): quantise Qwythos-9B to Q3_K_M and run a measured trial, target on the host, draft on the non-display card
 - [Expert parallelism across GPUs that cannot see each other](issues/04-expert-parallel-across-gpus-that-cannot-see-each-other.md): no engine has a no-peer-link expert-parallel path; layer-split arenas cost 8 KiB/token across the cards against about 656 KiB for true expert parallelism; vLLM, SGLang and kt-kernel cannot run here (AVX2, no Metal)
