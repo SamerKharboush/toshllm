@@ -47,3 +47,24 @@ and the upstream expert dispatch in `src/llama-model.cpp` / `src/llama-graph.cpp
   `../evidence/the-35b-placement-matrix-2026-10-20.md`.
 - If it is fixed, the matrix is re-run and the broken rows are replaced, with the old rows
   left visible and the retraction noted.
+
+## 2026-10-23: the planner no longer picks this path on a 64-lane card
+
+Patch `moe/0047-the-plan-refuses-the-host-expert-fallback-on-a-64-lane-card.patch`. The change
+was implemented by OpenCode (`opencode/glm-5.3-flash-free`) from a brief, then reviewed and
+rebuilt here.
+- When `TOSH_METAL_SIMD_WIDTH` is 64 and mixed execution does not fit, the plan no longer
+  selects `PLAN_CLASSIC_NCMOE`. It refuses with limits `LEGACY_OFFLOAD_UNSAFE` and
+  `NO_SAFE_FALLBACK`, and logs a remedy.
+- `TOSH_AUTO=legacy` still forces the old path.
+
+Gates passed:
+- the build;
+- 0 AVX2/FMA mnemonics, engine sha256 ebacf72b…;
+- 52 of 52 patches apply cleanly at the pin.
+
+**Owed:** a launch on a card where mixed execution does not fit but the fallback does
+(card 0 at about 3.8 GiB free, as on 2026-10-22), showing the refusal and its log line. It
+could not run on 2026-10-23: the user's Qwen3-14B server held both cards, 0.14 GB free each.
+
+The bug itself is not fixed. Explicit `--n-cpu-moe` / `-cmoe` flags still reach this path.

@@ -1,0 +1,58 @@
+diff --git a/common/common.cpp b/common/common.cpp
+index 364a4aba0..b6e33ad6f 100644
+--- a/common/common.cpp
++++ b/common/common.cpp
+@@ -1256,16 +1256,18 @@ common_init_result::common_init_result(common_params & params, bool model_only)
+     {
+         tosh_plan plan;
+         if (!tosh_plan_apply(params, &plan) && plan.state == TOSH_PLAN_NOT_PLANNED && !params.dynamic_moe && getenv("TOSH_AUTO") == nullptr) {
+             LOG_INF("Tosh MoE: standard\n");
+         }
+         // no plan fits: loading with the defaults would hand memory to a layout nobody checked
+         if (plan.state == TOSH_PLAN_UNSUPPORTED && getenv("TOSH_AUTO_DRY_RUN") == nullptr) {
+             LOG_ERR("%s: TOSH_AUTO found no configuration that fits (%s), the model is not loaded\n", __func__, plan.primary_reason.c_str());
++            if (std::find(plan.limits.begin(), plan.limits.end(), "LEGACY_OFFLOAD_UNSAFE") != plan.limits.end())
++                LOG_ERR("%s: mixed execution does not fit this card, and the --n-cpu-moe fallback answers garbage on a 64-lane GPU; free VRAM (pick the card with more free VRAM with GGML_METAL_DEVICE_INDEX, or lower -c), run on the host with -ngl 0, or force it with TOSH_AUTO=legacy\n", __func__);
+             tosh_plan_report_load("PLAN_REFUSED", plan.primary_reason.c_str());
+             return;
+         }
+     }
+ 
+     auto mparams = common_model_params_to_llama(params);
+     auto cparams = common_context_params_to_llama(params);
+ 
+diff --git a/common/tosh-plan.cpp b/common/tosh-plan.cpp
+index cbb2872a9..346984fd6 100644
+--- a/common/tosh-plan.cpp
++++ b/common/tosh-plan.cpp
+@@ -897,17 +897,29 @@ bool tosh_plan_apply(common_params & params, tosh_plan * out) {
+                 sel = a; p.reason = "the requested context and the reserve fit; experts take what is left";
+             } else if (b) {
+                 sel = b; p.reason = "only a q8_0 cache leaves a useful expert arena";
+             }
+         }
+         if (sel == nullptr && (pass == 1 || force == "legacy") && (force.empty() || force == "legacy")) {
+             const tosh_plan_candidate * l16 = find("legacy_offload", kvs[0], 0);
+             const tosh_plan_candidate * l8  = kvs.size() > 1 ? find("legacy_offload", kvs[1], 0) : nullptr;
+-            if (l16 && l16->valid) sel = l16; else if (l8 && l8->valid) sel = l8;
++            const char * simd_width = getenv("TOSH_METAL_SIMD_WIDTH");
++            const bool simd64 = simd_width != nullptr && strcmp(simd_width, "64") == 0;
++            if (simd64 && force != "legacy") {
++                // on a 64-lane card the host-expert offload answers garbage (ticket 66)
++                if ((l16 && l16->valid) || (l8 && l8->valid)) {
++                    if (std::find(p.limits.begin(), p.limits.end(), "LEGACY_OFFLOAD_UNSAFE") == p.limits.end())
++                        p.limits.push_back("LEGACY_OFFLOAD_UNSAFE");
++                }
++            } else if (l16 && l16->valid) {
++                sel = l16;
++            } else if (l8 && l8->valid) {
++                sel = l8;
++            }
+             if (sel) p.reason = "mixed execution is not available here; expert layers go to the host";
+         }
+         if (sel) {
+             p.mtp_head_dropped = ri >= n_with_head;
+             if (R < reserves[p.mtp_head_dropped ? n_with_head : 0]) p.fallback = string_format("reserve lowered to %.1f GiB", R/1024);
+             break;
+         }
+     }
