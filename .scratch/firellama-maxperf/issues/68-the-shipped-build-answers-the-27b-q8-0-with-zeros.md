@@ -55,3 +55,18 @@ try is the shipped patch set with this build's compiler.
   leaves the three suspects named.
 
 The evidence is in `../evidence/the-27b-q8-0-on-this-machine-2026-10-20.md`.
+
+## Update 2026-10-22: the fork's engine gives zeros too, on a two-card split
+
+The fork's own engine (`d81235049` plus 51 patches, AVX1) answers zeros on a dense 27B Q6_K
+when the model is split across both cards with the remaining layers on the host:
+- launch: `GGML_METAL_DEVICES=2 --split-mode layer`, `-ngl 24` or `-ngl 28`;
+- 24 of 24 responses go to `0000…` after the first token;
+- the same build gives coherent text on the host (`-ngl 0`) and on one card (`-ngl 12`).
+
+Evidence: `../evidence/the-dense-27b-across-host-one-card-and-both-cards-2026-10-22.md`.
+
+The bug is therefore not only in the shipped build, and the shipped build's compiler and
+patch set are no longer the only suspects. The next bisect step is a model that fits on the
+two cards, with no host layers. That tells a two-card fault apart from a fault in the split
+between card and host.
