@@ -13,6 +13,16 @@ The two D700s share nothing: no unified pool, no Infinity Fabric link
 - **Per-buffer ceiling (3.5GB)**: `maxBufferLength` per D700, measured.
   A single buffer larger than this aborts (`:1154 multi buffers`),
   regardless of total budget.
+- **Pooled budget**: both cards' VRAM plus host RAM counted as one capacity
+  for a model. Capacity only: compute stays per card, and anything that
+  moves between the cards goes through host RAM. A design on the pooled
+  budget must say what crosses the cards per token. Never say "bridged",
+  "unified" or "shared VRAM" for this pair.
+- **Display card**: the D700 that drives the screen. The window server holds
+  about 2GB of its VRAM, so it has the smaller share of the pooled budget.
+- **Expert tier**: a MoE model too big for the cards runs on one card
+  (attention, cache, the most-used experts), with every expert held in host
+  RAM and the CPU computing the experts the card does not hold.
 
 ## Split modes
 
