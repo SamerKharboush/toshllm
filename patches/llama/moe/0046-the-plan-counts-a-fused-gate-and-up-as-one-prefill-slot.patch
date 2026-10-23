@@ -1,0 +1,51 @@
+diff --git a/common/tosh-plan.cpp b/common/tosh-plan.cpp
+index 83d4e679c..cbb2872a9 100644
+--- a/common/tosh-plan.cpp
++++ b/common/tosh-plan.cpp
+@@ -164,16 +164,20 @@ moe_info read_moe_info(const char * path, llama_lazy_mode lazy) {
+         for (int i = 1; i < mi.n_split; ++i) {
+             llama_split_path(shard, sizeof(shard), prefix, i, mi.n_split);
+             paths.push_back(shard);
+         }
+     }
+ 
+     const std::regex bank("^blk\\.([0-9]+)\\.ffn_(up|down|gate|gate_up)_exps\\.weight$");
+     std::vector<double> layer_mib(mi.n_layer + 1, 0.0);
++    // a 64-lane card loads a layer's gate and up as one tensor (llama-model.cpp), so its prefill slot holds both
++    const char * simd_width = getenv("TOSH_METAL_SIMD_WIDTH");
++    const bool fuse_gate_up = simd_width != nullptr && strcmp(simd_width, "64") == 0 && getenv("TOSH_MOE_GATE_UP_DISABLE") == nullptr;
++    std::vector<double> gate_mib(mi.n_layer + 1, 0.0), up_mib(mi.n_layer + 1, 0.0);
+     for (size_t f = 0; f < paths.size(); ++f) {
+         gguf_context * gs = f == 0 ? g : gguf_init_from_file(paths[f].c_str(), gp);
+         if (gs == nullptr) {
+             mi.error = string_format("SPLIT_GGUF_METADATA_ERROR: cannot read shard %zu of %d: %s", f + 1, mi.n_split, paths[f].c_str());
+             break;
+         }
+         for (int64_t i = 0; i < gguf_get_n_tensors(gs); ++i) {
+             const std::string name = gguf_get_tensor_name(gs, i);
+@@ -189,17 +193,24 @@ moe_info read_moe_info(const char * path, llama_lazy_mode lazy) {
+             }
+             std::smatch m;
+             if (!std::regex_match(name, m, bank)) {
+                 continue;
+             }
+             mi.bank_mib += mib;
+             mi.max_tensor_mib = std::max(mi.max_tensor_mib, mib);
+             const int il = std::stoi(m[1]);
+-            if (il >= 0 && il < (int) layer_mib.size()) layer_mib[il] += mib;
++            if (il >= 0 && il < (int) layer_mib.size()) {
++                layer_mib[il] += mib;
++                if (m[2] == "gate") gate_mib[il] = mib;
++                if (m[2] == "up")   up_mib[il]   = mib;
++                if (fuse_gate_up && gate_mib[il] > 0 && up_mib[il] > 0) {
++                    mi.max_tensor_mib = std::max(mi.max_tensor_mib, gate_mib[il] + up_mib[il]);
++                }
++            }
+         }
+         if (gs != g) gguf_free(gs);
+     }
+     gguf_free(g);
+     std::vector<double> sizes;
+     for (double l : layer_mib) {
+         if (l <= 0) continue;
+         mi.n_moe++;
