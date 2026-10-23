@@ -32,12 +32,11 @@ models bigger than the cards fast on the **pooled budget** (both D700s, 64 GB RA
 
 ## Decisions so far
 
+- [Expert parallelism across GPUs that cannot see each other](issues/04-expert-parallel-across-gpus-that-cannot-see-each-other.md): no engine has a no-peer-link expert-parallel path; layer-split arenas cost 8 KiB/token across the cards against about 656 KiB for true expert parallelism; vLLM, SGLang and kt-kernel cannot run here (AVX2, no Metal)
+- [A draft model for the dense 27B on the host](issues/05-a-draft-model-for-the-dense-27b.md): nothing small on disk shares its vocabulary (Qwen3 small models do not); Qwythos-9B BF16 matches exactly, a Qwen3.5 0.8B would need a download; the engine can put a draft on a card with the target at -ngl 0 (source only)
+
 ## Not yet specified
 
-- The two-card expert-tier design itself: which card holds which layers or experts, and
-  what crosses per token. It waits on whether a bigger arena would help at all.
-- Dense models bigger than VRAM: a draft model, or nothing. The research ticket on draft
-  models feeds it.
 - Prefill on both cards while the experts stay in RAM.
 - Whether ticket 68 (the dense two-card split answers zeros) has to be fixed for any lever on
   this map, or stays a separate bug.
