@@ -10,6 +10,8 @@ models bigger than the cards fast on the **pooled budget** (both D700s, 64 GB RA
 
 ## Notes
 
+- **Spec written:** `spec.md` (revision 1, 2026-10-24), the destination. Ticket 09 is still running; its answer may re-rank the spec.
+
 - Glossary: `CONTEXT.md`. Use **pooled budget**, **display card** and **expert tier**; never
   "bridged", "unified" or "shared VRAM" for this pair.
 - Planning only. Builds go as tickets in `.scratch/firellama-maxperf/issues/`. This map
@@ -32,6 +34,8 @@ models bigger than the cards fast on the **pooled budget** (both D700s, 64 GB RA
 
 ## Decisions so far
 
+- [Which MoE lever comes first](issues/03-which-moe-lever-comes-first.md): (b) the second card's arena first, then (a) the AVX1 kernel, (c) overlap last; (b) is mainly a capacity lever on the 35B
+- [The shape of a two-card expert tier](issues/07-the-shape-of-a-two-card-expert-tier.md): layer-split arenas extending the fork's Dynamic MoE, 8 KiB/token across the cards; not upstream's --moe-cache-mib, which uploads misses instead of computing them
 - [Where a Dynamic MoE decode token spends its time](issues/01-where-a-dynamic-moe-decode-token-spends-its-time.md): the host experts are fully on the critical path (slope 0.976), about 16 ms of a 78 ms token; CPU-side levers are bounded near 16 tok/s, and 62 ms sits outside the executor
 - [Close the display-card question with an alternating A/B](issues/02-close-the-display-card-question.md): not reproduced with the display asleep (0 slow servers in 12); card 0 is 0.09 tok/s behind card 1 and gets a smaller arena; the slow mode stays open as an awake-display effect (ticket 72)
 - [The Qwythos-9B draft trial](issues/08-the-qwythos-draft-trial.md): the draft makes the dense 27B slower (1.33 against 1.94 tok/s) despite 64% acceptance; each verify round costs about four host tokens

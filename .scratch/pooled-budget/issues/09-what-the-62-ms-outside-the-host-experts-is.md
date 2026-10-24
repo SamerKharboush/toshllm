@@ -1,7 +1,7 @@
 # 09: What the 62 ms outside the host experts is
 
 Type: task
-Status: open
+Status: claimed
 Blocked by: 01
 
 ## Question
