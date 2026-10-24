@@ -1,0 +1,249 @@
+diff --git a/ggml/src/ggml-metal/ggml-metal-context.m b/ggml/src/ggml-metal/ggml-metal-context.m
+index 4bfb0f3f8..54ab54e30 100644
+--- a/ggml/src/ggml-metal/ggml-metal-context.m
++++ b/ggml/src/ggml-metal/ggml-metal-context.m
+@@ -401,16 +401,24 @@ static bool tosh_mgpu_trace(void) {
+     static int on = -1;
+     if (on < 0) {
+         const char * v = TOSH_ENV("TOSH_MGPU_TRACE");
+         on = (v && v[0] == '1') ? 1 : 0;
+     }
+     return on == 1;
+ }
+ 
++static bool tosh_tl_on(void) {
++    static int on = -1;
++    if (on < 0) {
++        on = getenv("TOSH_DMOE_TIMELINE") != NULL;
++    }
++    return on == 1;
++}
++
+ static uint64_t tosh_now_ns(void) {
+     return clock_gettime_nsec_np(CLOCK_MONOTONIC);
+ }
+ 
+ // Separates three things the old instrumentation conflated: when the host committed each
+ // side, when each GPU started the collective, and the signed order of both. The collective
+ // loop is serial on the CPU, so a GPU-start difference is not evidence of compute imbalance
+ // until the commit difference is subtracted from it.
+@@ -4010,28 +4018,37 @@ static bool ggml_metal_merge_graph(void) {
+         // on by default: it is inert unless a collective left a buffer held, which only the
+         // batch gate above does, so a prompt never sees it
+         v = s ? (s[0] == '1' ? 1 : 0) : 1;
+     }
+     return v == 1;
+ }
+ 
+ enum ggml_status ggml_metal_graph_compute(ggml_metal_t ctx, struct ggml_cgraph * gf) {
++    // timeline: host span of this call is kind 22, taken at every return; GPU spans of the
++    // command buffers committed here and in the encode_async block are kind 21
++    const bool tl_on = tosh_tl_on();
++    const double tl_enter = tl_on ? tosh_dmoe_host_seconds() : 0.0;
++
+     if (tosh_mgpu_trace()) { atomic_fetch_add(&g_tr_graphs, 1); }
+     // command buffers run in commit order, so a held one has to go in before this graph
+     if (!ggml_metal_merge_graph()) {
+         ggml_metal_cmd_buf_hold_flush(ctx);
+     }
+ 
+     if (ctx->has_error) {
+         GGML_LOG_ERROR("%s: backend is in error state from a previous command buffer failure - recreate the backend to recover\n", __func__);
++        // timeline: host span of this call (kind 22)
++        if (tl_on) { tosh_dmoe_timeline(22, gf->n_nodes, tl_enter, tosh_dmoe_host_seconds()); }
+         return GGML_STATUS_FAILED;
+     }
+ 
+     if (gf->n_nodes == 0) {
++        // timeline: host span of this call (kind 22)
++        if (tl_on) { tosh_dmoe_timeline(22, gf->n_nodes, tl_enter, tosh_dmoe_host_seconds()); }
+         return GGML_STATUS_SUCCESS;
+     }
+ #ifdef TOSH_ENABLE_DYNAMIC_MOE
+     // mixed layers get their event values in submission order, before any parallel encoding;
+     // a dynamic cache also pins the residency table this graph reads
+     const bool dmoe_on = tosh_dmoe_enabled();
+     const int dmoe_version = dmoe_on ? tosh_dmoe_published_version() : 0;
+     bool dmoe_ticked = false;
+@@ -4251,49 +4268,61 @@ enum ggml_status ggml_metal_graph_compute(ggml_metal_t ctx, struct ggml_cgraph *
+ 
+                 MTLCommandBufferStatus status = [cmd_buf status];
+                 if (status != MTLCommandBufferStatusCompleted) {
+                     GGML_LOG_INFO("%s: command buffer %d failed with status %lu\n", __func__, n_cb, status);
+                     if (status == MTLCommandBufferStatusError) {
+                         GGML_LOG_INFO("error: %s\n", [[cmd_buf error].localizedDescription UTF8String]);
+                     }
+ 
++                    // timeline: host span of this call (kind 22)
++                    if (tl_on) { tosh_dmoe_timeline(22, gf->n_nodes, tl_enter, tosh_dmoe_host_seconds()); }
+                     return GGML_STATUS_FAILED;
+                 }
+             }
+ 
+             for (int i = 0; i < n_cb; ++i) {
+                 id<MTLCommandBuffer> cmd_buf = ctx->cmd_bufs[i].obj;
+                 [cmd_buf waitUntilCompleted];
+ 
+                 MTLCommandBufferStatus status = [cmd_buf status];
+                 if (status != MTLCommandBufferStatusCompleted) {
+                     GGML_LOG_INFO("%s: command buffer %d failed with status %lu\n", __func__, i, status);
+                     if (status == MTLCommandBufferStatusError) {
+                         GGML_LOG_INFO("error: %s\n", [[cmd_buf error].localizedDescription UTF8String]);
+                     }
+ 
++                    // timeline: host span of this call (kind 22)
++                    if (tl_on) { tosh_dmoe_timeline(22, gf->n_nodes, tl_enter, tosh_dmoe_host_seconds()); }
+                     return GGML_STATUS_FAILED;
+                 }
+ 
+                 id<MTLCommandBuffer> next_buffer = (i + 1 < n_cb ? ctx->cmd_bufs[i + 1].obj : nil);
+                 if (!next_buffer) {
+                     continue;
+                 }
+ 
+                 const bool next_queued = ([next_buffer status] != MTLCommandBufferStatusNotEnqueued);
+                 if (next_queued) {
+                     continue;
+                 }
+ 
+                 if (ctx->abort_callback && ctx->abort_callback(ctx->abort_callback_data)) {
+                     GGML_LOG_INFO("%s: command buffer %d aborted", __func__, i);
++                    // timeline: host span of this call (kind 22)
++                    if (tl_on) { tosh_dmoe_timeline(22, gf->n_nodes, tl_enter, tosh_dmoe_host_seconds()); }
+                     return GGML_STATUS_ABORTED;
+                 }
+ 
++                // timeline: GPU span of this command buffer (kind 21)
++                if (tl_on) {
++                    [next_buffer addCompletedHandler:^(id<MTLCommandBuffer> cb) {
++                        tosh_dmoe_timeline(21, i + 1, cb.GPUStartTime, cb.GPUEndTime);
++                    }];
++                }
+                 [next_buffer commit];
+             }
+ 
+             [ctx->capture_scope endScope];
+             [[MTLCaptureManager sharedCaptureManager] stopCapture];
+ 
+             ctx->capture_started = false;
+         }
+@@ -4303,16 +4332,18 @@ enum ggml_status ggml_metal_graph_compute(ggml_metal_t ctx, struct ggml_cgraph *
+         atomic_fetch_add_explicit(&cbp->bucket->enc_ns,
+                 clock_gettime_nsec_np(CLOCK_UPTIME_RAW) - cbp_t0, memory_order_relaxed);
+         // drop the reference held while encoding; the last completion handler frees it
+         if (atomic_fetch_sub_explicit(&cbp->n_left, 1, memory_order_acq_rel) == 1) {
+             free(cbp);
+         }
+     }
+ 
++    // timeline: host span of this call (kind 22)
++    if (tl_on) { tosh_dmoe_timeline(22, gf->n_nodes, tl_enter, tosh_dmoe_host_seconds()); }
+     return GGML_STATUS_SUCCESS;
+ }
+ 
+ // the reorder gains on dense decode but disturbs the expert chain on MoE, so this stays
+ // narrow on purpose
+ static bool ggml_metal_graph_is_moe_decode(const struct ggml_cgraph * gf, int max_tokens) {
+     bool has_experts = false;
+ 
+@@ -4469,16 +4500,22 @@ void ggml_metal_set_n_cb(ggml_metal_t ctx, int n_cb) {
+ 
+         ggml_metal_op_free(ctx_op);
+         if (cb_idx == n_cb_l) {
+             ggml_metal_fb_residual_after(ctx, cmd_buf);
+         }
+ 
+         const uint64_t cbp_t1 = cbp_on ? clock_gettime_nsec_np(CLOCK_UPTIME_RAW) : 0;
+         if (cb_idx < 2 || ctx->abort_callback == NULL) {
++            // timeline: GPU span of this command buffer (kind 21)
++            if (tosh_tl_on()) {
++                [cmd_buf addCompletedHandler:^(id<MTLCommandBuffer> cb) {
++                    tosh_dmoe_timeline(21, cb_idx, cb.GPUStartTime, cb.GPUEndTime);
++                }];
++            }
+             [cmd_buf commit];
+         }
+         if (cbp_on) {
+             const uint64_t cbp_t2 = clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
+             atomic_fetch_add_explicit(&g_cbp_ops_ns,    cbp_t1 - cbp_t0, memory_order_relaxed);
+             atomic_fetch_add_explicit(&g_cbp_commit_ns, cbp_t2 - cbp_t1, memory_order_relaxed);
+         }
+     });
+diff --git a/src/llama-context.cpp b/src/llama-context.cpp
+index 5515c39cf..f1f595b16 100644
+--- a/src/llama-context.cpp
++++ b/src/llama-context.cpp
+@@ -4703,17 +4703,27 @@ int32_t llama_encode(
+     }
+ 
+     return ret;
+ }
+ 
+ int32_t llama_decode(
+         llama_context * ctx,
+           llama_batch   batch) {
++#ifdef TOSH_ENABLE_DYNAMIC_MOE
++    // timeline: wall time of one llama_decode (kind 24)
++    static const bool tl_on = getenv("TOSH_DMOE_TIMELINE") != nullptr;
++    const double tl_t0 = tl_on ? tosh_dmoe_host_seconds() : 0.0;
++#endif
+     const int ret = ctx->decode(batch);
++#ifdef TOSH_ENABLE_DYNAMIC_MOE
++    if (tl_on) {
++        tosh_dmoe_timeline(24, batch.n_tokens, tl_t0, tosh_dmoe_host_seconds());
++    }
++#endif
+     if (ret != 0 && ret != 1) {
+         LLAMA_LOG_ERROR("%s: failed to decode, ret = %d\n", __func__, ret);
+     }
+ 
+     return ret;
+ }
+ 
+ //
+diff --git a/src/llama-tosh-dmoe.cpp b/src/llama-tosh-dmoe.cpp
+index 56f85f742..17af37341 100644
+--- a/src/llama-tosh-dmoe.cpp
++++ b/src/llama-tosh-dmoe.cpp
+@@ -482,16 +482,20 @@ struct executor {
+                 tosh_hostcache_prefetch(nl, ahead_order[j]);
+                 n_ahead++;
+             }
+         }
+     }
+ 
+     // one layer: find the non-resident experts, compute them, answer the GPU
+     bool job(int il, const tosh_dmoe_job & jb) {
++        // timeline: host span of this job (kind 20)
++        static const bool tl_on = getenv("TOSH_DMOE_TIMELINE") != nullptr;
++        const double tl_t0 = tl_on ? tosh_dmoe_host_seconds() : 0.0;
++
+         const clk::time_point t0 = clk::now();
+ 
+         char * stage = (char *) tosh_dmoe_stage_layer(il);
+         if (stage == nullptr || il >= (int) banks.size() || banks[il].gate == nullptr) {
+             tosh_dmoe_fail("a mixed layer has no host bank or stage");
+             return false;
+         }
+         if (jb.n_embd != n_embd || jb.n_tokens > TOSH_DMOE_MAX_TOKENS || jb.n_used <= 0) {
+@@ -572,16 +576,20 @@ struct executor {
+             run(0);
+             unpin_misses();
+         } else if (il + 1 < (int) banks.size()) {
+             read_ahead(il + 1);
+         }
+ 
+         n_jobs++;
+         us_job += (uint64_t) us_since(t0);
++        // timeline: host span of this job (kind 20)
++        if (tl_on) {
++            tosh_dmoe_timeline(20, il, tl_t0, tosh_dmoe_host_seconds());
++        }
+         return true;
+     }
+ 
+     void leader_main() {
+         raise_priority();
+         uint64_t answered = 0;
+         clk::time_point last = clk::now();
+         bool was_active = false;

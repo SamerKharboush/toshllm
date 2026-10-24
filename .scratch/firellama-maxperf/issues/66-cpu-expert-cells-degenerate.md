@@ -68,3 +68,21 @@ Gates passed:
 could not run on 2026-10-23: the user's Qwen3-14B server held both cards, 0.14 GB free each.
 
 The bug itself is not fixed. Explicit `--n-cpu-moe` / `-cmoe` flags still reach this path.
+
+## 2026-10-24: the owed refusal gate, shown
+
+Method: `TOSH_AUTO_SIM_VRAM_MIB` simulates a smaller card on card 1. The 35B Q6_K, `-c 16384
+--dynamic-moe on`.
+- **Dry runs at 4500, 4700, 4900 and 5100:** the plan is `PLAN_UNSUPPORTED` with limits
+  `LEGACY_OFFLOAD_UNSAFE, VRAM_LIMIT, NO_SAFE_FALLBACK`.
+- **The same with `TOSH_AUTO=legacy`:** `PLAN_CLASSIC_NCMOE`. The override still forces the
+  old path.
+- **A real launch at 4700:** exit 1, and the model is not loaded. The log reads "mixed
+  execution does not fit this card, and the --n-cpu-moe fallback answers garbage on a
+  64-lane GPU; free VRAM (...), run on the host with -ngl 0, or force it with
+  TOSH_AUTO=legacy".
+
+Noted, not resolved: under the simulation, Dynamic MoE was refused even at 5100. The real
+card planned it at about 5.0 GiB free on 2026-10-22/23. So the simulation's boundary is not
+the real card's, and the simulation is good for showing the refusal, not for locating where
+it starts.
