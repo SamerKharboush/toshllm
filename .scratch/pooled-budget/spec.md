@@ -1,6 +1,6 @@
 # Spec: the pooled budget levers for 0.87.27-beta.3
 
-Status: ready to hand off, revision 1 (2026-10-24). Map: `map.md`. Glossary: `CONTEXT.md`
+Status: ready to hand off, revision 2 (2026-10-25). Revision 1 was 2026-10-24. Map: `map.md`. Glossary: `CONTEXT.md`
 (**pooled budget**, **display card**, **expert tier**).
 
 Every build ticket below is implemented by OpenCode from a brief. The orchestrator reviews
@@ -27,12 +27,18 @@ A decode token on the expert tier takes about 78 ms:
   roughly 570 MB per token, or about 35.8 GB/s during the 16 ms. This is an estimate from the
   measured job counts and the quant size; this machine's sustained bandwidth is not measured.
   The theoretical peak is 59.7 GB/s (4 × DDR3-1866).
-- **The rest, about 62 ms, is unaccounted for.** That figure is the fit's intercept, an
-  extrapolation, and ticket 09 measures it.
+- **The rest is GPU kernel time** (ticket 09, measured with 0048, 1182 tokens): the GPU has
+  command buffers running for 73.4 of the 76.0 ms. The CPU experts' 14.4 ms are waits inside
+  that span (from ticket 01's slope). That leaves about **59 ms of GPU work**, the largest
+  share. Host encode is 6.6 ms and mostly overlaps the GPU; 2.6 ms has no GPU work.
 
 ## Ranked work
 
-### 1. Measure the 62 ms (map ticket 09). Patch 0048, then a run.
+### 1. Measure the 62 ms (map ticket 09). Patch 0048, then a run. DONE 2026-10-25.
+
+Answered: about 59 ms of GPU kernel work, 14.4 ms of CPU-expert waits inside it, and 2.6 ms
+with no GPU work. The patch is in the series with its clock and kind-24 fixes. The original
+plan follows.
 
 - **Build:** four diagnostic timeline kinds behind `TOSH_DMOE_TIMELINE`, with no behaviour
   change when it is unset:
@@ -55,6 +61,20 @@ A decode token on the expert tier takes about 78 ms:
 - **Decides:** whether one card has anything past the about 16.1 tok/s bound of the CPU
   levers. If the GPU span is mostly the waits on host jobs, then the GPU side (attention plus
   resident experts) is the next lever and gets its own ticket.
+
+### 1b. Which GPU ops take the 59 ms (map ticket 10), a diagnostic patch
+
+- **Build:** a diagnostic mode (an env variable) that commits each op, or each op kind, in its
+  own command buffer and records its GPU span. Nothing changes when it is unset.
+- **Run:** card 1, the same launch. Report:
+  - per op kind: count, GPU ms per token, and the share of the 59 ms;
+  - the per-op mode's own token time next to the normal one, since its overhead must be
+    visible;
+  - the join op's span, which measures the host wait directly.
+- **Decides:** whether GCN kernel work, for example the Q6_K/Q4_K matmul-vec or the delta-net
+  ops, becomes the top lever. It would help every model on the cards: the dense 8B decodes
+  at only 9.0 tok/s across both (R25). If it does, it gets its own ranked item ahead of 3,
+  and the user is asked to re-confirm the order.
 
 ### 2. The two-card expert tier (ticket 71, shape decided in map ticket 07)
 

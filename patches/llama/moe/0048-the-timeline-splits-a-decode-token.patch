@@ -170,37 +170,55 @@ index 4bfb0f3f8..54ab54e30 100644
          }
      });
 diff --git a/src/llama-context.cpp b/src/llama-context.cpp
-index 5515c39cf..f1f595b16 100644
+index 5515c39cf..30b0e51f2 100644
 --- a/src/llama-context.cpp
 +++ b/src/llama-context.cpp
-@@ -4703,17 +4703,27 @@ int32_t llama_encode(
+@@ -1915,17 +1915,45 @@ static bool needs_raw_logits(const llama_ubatch & ubatch, const std::map<llama_s
+             if (samplers.find(seq_id) == samplers.end()) {
+                 return true;
+             }
+         }
      }
- 
-     return ret;
+     return false; // all sequences use backend sampling
  }
  
- int32_t llama_decode(
-         llama_context * ctx,
-           llama_batch   batch) {
 +#ifdef TOSH_ENABLE_DYNAMIC_MOE
-+    // timeline: wall time of one llama_decode (kind 24)
-+    static const bool tl_on = getenv("TOSH_DMOE_TIMELINE") != nullptr;
-+    const double tl_t0 = tl_on ? tosh_dmoe_host_seconds() : 0.0;
-+#endif
-     const int ret = ctx->decode(batch);
-+#ifdef TOSH_ENABLE_DYNAMIC_MOE
-+    if (tl_on) {
-+        tosh_dmoe_timeline(24, batch.n_tokens, tl_t0, tosh_dmoe_host_seconds());
++// timeline: wall time of one decode (kind 24)
++namespace {
++struct tl_decode_guard {
++    const llama_batch_ext & batch;
++    double                  t0;
++    bool                    on;
++
++    explicit tl_decode_guard(const llama_batch_ext & batch_inp) : batch(batch_inp), t0(0.0), on(false) {
++        static const bool tl_on = getenv("TOSH_DMOE_TIMELINE") != nullptr;
++        if (tl_on) {
++            on = true;
++            t0 = tosh_dmoe_host_seconds();
++        }
 +    }
++
++    ~tl_decode_guard() {
++        if (on) {
++            tosh_dmoe_timeline(24, (int) batch.tokens.size(), t0, tosh_dmoe_host_seconds());
++        }
++    }
++};
++}
 +#endif
-     if (ret != 0 && ret != 1) {
-         LLAMA_LOG_ERROR("%s: failed to decode, ret = %d\n", __func__, ret);
++
+ int llama_context::decode(const llama_batch_ext & batch_inp) {
++#ifdef TOSH_ENABLE_DYNAMIC_MOE
++    tl_decode_guard tl_guard(batch_inp);
++#endif
+     if (!memory) {
+         LLAMA_LOG_DEBUG("%s: cannot decode batches with this context (calling encode() instead)\n", __func__);
+         return encode(batch_inp);
      }
  
-     return ret;
- }
- 
- //
+     if (batch_inp.tokens.empty()) {
+         LLAMA_LOG_ERROR("%s: n_tokens == 0\n", __func__);
+         return -1;
 diff --git a/src/llama-tosh-dmoe.cpp b/src/llama-tosh-dmoe.cpp
 index 56f85f742..17af37341 100644
 --- a/src/llama-tosh-dmoe.cpp
@@ -247,3 +265,54 @@ index 56f85f742..17af37341 100644
          uint64_t answered = 0;
          clk::time_point last = clk::now();
          bool was_active = false;
+diff --git a/tosh-moe/tosh-dmoe.cpp b/tosh-moe/tosh-dmoe.cpp
+index f1b201aeb..7423a52cf 100644
+--- a/tosh-moe/tosh-dmoe.cpp
++++ b/tosh-moe/tosh-dmoe.cpp
+@@ -4,16 +4,17 @@
+ #include <vector>
+ #include <cstdio>
+ #include <cstdlib>
+ #include <chrono>
+ #include <condition_variable>
+ #include <algorithm>
+ #include <mutex>
+ #include <thread>
++#include <time.h>
+ 
+ namespace {
+ 
+ std::atomic<char *>   g_stage{nullptr};
+ std::atomic<size_t>   g_stride{0};
+ 
+ void *                g_ev = nullptr;
+ uint64_t            (*g_ev_get)(void *) = nullptr;
+@@ -131,20 +132,27 @@ void tl_dump() {
+     if (!p) return;
+     std::lock_guard<std::mutex> lock(g_tl_mutex);
+     if (FILE * f = fopen(p, "w")) {
+         for (auto & e : g_tl) fprintf(f, "%d %d %.6f %.6f\n", e.kind, e.il, e.t0, e.t1);
+         fclose(f);
+     }
+ }
+ }
+-// steady_clock runs on the same uptime clock Metal stamps command buffers with
++// Metal stamps command buffers with the uptime clock (GPUStartTime/GPUEndTime).
++// steady_clock does not match it on Apple because it keeps counting while asleep.
++#ifdef __APPLE__
++double tosh_dmoe_host_seconds(void) {
++    return clock_gettime_nsec_np(CLOCK_UPTIME_RAW) * 1e-9;
++}
++#else
+ double tosh_dmoe_host_seconds(void) {
+     return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+ }
++#endif
+ void tosh_dmoe_timeline(int kind, int il, double t0, double t1) {
+     static const bool on = getenv("TOSH_DMOE_TIMELINE") != nullptr;
+     if (!on) return;
+     std::lock_guard<std::mutex> lock(g_tl_mutex);
+     if (g_tl.empty()) { g_tl.reserve(1 << 20); atexit(tl_dump); }
+     if (g_tl.size() < (1 << 22)) g_tl.push_back({ kind, il, t0, t1 });
+ }
+ 
