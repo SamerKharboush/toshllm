@@ -1,0 +1,304 @@
+diff --git a/ggml/src/ggml-metal/ggml-metal-context.m b/ggml/src/ggml-metal/ggml-metal-context.m
+index 54ab54e30..759d6f26d 100644
+--- a/ggml/src/ggml-metal/ggml-metal-context.m
++++ b/ggml/src/ggml-metal/ggml-metal-context.m
+@@ -413,16 +413,181 @@ static bool tosh_tl_on(void) {
+     }
+     return on == 1;
+ }
+ 
+ static uint64_t tosh_now_ns(void) {
+     return clock_gettime_nsec_np(CLOCK_MONOTONIC);
+ }
+ 
++
++// TOSH_OPGPU=1: each graph is encoded with one command buffer per op, so the per-buffer GPU
++// timestamps give per-op GPU time. Each buffer's GPUEndTime - GPUStartTime is summed per op
++// kind, keyed by the graph's node count so decode and prefill report apart, and the table is
++// printed at exit. Completion handlers run off-thread, so the table sits behind a lock.
++#define TOSH_OPGPU_MAX_GRAPHS  12
++#define TOSH_OPGPU_MAX_OPS     56
++#define TOSH_OPGPU_NAME_LEN    48
++
++static bool tosh_opgpu_on(void) {
++    static int on = -1;
++    if (on < 0) {
++        const char * v = TOSH_ENV("TOSH_OPGPU");
++        on = (v && v[0] == '1') ? 1 : 0;
++    }
++    return on == 1;
++}
++
++// the node filter of ggml_metal_op, so the per-op cursor advances the same way
++static bool tosh_opgpu_keep(const struct ggml_tensor * node) {
++    return !ggml_op_is_empty(node->op) && !ggml_is_empty(node);
++}
++
++struct tosh_opgpu_op {
++    char             name[TOSH_OPGPU_NAME_LEN];
++    _Atomic uint64_t ns;   // GPU time summed over every run
++    _Atomic uint64_t n;    // how many times the op ran
++};
++
++struct tosh_opgpu_key {
++    int  n_nodes;      // graph size the op belongs to
++    char name[TOSH_OPGPU_NAME_LEN];
++};
++
++struct tosh_opgpu_graph {
++    _Atomic int          n_nodes;    // graph size, 0 = free slot
++    _Atomic uint64_t     n_graphs;
++    int                  n_ops;      // guarded by g_opgpu_lock
++    struct tosh_opgpu_op ops[TOSH_OPGPU_MAX_OPS];
++};
++
++static struct tosh_opgpu_graph g_opgpu[TOSH_OPGPU_MAX_GRAPHS];
++static _Atomic int      g_opgpu_reg;
++static _Atomic uint64_t g_opgpu_drop;
++
++static os_unfair_lock g_opgpu_lock = OS_UNFAIR_LOCK_INIT;
++
++static void tosh_opgpu_report(void);
++
++static void tosh_opgpu_reg(void) {
++    int expected = 0;
++    if (atomic_compare_exchange_strong(&g_opgpu_reg, &expected, 1)) {
++        atexit(tosh_opgpu_report);
++    }
++}
++
++// assumes the caller holds the lock
++static struct tosh_opgpu_graph * tosh_opgpu_graph_slot(int n_nodes) {
++    for (int i = 0; i < TOSH_OPGPU_MAX_GRAPHS; ++i) {
++        if (atomic_load_explicit(&g_opgpu[i].n_nodes, memory_order_relaxed) == n_nodes) {
++            return &g_opgpu[i];
++        }
++    }
++    for (int i = 0; i < TOSH_OPGPU_MAX_GRAPHS; ++i) {
++        int expected = 0;
++        if (atomic_compare_exchange_strong(&g_opgpu[i].n_nodes, &expected, n_nodes)) {
++            return &g_opgpu[i];
++        }
++    }
++    return NULL;
++}
++
++static void tosh_opgpu_graph_start(int n_nodes) {
++    os_unfair_lock_lock(&g_opgpu_lock);
++    struct tosh_opgpu_graph * g = tosh_opgpu_graph_slot(n_nodes);
++    if (g != NULL) {
++        atomic_fetch_add(&g->n_graphs, 1);
++    } else {
++        atomic_fetch_add(&g_opgpu_drop, 1);
++    }
++    os_unfair_lock_unlock(&g_opgpu_lock);
++}
++
++static void tosh_opgpu_record(int n_nodes, const char * name, uint64_t ns) {
++    os_unfair_lock_lock(&g_opgpu_lock);
++    struct tosh_opgpu_graph * g = tosh_opgpu_graph_slot(n_nodes);
++    struct tosh_opgpu_op * o = NULL;
++    if (g != NULL) {
++        for (int i = 0; i < g->n_ops; ++i) {
++            if (strcmp(g->ops[i].name, name) == 0) {
++                o = &g->ops[i];
++                break;
++            }
++        }
++        if (o == NULL && g->n_ops < TOSH_OPGPU_MAX_OPS) {
++            o = &g->ops[g->n_ops++];
++            snprintf(o->name, sizeof(o->name), "%s", name);
++        }
++    }
++    if (o != NULL) {
++        atomic_fetch_add(&o->ns, ns);
++        atomic_fetch_add(&o->n,  1);
++    } else {
++        atomic_fetch_add(&g_opgpu_drop, 1);
++    }
++    os_unfair_lock_unlock(&g_opgpu_lock);
++}
++
++static void tosh_opgpu_report(void) {
++    if (atomic_load_explicit(&g_opgpu_drop, memory_order_relaxed) > 0) {
++        fprintf(stderr, "TOSH_OPGPU %llu entries dropped past the table\n",
++                (unsigned long long) atomic_load_explicit(&g_opgpu_drop, memory_order_relaxed));
++    }
++
++    for (int i = 0; i < TOSH_OPGPU_MAX_GRAPHS; ++i) {
++        const int      n_nodes  = atomic_load(&g_opgpu[i].n_nodes);
++        const uint64_t n_graphs = atomic_load(&g_opgpu[i].n_graphs);
++        if (n_nodes <= 0 || n_graphs < 10) {
++            continue;
++        }
++
++        const struct tosh_opgpu_op * ops[TOSH_OPGPU_MAX_OPS];
++        uint64_t ns[TOSH_OPGPU_MAX_OPS];
++        uint64_t n [TOSH_OPGPU_MAX_OPS];
++        int      order[TOSH_OPGPU_MAX_OPS];
++        int      n_ops;
++
++        os_unfair_lock_lock(&g_opgpu_lock);
++        n_ops = g_opgpu[i].n_ops;
++        for (int j = 0; j < n_ops; ++j) {
++            ops[j] = &g_opgpu[i].ops[j];
++        }
++        os_unfair_lock_unlock(&g_opgpu_lock);
++
++        for (int j = 0; j < n_ops; ++j) {
++            ns[j]    = atomic_load(&ops[j]->ns);
++            n[j]     = atomic_load(&ops[j]->n);
++            order[j] = j;
++        }
++        // insertion sort by total GPU time, longest first
++        for (int j = 1; j < n_ops; ++j) {
++            const uint64_t v = ns[j];
++            const int      k = order[j];
++            int p = j - 1;
++            while (p >= 0 && ns[order[p]] < v) {
++                order[p + 1] = order[p];
++                p--;
++            }
++            order[p + 1] = k;
++        }
++
++        double ms_sum = 0.0;
++        fprintf(stderr, "TOSH_OPGPU nodes=%d graphs=%llu\n", n_nodes, (unsigned long long) n_graphs);
++        for (int j = 0; j < n_ops; ++j) {
++            ms_sum += (double) ns[order[j]] / n_graphs / 1e6;
++            fprintf(stderr, "  %-24s n/graph=%8.2f  ms/graph=%9.3f  us/op=%9.2f\n",
++                    ops[order[j]]->name,
++                    (double) n[order[j]] / n_graphs,
++                    (double) ns[order[j]] / n_graphs / 1e6,
++                    n[order[j]] > 0 ? (double) ns[order[j]] / n[order[j]] / 1e3 : 0.0);
++        }
++        fprintf(stderr, "  %-24s              ms/graph=%9.3f\n", "total", ms_sum);
++    }
++}
++
+ // Separates three things the old instrumentation conflated: when the host committed each
+ // side, when each GPU started the collective, and the signed order of both. The collective
+ // loop is serial on the CPU, so a GPU-start difference is not evidence of compute imbalance
+ // until the commit difference is subtracted from it.
+ #define TOSH_SKEW_SLOTS 8192
+ static struct {
+     _Atomic uint64_t seq[2];
+     _Atomic uint64_t commit_ns[2];
+@@ -4171,16 +4336,117 @@ enum ggml_status ggml_metal_graph_compute(ggml_metal_t ctx, struct ggml_cgraph *
+             }
+         }
+ 
+         // short-hand
+         id<MTLCommandQueue> queue = ctx->queue;
+ 
+         const uint64_t cbp_tc = cbp != NULL ? clock_gettime_nsec_np(CLOCK_UPTIME_RAW) : 0;
+ 
++        // TOSH_OPGPU=1: one command buffer per op. Metal on this GPU reports GPU timestamps
++        // per command buffer only, so this is the way to measure per-op GPU time. Normal
++        // encoding below is untouched when the variable is unset.
++        if (tosh_opgpu_on() && !use_capture) {
++            tosh_opgpu_reg();
++            tosh_opgpu_graph_start(gf->n_nodes);
++
++            id<MTLCommandBuffer> opgpu_last = nil;
++            bool first_buf = true;
++            int i = 0;
++            while (i < gf->n_nodes) {
++                if (!tosh_opgpu_keep(gf->nodes[i])) {
++                    // the op encoder would filter this node out; nothing to time
++                    i++;
++                    continue;
++                }
++
++                id<MTLCommandBuffer> cmd_buf = [queue commandBufferWithUnretainedReferences];
++                // continue the collective's buffer when it left one open, otherwise start a new one
++                if (first_buf) {
++                    ggml_metal_encode_pending_waits(ctx, cmd_buf);
++                    ggml_metal_fb_residual_before(ctx, cmd_buf, ctx->gf, 0);
++                    first_buf = false;
++                }
++
++                ggml_metal_op_t ctx_op = ggml_metal_op_init(
++                    ctx->dev,
++                    cmd_buf,
++                    ctx->gf,
++                    ctx->finfo,
++                    i,
++                    gf->n_nodes,
++                    false, // one op per buffer: no concurrent encoding
++                    ctx->capture_compute == 0,
++                    ctx->debug_graph);
++
++                const int res = ggml_metal_op_encode(ctx_op, 0);
++
++                ggml_metal_op_free(ctx_op);
++
++                // quant types are told apart for the matmul pair ops, fused ops report
++                // under their first node
++                char name[TOSH_OPGPU_NAME_LEN];
++                struct ggml_tensor * node = gf->nodes[i];
++                const char * desc = ggml_op_desc(node);
++                if (res > 1) {
++                    snprintf(name, sizeof(name), "%s+fused", desc);
++                } else if ((node->op == GGML_OP_MUL_MAT || node->op == GGML_OP_MUL_MAT_ID) && node->src[0]) {
++                    snprintf(name, sizeof(name), "%s/%s", desc, ggml_type_name(node->src[0]->type));
++                } else {
++                    snprintf(name, sizeof(name), "%s", desc);
++                }
++
++                struct tosh_opgpu_key opgpu_key;
++                opgpu_key.n_nodes = gf->n_nodes;
++                snprintf(opgpu_key.name, sizeof(opgpu_key.name), "%s", name);
++                [cmd_buf addCompletedHandler:^(id<MTLCommandBuffer> cb) {
++                    const double t0 = [cb GPUStartTime];
++                    const double t1 = [cb GPUEndTime];
++                    if (t1 > t0) {
++                        tosh_opgpu_record(opgpu_key.n_nodes, opgpu_key.name, (uint64_t) ((t1 - t0)*1e9));
++                    }
++                }];
++
++                opgpu_last = cmd_buf;
++                ggml_metal_cmd_buf_submit(ctx, cmd_buf);
++
++                if (res == 0) {
++                    GGML_LOG_ERROR("%s: opgpu: op %d failed to encode, stopping the graph\n", __func__, i);
++                    break;
++                }
++
++                // jump past the nodes a fused op consumed. ggml_metal_op counts relative to
++                // its own filtered node list, so skip its empty-node filter the same way
++                i++;
++                for (int used = 1; used < res && i < gf->n_nodes; ++i) {
++                    if (tosh_opgpu_keep(gf->nodes[i])) {
++                        used++;
++                    }
++                }
++            }
++
++            if (opgpu_last) {
++                ggml_metal_fb_residual_after(ctx, opgpu_last);
++            }
++
++            // keep the same accounting as the normal path
++            if (cbp != NULL) {
++                atomic_fetch_add_explicit(&cbp->bucket->enc_ns,
++                        clock_gettime_nsec_np(CLOCK_UPTIME_RAW) - cbp_tc, memory_order_relaxed);
++                // no tosh_cbp_attach here: the counter starts at 1 and drops to 0 below
++                if (atomic_fetch_sub_explicit(&cbp->n_left, 1, memory_order_acq_rel) == 1) {
++                    free(cbp);
++                }
++            }
++
++            // timeline: host span of this call (kind 22)
++            if (tl_on) { tosh_dmoe_timeline(22, gf->n_nodes, tl_enter, tosh_dmoe_host_seconds()); }
++            return GGML_STATUS_SUCCESS;
++        }
++
+         // the main thread commits the first few commands immediately
+         // cmd_buf[n_cb]
+         {
+             // continue the collective's buffer when it left one open, otherwise start a new one
+             id<MTLCommandBuffer> cmd_buf = nil;
+             if (ggml_metal_merge_graph() && ctx->cmd_buf_hold != nil) {
+                 cmd_buf = ctx->cmd_buf_hold;
+                 ctx->cmd_buf_hold = nil;

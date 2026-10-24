@@ -89,7 +89,7 @@ speedup.
 
 The work comes in three briefs, in order. Each one is a separate patch or commit.
 
-- **2a. Planner, patch 0049.** Under `GGML_METAL_DEVICES=2 --split-mode layer` with
+- **2a. Planner, patch 0050.** Under `GGML_METAL_DEVICES=2 --split-mode layer` with
   `--dynamic-moe on`, the planner budgets each device:
   - each device's free VRAM;
   - the layers the split gives it;
@@ -100,7 +100,7 @@ The work comes in three briefs, in order. Each one is a separate patch or commit
   - Gate 1: on the 35B at `-c 16384`, the dry-run JSON lists two device budgets, each within
     its device's free VRAM.
   - Gate 2: the one-card dry-run JSON is byte-identical to today's for the same arguments.
-- **2b. Runtime, patch 0050.** Replace the single arena (`g_arena_buf`, one GPU from
+- **2b. Runtime, patch 0051.** Replace the single arena (`g_arena_buf`, one GPU from
   `ggml_backend_dev_by_type(GPU)` at `src/llama-tosh-dmoe.cpp:1865-1869`) with one arena
   buffer per device. Each layer's arena is allocated on the device that holds that layer's
   weights, and the executor stays one. The Metal rendezvous state is already per device
