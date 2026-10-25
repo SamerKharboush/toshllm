@@ -52,3 +52,33 @@ through a layer split, as the 8B does today (R25).
   logs per device, coherent output, N >= 6 against the one-card row of ticket 70.
 - A MoE model that one-card Dynamic MoE refuses runs across two cards, or the reason it cannot is recorded.
 - Configurations that cannot be run are named next to the numbers.
+
+## 2026-10-25: patches 0051 and 0052, and what a two-card load does now
+
+- **0051:** every card registers its own Dynamic MoE rendezvous.
+- **0052:** an expert arena on each card, sized by the per-card budget.
+- **Two-card load of the 35B at `-c 16384`:**
+  - budget: card 0 has 5285 MiB free and gets a 1705 MiB arena; card 1 has 5906 MiB free
+    and gets 2555 MiB;
+  - slots: 33 per layer, the minimum of the per-card 33 and 54;
+  - allocated: 1705.45 MiB on device 0 and 1543.03 MiB on device 1, so card 1 is held to
+    33 slots.
+- **It still aborts** at the first graph, in the AMD driver:
+  `Assertion failed: (cmdBufInfo->device == rsrc->_res.device), function amdMtlBronzeCmdBufUpdateRsrc`.
+  That is a command buffer on one card using a resource on the other. The hypothesis, not
+  yet shown: card 0's legacy uploader writing into card 1's arena. Routing uploads and the
+  executor by the layer's card is 0053.
+- **One card, the 35B greedy BST prompt:**
+  - the first sentence and decode speed (12.7–12.8 tok/s) are unchanged;
+  - the wording at word 30 is a near-tie that flips between "data structure in computer
+    science" and "data structure concept in computer science": 2 of 6 runs on the 0052
+    build, 0 of 2 on the pre-0051 build, 3 of 3 on 0051 before its uploader fix, 0 of 2
+    after.
+  - **Correction to the 0051 commit message:** these samples are too small to say the
+    first 0051 version "changed one-card behaviour". The uploader fix stands for another
+    reason: the eager init ran before `dev->props.device` was set, so every card registered
+    as card 0.
+- **The bug in OpenCode's 0052, fixed by the orchestrator:** `dmoe_init` recomputed each
+  card's arena as free − reserve − overhead − prefetch without the card's model, cache and
+  compute bytes. The budget's per-card arena is now passed in. Before the fix it allocated
+  3152 + 2852 MiB against a budget of 1711 + 2555.

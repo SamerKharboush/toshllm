@@ -1,0 +1,835 @@
+diff --git a/src/llama-context.cpp b/src/llama-context.cpp
+index 30b0e51f2..5f9cf3d7e 100644
+--- a/src/llama-context.cpp
++++ b/src/llama-context.cpp
+@@ -528,28 +528,48 @@ llama_context::llama_context(
+         if (cparams.pipeline_parallel) {
+             LLAMA_LOG_INFO("%s: pipeline parallelism enabled\n", __func__);
+         }
+ 
+         sched_reserve();
+ 
+         // an automatic expert arena takes what the card has left once this context is sized
+         if (llama_tosh_dmoe_budget_pending() || llama_tosh_dmoe_rebudget_possible()) {
+-            size_t gpu_bytes = 0;
++            // Build map from buffer type to device index using context's backends
++            std::map<ggml_backend_buffer_type_t, int> buft_to_dev;
++            for (size_t i = 0; i < backend_buft.size(); ++i) {
++                ggml_backend_dev_t dev = ggml_backend_buft_get_device(backend_buft[i]);
++                if (dev && ggml_backend_dev_type(dev) == GGML_BACKEND_DEVICE_TYPE_GPU) {
++                    buft_to_dev[backend_buft[i]] = (int) i;
++                }
++            }
++
++            // Group GPU bytes by device index
++            std::vector<size_t> gpu_bytes_per_dev(backend_buft.size(), 0);
+             for (const auto & [buft, d] : memory_breakdown()) {
+-                ggml_backend_dev_t dev = ggml_backend_buft_get_device(buft);
+-                if (dev != nullptr && ggml_backend_dev_type(dev) == GGML_BACKEND_DEVICE_TYPE_GPU && !ggml_backend_buft_is_host(buft)) {
+-                    gpu_bytes += d.total();
++                auto it = buft_to_dev.find(buft);
++                if (it != buft_to_dev.end()) {
++                    gpu_bytes_per_dev[it->second] += d.total();
+                 }
+             }
++
+             // the breakdown files buffers by the type a tensor asked for; the backend knows what it holds
+             if (const size_t held = tosh_dmoe_private_bytes()) {
+-                gpu_bytes = held;
++                // Private bytes override is single-device only; apply to first device in multi-GPU mode
++                if (gpu_bytes_per_dev.size() == 1) {
++                    gpu_bytes_per_dev[0] = held;
++                }
++                // In multi-device mode, ignore the override (each device sized from its own free VRAM)
++            }
++
++            // Remove trailing zeros
++            while (!gpu_bytes_per_dev.empty() && gpu_bytes_per_dev.back() == 0) {
++                gpu_bytes_per_dev.pop_back();
+             }
+-            llama_tosh_dmoe_budget(gpu_bytes);
++            llama_tosh_dmoe_budget(gpu_bytes_per_dev);
+             sched_reserve();
+         }
+         llama_tosh_dmoe_context_opened();
+ 
+         if (!cparams.flash_attn) {
+             if (ggml_is_quantized(params.type_v)) {
+                 throw std::runtime_error("quantized V cache was requested, but this requires Flash Attention");
+             }
+diff --git a/src/llama-model.cpp b/src/llama-model.cpp
+index 735704245..7753807ed 100644
+--- a/src/llama-model.cpp
++++ b/src/llama-model.cpp
+@@ -1963,17 +1963,40 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
+ 
+     // load tensor data
+     for (auto & [ctx, buf_map] : ctx_buf_maps) {
+         if (!ml.load_all_data(ctx, buf_map, use_mlock ? &pimpl->mlock_mmaps : NULL, params.progress_callback, params.progress_callback_user_data)) {
+             return false;
+         }
+     }
+ 
+-    llama_tosh_dmoe_init(layers, hparams);
++    // Build layer->device index map for multi-GPU DMoE arena allocation
++    std::vector<int> layer_device_indices;
++    layer_device_indices.resize(n_layer_all);
++    for (int il = 0; il < n_layer_all; ++il) {
++        ggml_backend_dev_t dev = pimpl->dev_layer[il].dev;
++        // Get device index from the backend device
++        int dev_idx = -1;
++        if (dev && ggml_backend_dev_type(dev) == GGML_BACKEND_DEVICE_TYPE_GPU) {
++            // Count GPU devices to find the index of this one
++            int gpu_count = 0;
++            for (int i = 0; i < ggml_backend_dev_count(); ++i) {
++                ggml_backend_dev_t d = ggml_backend_dev_get(i);
++                if (ggml_backend_dev_type(d) == GGML_BACKEND_DEVICE_TYPE_GPU) {
++                    if (d == dev) {
++                        dev_idx = gpu_count;
++                        break;
++                    }
++                    gpu_count++;
++                }
++            }
++        }
++        layer_device_indices[il] = dev_idx;
++    }
++    llama_tosh_dmoe_init_ex(layers, hparams, layer_device_indices);
+ 
+     if (use_mmap_buffer) {
+         for (auto & mapping : ml.mappings) {
+             pimpl->mappings.emplace_back(std::move(mapping));
+         }
+     }
+ 
+     // after the load: a mapped weight only gets its buffer there
+diff --git a/src/llama-tosh-dmoe.cpp b/src/llama-tosh-dmoe.cpp
+index 17af37341..262397e0a 100644
+--- a/src/llama-tosh-dmoe.cpp
++++ b/src/llama-tosh-dmoe.cpp
+@@ -1381,18 +1381,28 @@ struct policy {
+         }
+     }
+ };
+ 
+ static policy * g_policy = nullptr;
+ 
+ static executor * g_exec = nullptr;
+ 
++// Per-device arena buffers (one per GPU device). Single GPU uses g_arena_bufs[0].
++static std::vector<ggml_backend_buffer_t> g_arena_bufs;
++
++// Backward compatibility: pointer to first arena buffer (for single-GPU code paths)
+ static ggml_backend_buffer_t g_arena_buf = nullptr;
+ 
++// Layer -> device index mapping (Metal device order). Index is the device index (0..7).
++static std::vector<int> g_layer_dev;
++
++// List of distinct GPU device indices that have MoE layers, in order.
++static std::vector<int> g_moe_devices;
++
+ // bank data pointer -> (layer, tensor), for prefill uploads that read residents from the arena
+ struct bank_ref { int il; int which; const ggml_tensor * bank; };
+ static std::unordered_map<const void *, bank_ref> g_bank_refs;
+ static std::vector<const llama_tosh_dmoe_layer *> g_layer_by_il;
+ static std::vector<std::vector<int32_t>> g_fixed_slots;
+ static int g_n_expert = 0;
+ 
+ static bool dmoe_bank_plan(const void * host, size_t size, tosh_dmoe_bank_plan * plan) {
+@@ -1570,23 +1580,30 @@ void llama_tosh_dmoe_shutdown() {
+         }
+         for (auto & t : g_exec->helpers) if (t.joinable()) t.join();
+         if (g_exec->leader.joinable())   g_exec->leader.join();
+         if (g_exec->watchdog.joinable()) g_exec->watchdog.join();
+         tosh_dmoe_set_active(false);
+     }
+     // the stats stay for the exit report; the arena and the layer map go with the model
+     g_layers.clear();
+-    if (g_arena_buf != nullptr) {
+-        ggml_backend_buffer_free(g_arena_buf);
+-        g_arena_buf = nullptr;
++    for (auto buf : g_arena_bufs) {
++        if (buf != nullptr) {
++            ggml_backend_buffer_free(buf);
++        }
+     }
++    g_arena_bufs.clear();
++    g_arena_buf = nullptr;
+ }
+ 
+-static void dmoe_init(std::vector<llama_layer> & layers, const llama_hparams & hparams, const char * path, double cache_mib);
++// the arena each device can hold, in bytes, as the budget sized it after that device's model, cache and compute
++static std::vector<double> g_dev_arena_bytes;
++
++static void dmoe_init(std::vector<llama_layer> & layers, const llama_hparams & hparams, const char * path, double cache_mib,
++                      const std::vector<int> * layer_dev = nullptr);
+ 
+ // A cache size is a request, not a requirement: a model or budget it cannot serve keeps running
+ // without mixed execution. A residency file is a test setup and still fails the load.
+ // TOSH_DMOE_STATUS_FILE: what mixed execution ended up doing, for whoever planned it
+ static void dmoe_status(bool on, const char * code, const std::string & detail, double arena_mib) {
+     const char * path = getenv("TOSH_DMOE_STATUS_FILE");
+     if (path == nullptr) {
+         return;
+@@ -1664,19 +1681,20 @@ static void dmoe_start_hostcache(const std::vector<llama_layer> & layers, const
+             const uintptr_t b = ((uintptr_t) t->data + ggml_nbytes(t)) & ~(uintptr_t) (page - 1);
+             if (b > a) mprotect((void *) a, b - a, PROT_NONE);
+         }
+     }
+     atexit(tosh_hostcache_report);
+     started = true;
+ }
+ 
+-static void dmoe_init_or_off(std::vector<llama_layer> & layers, const llama_hparams & hparams, const char * path, double cache_mib) {
++static void dmoe_init_or_off(std::vector<llama_layer> & layers, const llama_hparams & hparams, const char * path, double cache_mib,
++                             const std::vector<int> * layer_dev = nullptr) {
+     if (path != nullptr) {
+-        dmoe_init(layers, hparams, path, cache_mib);
++        dmoe_init(layers, hparams, path, cache_mib, layer_dev);
+         return;
+     }
+     try {
+         if (tosh_hostcache_on()) {
+             dmoe_start_hostcache(layers, hparams);
+         } else {
+             dmoe_lock_bank(layers);
+             if (getenv("TOSH_DMOE_HOST_BYTECHECK")) {
+@@ -1691,18 +1709,23 @@ static void dmoe_init_or_off(std::vector<llama_layer> & layers, const llama_hpar
+                             bad += !tosh_hostcache_bytecheck(t->data, t->nb[2], e);
+                         }
+                     }
+                 }
+                 LLAMA_LOG_INFO("%s: expert bytes read from the file against the loaded bank: %d checked in %d file(s), %d differ\n",
+                                __func__, n, tosh_hostcache_n_files(), bad);
+             }
+         }
+-        dmoe_init(layers, hparams, path, cache_mib);
+-        dmoe_status(true, "DMOE_ON", "", g_arena_buf ? ggml_backend_buffer_get_size(g_arena_buf)/1048576.0 : 0.0);
++        dmoe_init(layers, hparams, path, cache_mib, layer_dev);
++        // Sum all arena buffers for status
++        size_t total_arena = 0;
++        for (auto buf : g_arena_bufs) {
++            if (buf) total_arena += ggml_backend_buffer_get_size(buf);
++        }
++        dmoe_status(true, "DMOE_ON", "", total_arena/1048576.0);
+     } catch (const std::exception & err) {
+         if (tosh_hostcache_on()) {
+             throw;   // the bank holds no data: there is no path without the cache
+         }
+         LLAMA_LOG_WARN("%s: mixed expert execution stays off: %s\n", __func__, err.what());
+         llama_tosh_dmoe_shutdown();
+         delete g_policy;
+         g_policy = nullptr;
+@@ -1725,17 +1748,44 @@ void llama_tosh_dmoe_init(std::vector<llama_layer> & layers, const llama_hparams
+     if ((path == nullptr && cache_mib == nullptr) || g_exec != nullptr) {
+         return;
+     }
+     if (path == nullptr && strcmp(cache_mib, "auto") == 0) {
+         g_defer_layers  = &layers;
+         g_defer_hparams = &hparams;
+         return;
+     }
+-    dmoe_init_or_off(layers, hparams, path, cache_mib ? atof(cache_mib) : 0.0);
++    dmoe_init_or_off(layers, hparams, path, cache_mib ? atof(cache_mib) : 0.0, nullptr);
++}
++
++void llama_tosh_dmoe_init_ex(std::vector<llama_layer> & layers, const llama_hparams & hparams,
++                             const std::vector<int> & layer_device_indices) {
++    const char * path      = getenv("TOSH_DMOE_RESIDENCY");
++    const char * cache_mib = getenv("TOSH_DMOE_CACHE_MIB");
++    if (tosh_hostcache_on() && (cache_mib == nullptr || path != nullptr)) {
++        throw std::runtime_error("the bounded host cache needs TOSH_DMOE_CACHE_MIB (a VRAM arena) and no residency file");
++    }
++    if ((path == nullptr && cache_mib == nullptr) || g_exec != nullptr) {
++        return;
++    }
++    if (path == nullptr && strcmp(cache_mib, "auto") == 0) {
++        g_defer_layers  = &layers;
++        g_defer_hparams = &hparams;
++        // Store layer_device_indices for later use when budget is known
++        g_layer_dev = layer_device_indices;
++        g_moe_devices.clear();
++        for (int dev_idx : g_layer_dev) {
++            if (dev_idx >= 0 && std::find(g_moe_devices.begin(), g_moe_devices.end(), dev_idx) == g_moe_devices.end()) {
++                g_moe_devices.push_back(dev_idx);
++            }
++        }
++        return;
++    }
++    // Pass device indices directly to dmoe_init
++    dmoe_init_or_off(layers, hparams, path, cache_mib ? atof(cache_mib) : 0.0, &layer_device_indices);
+ }
+ 
+ bool llama_tosh_dmoe_budget_pending() {
+     return g_defer_layers != nullptr && g_exec == nullptr;
+ }
+ 
+ // an automatic arena is sized again when a context with another footprint is created alone
+ static std::vector<llama_layer> * g_auto_layers  = nullptr;
+@@ -1762,137 +1812,345 @@ static void dmoe_teardown() {
+             }
+         }
+     }
+     llama_tosh_dmoe_shutdown();
+     delete g_policy;
+     g_policy = nullptr;
+     delete g_exec;
+     g_exec = nullptr;
++    g_layer_dev.clear();
++    g_moe_devices.clear();
+ }
+ 
+ void llama_tosh_dmoe_budget(size_t gpu_bytes) {
++    // Single-device overload: backward compatibility
++    llama_tosh_dmoe_budget(std::vector<size_t>{gpu_bytes});
++}
++
++void llama_tosh_dmoe_budget(const std::vector<size_t> & gpu_bytes_per_dev) {
+     const bool first = g_defer_layers != nullptr;
+     std::vector<llama_layer> & layers = first ? *g_defer_layers : *g_auto_layers;
+     const llama_hparams & hparams = first ? *g_defer_hparams : *g_auto_hparams;
+     g_defer_layers = nullptr;
+     g_auto_layers  = &layers;
+     g_auto_hparams = &hparams;
+-    // the running arena is part of what the backend holds, not of what this context needs
+-    const size_t arena_now = g_arena_buf ? ggml_backend_buffer_get_size(g_arena_buf) : 0;
+-    gpu_bytes -= std::min(gpu_bytes, arena_now);
++
++    // Sum current arena sizes
++    size_t arena_now = 0;
++    for (auto buf : g_arena_bufs) {
++        if (buf) arena_now += ggml_backend_buffer_get_size(buf);
++    }
++
++    // If single device, use the legacy path
++    if (gpu_bytes_per_dev.size() == 1) {
++        size_t gpu_bytes = gpu_bytes_per_dev[0];
++        gpu_bytes -= std::min(gpu_bytes, arena_now);
++
++        auto envmib = [](const char * k, double d) { const char * v = getenv(k); return (v ? atof(v) : d)*1048576.0; };
++        size_t free0 = 0, total = 0;
++        tosh_dmoe_vram(&free0, &total);
++        // the bank uploads of prefill take three slots the size of the largest host bank
++        size_t bank_max = 0;
++        for (const llama_layer & L : layers) {
++            for (const ggml_tensor * t : { (const ggml_tensor *) dmoe_gate(L), (const ggml_tensor *) L.ffn_up_exps, (const ggml_tensor *) L.ffn_down_exps }) {
++                if (t) bank_max = std::max(bank_max, ggml_nbytes(t));
++            }
++        }
++        const double reserve  = envmib("TOSH_DMOE_RESERVE_MIB", 2560);
++        const double overhead = envmib("TOSH_DMOE_OVERHEAD_MIB", 64);
++        const double prefetch = 3.0*(double) bank_max;
++        const double arena    = (double) free0 - reserve - overhead - prefetch - (double) gpu_bytes;
++        const double M = 1048576.0;
++        LLAMA_LOG_INFO("%s: VRAM free at start %.0f MiB of %.0f; model, context and compute %.0f, prefill slots %.0f, "
++                       "reserve %.0f, overhead %.0f -> expert arena %.0f MiB\n", __func__, free0/M, total/M, gpu_bytes/M,
++                       prefetch/M, reserve/M, overhead/M, std::max(0.0, arena)/M);
++        if (!first) {
++            const double delta = arena - (double) arena_now;
++            if (fabs(delta) < 256.0*M) {
++                return;
++            }
++            const auto t0 = clk::now();
++            dmoe_teardown();
++            if (arena >= 256.0*M) {
++                dmoe_init_or_off(layers, hparams, nullptr, arena/M);
++            }
++            LLAMA_LOG_INFO("%s: expert arena rebuilt for this context, %.0f -> %.0f MiB in %.1f ms\n", __func__,
++                           arena_now/M, std::max(0.0, arena)/M, std::chrono::duration<double, std::milli>(clk::now() - t0).count());
++            return;
++        }
++        // a planner passes the smallest arena it judged useful for this model
++        const double min_arena = std::max(256.0*M, envmib("TOSH_DMOE_MIN_ARENA_MIB", 0));
++        if (arena < min_arena && tosh_hostcache_on()) {
++            throw std::runtime_error("the bounded host cache needs mixed expert execution, and the VRAM arena is under its minimum");
++        }
++        if (arena < min_arena) {
++            LLAMA_LOG_WARN("%s: under %.0f MiB left for experts, mixed execution stays off\n", __func__, min_arena/M);
++            dmoe_status(false, "DMOE_ARENA_BELOW_MINIMUM", format("%.0f MiB left, %.0f needed", std::max(0.0, arena)/M, min_arena/M), 0.0);
++            return;
++        }
++        dmoe_init_or_off(layers, hparams, nullptr, arena/M);
++        return;
++    }
++
++    // Multi-device path
++    const size_t num_devices = gpu_bytes_per_dev.size();
++    std::vector<double> arena_per_dev(num_devices, 0.0);
++    double total_arena = 0.0;
++    const double M = 1048576.0;
+ 
+     auto envmib = [](const char * k, double d) { const char * v = getenv(k); return (v ? atof(v) : d)*1048576.0; };
+-    size_t free0 = 0, total = 0;
+-    tosh_dmoe_vram(&free0, &total);
++    const double reserve  = envmib("TOSH_DMOE_RESERVE_MIB", 2560);
++    const double overhead = envmib("TOSH_DMOE_OVERHEAD_MIB", 64);
++
+     // the bank uploads of prefill take three slots the size of the largest host bank
+     size_t bank_max = 0;
+     for (const llama_layer & L : layers) {
+         for (const ggml_tensor * t : { (const ggml_tensor *) dmoe_gate(L), (const ggml_tensor *) L.ffn_up_exps, (const ggml_tensor *) L.ffn_down_exps }) {
+             if (t) bank_max = std::max(bank_max, ggml_nbytes(t));
+         }
+     }
+-    const double reserve  = envmib("TOSH_DMOE_RESERVE_MIB", 2560);
+-    const double overhead = envmib("TOSH_DMOE_OVERHEAD_MIB", 64);
+     const double prefetch = 3.0*(double) bank_max;
+-    const double arena    = (double) free0 - reserve - overhead - prefetch - (double) gpu_bytes;
+-    const double M = 1048576.0;
+-    LLAMA_LOG_INFO("%s: VRAM free at start %.0f MiB of %.0f; model, context and compute %.0f, prefill slots %.0f, "
+-                   "reserve %.0f, overhead %.0f -> expert arena %.0f MiB\n", __func__, free0/M, total/M, gpu_bytes/M,
+-                   prefetch/M, reserve/M, overhead/M, std::max(0.0, arena)/M);
++
++    for (size_t d = 0; d < num_devices; ++d) {
++        size_t free_d = 0, total_d = 0;
++        if (!tosh_dmoe_vram_dev((int) d, &free_d, &total_d)) {
++            LLAMA_LOG_WARN("%s: could not query VRAM for device %zu, using legacy query\n", __func__, d);
++            tosh_dmoe_vram(&free_d, &total_d);
++        }
++        double gpu_bytes_d = (d < gpu_bytes_per_dev.size()) ? (double) gpu_bytes_per_dev[d] : 0.0;
++        // Subtract current arena on this device
++        size_t arena_now_d = 0;
++        if (d < g_arena_bufs.size() && g_arena_bufs[d]) {
++            arena_now_d = ggml_backend_buffer_get_size(g_arena_bufs[d]);
++        }
++        gpu_bytes_d -= std::min(gpu_bytes_d, (double) arena_now_d);
++
++        const double arena_d = (double) free_d - reserve - overhead - prefetch - gpu_bytes_d;
++        arena_per_dev[d] = std::max(0.0, arena_d);
++        total_arena += arena_per_dev[d];
++
++        LLAMA_LOG_INFO("%s: device %zu: VRAM free %.0f MiB of %.0f; model/context/compute %.0f, prefill slots %.0f, "
++                       "reserve %.0f, overhead %.0f -> expert arena %.0f MiB\n",
++                       __func__, d, free_d/M, total_d/M, gpu_bytes_d/M, prefetch/M, reserve/M, overhead/M, arena_per_dev[d]/M);
++    }
++
+     if (!first) {
+-        const double delta = arena - (double) arena_now;
+-        if (fabs(delta) < 256.0*M) {
++        // Check if any device's arena changed significantly
++        bool need_rebuild = false;
++        for (size_t d = 0; d < num_devices; ++d) {
++            size_t arena_now_d = 0;
++            if (d < g_arena_bufs.size() && g_arena_bufs[d]) {
++                arena_now_d = ggml_backend_buffer_get_size(g_arena_bufs[d]);
++            }
++            if (fabs(arena_per_dev[d] - (double) arena_now_d) >= 256.0*M) {
++                need_rebuild = true;
++                break;
++            }
++        }
++        if (!need_rebuild) {
+             return;
+         }
+         const auto t0 = clk::now();
+         dmoe_teardown();
+-        if (arena >= 256.0*M) {
+-            dmoe_init_or_off(layers, hparams, nullptr, arena/M);
++        if (total_arena >= 256.0*M) {
++            g_dev_arena_bytes = arena_per_dev;
++            dmoe_init_or_off(layers, hparams, nullptr, 0.0, &g_layer_dev);
+         }
+         LLAMA_LOG_INFO("%s: expert arena rebuilt for this context, %.0f -> %.0f MiB in %.1f ms\n", __func__,
+-                       arena_now/M, std::max(0.0, arena)/M, std::chrono::duration<double, std::milli>(clk::now() - t0).count());
++                       arena_now/M, total_arena/M, std::chrono::duration<double, std::milli>(clk::now() - t0).count());
+         return;
+     }
+-    // a planner passes the smallest arena it judged useful for this model
++
++    // First initialization: check minimum arena
+     const double min_arena = std::max(256.0*M, envmib("TOSH_DMOE_MIN_ARENA_MIB", 0));
+-    if (arena < min_arena && tosh_hostcache_on()) {
++    if (total_arena < min_arena && tosh_hostcache_on()) {
+         throw std::runtime_error("the bounded host cache needs mixed expert execution, and the VRAM arena is under its minimum");
+     }
+-    if (arena < min_arena) {
++    if (total_arena < min_arena) {
+         LLAMA_LOG_WARN("%s: under %.0f MiB left for experts, mixed execution stays off\n", __func__, min_arena/M);
+-        dmoe_status(false, "DMOE_ARENA_BELOW_MINIMUM", format("%.0f MiB left, %.0f needed", std::max(0.0, arena)/M, min_arena/M), 0.0);
++        dmoe_status(false, "DMOE_ARENA_BELOW_MINIMUM", format("%.0f MiB left, %.0f needed", total_arena/M, min_arena/M), 0.0);
+         return;
+     }
+-    dmoe_init_or_off(layers, hparams, nullptr, arena/M);
++    g_dev_arena_bytes = arena_per_dev;
++    dmoe_init_or_off(layers, hparams, nullptr, 0.0, &g_layer_dev);
+ }
+ 
+-static void dmoe_init(std::vector<llama_layer> & layers, const llama_hparams & hparams, const char * path, double cache_mib) {
++static void dmoe_init(std::vector<llama_layer> & layers, const llama_hparams & hparams, const char * path, double cache_mib,
++                      const std::vector<int> * layer_dev) {
+     // a residency file pins the set; a cache size lets the policy fill it online
+     const bool dynamic = path == nullptr;
+ 
+     const int n_layer  = (int) layers.size();
+     const int n_expert = (int) hparams.n_expert;
+     std::vector<std::vector<int>> resident(n_layer);
+     std::vector<std::vector<int>> slot_of(n_layer, std::vector<int>(n_expert, -1));
+ 
+     int quota = 0;
+-    if (dynamic) {
++
++    // Build layer->device map and list of MoE devices FIRST, before quota computation
++    // Avoid self-assignment when layer_dev == &g_layer_dev
++    std::vector<int> layer_dev_copy;
++    if (layer_dev != nullptr) {
++        layer_dev_copy = *layer_dev;
++    }
++    g_layer_dev.assign(n_layer, -1);
++    g_moe_devices.clear();
++
++    if (!layer_dev_copy.empty()) {
++        // Use provided layer_dev (device indices)
++        g_layer_dev = layer_dev_copy;
++        for (int dev : g_layer_dev) {
++            if (dev >= 0 && std::find(g_moe_devices.begin(), g_moe_devices.end(), dev) == g_moe_devices.end()) {
++                g_moe_devices.push_back(dev);
++            }
++        }
++    } else {
++        // Single GPU fallback: all layers on device 0
++        for (int il = 0; il < n_layer; ++il) {
++            if (dmoe_has_bank(layers[il])) {
++                g_layer_dev[il] = 0;
++            }
++        }
++        g_moe_devices.push_back(0);
++    }
++
++    // Multi-device mode: cache_mib=0 means compute per-device quota from VRAM
++    bool multi_device = (g_moe_devices.size() > 1) || (dynamic && cache_mib == 0.0);
++
++    // For multi-device, compute per-device quota from each device's free VRAM
++    std::vector<int> quota_per_dev(g_moe_devices.size(), 0);
++    if (multi_device && dynamic) {
++        // First pass: compute per_expert bytes per device
++        std::vector<size_t> per_expert_per_dev(g_moe_devices.size(), 0);
++        for (int il = 0; il < n_layer; ++il) {
++            const llama_layer & L = layers[il];
++            if (!dmoe_has_bank(L)) continue;
++            int dev = g_layer_dev[il];
++            auto it = std::find(g_moe_devices.begin(), g_moe_devices.end(), dev);
++            if (it == g_moe_devices.end()) continue;
++            size_t dev_idx = it - g_moe_devices.begin();
++            per_expert_per_dev[dev_idx] += dmoe_gate(L)->nb[2] + (L.ffn_up_exps ? L.ffn_up_exps->nb[2] : 0) + L.ffn_down_exps->nb[2];
++        }
++
++        // Query each device's free VRAM and compute quota
++        const double M = 1048576.0;
++        auto envmib = [](const char * k, double d) { const char * v = getenv(k); return (v ? atof(v) : d)*1048576.0; };
++        const double reserve  = envmib("TOSH_DMOE_RESERVE_MIB", 2560);
++        const double overhead = envmib("TOSH_DMOE_OVERHEAD_MIB", 64);
++
++        size_t bank_max = 0;
++        for (const llama_layer & L : layers) {
++            for (const ggml_tensor * t : { (const ggml_tensor *) dmoe_gate(L), (const ggml_tensor *) L.ffn_up_exps, (const ggml_tensor *) L.ffn_down_exps }) {
++                if (t) bank_max = std::max(bank_max, ggml_nbytes(t));
++            }
++        }
++        const double prefetch = 3.0*(double) bank_max;
++
++        for (size_t di = 0; di < g_moe_devices.size(); ++di) {
++            int dev = g_moe_devices[di];
++            size_t free_d = 0, total_d = 0;
++            if (!tosh_dmoe_vram_dev(dev, &free_d, &total_d)) {
++                LLAMA_LOG_WARN("%s: could not query VRAM for device %d, using legacy query\n", __func__, dev);
++                tosh_dmoe_vram(&free_d, &total_d);
++            }
++            // the budget already took this device's model, cache and compute out of what it has free
++            double arena_d = dev >= 0 && dev < (int) g_dev_arena_bytes.size() ? g_dev_arena_bytes[dev] :
++                             (double) free_d - reserve - overhead - prefetch;
++            if (per_expert_per_dev[di] > 0 && arena_d > 0) {
++                quota_per_dev[di] = (int) std::min<size_t>((size_t) n_expert, (size_t) (arena_d / per_expert_per_dev[di]));
++            } else {
++                quota_per_dev[di] = 0;
++            }
++            LLAMA_LOG_INFO("%s: device %d: free %.0f MiB, per_expert %.0f MiB -> quota %d\n",
++                           __func__, dev, free_d/M, per_expert_per_dev[di]/M, quota_per_dev[di]);
++        }
++
++        // Global quota is the minimum across devices (uniform slots per layer)
++        quota = n_expert;
++        for (int q : quota_per_dev) {
++            if (q > 0) quota = std::min(quota, q);
++        }
++        if (quota < 1) {
++            throw std::runtime_error("TOSH_DMOE_CACHE_MIB: the cache is smaller than one expert per layer on at least one device");
++        }
++        LLAMA_LOG_INFO("%s: multi-device mode: %zu devices, global quota = %d (min of per-device quotas)\n",
++                       __func__, g_moe_devices.size(), quota);
++    } else if (dynamic) {
++        // Single-device quota computation
+         size_t per_expert_all_layers = 0;
+         for (const llama_layer & L : layers) {
+             if (dmoe_has_bank(L)) {
+                 per_expert_all_layers += dmoe_gate(L)->nb[2] + (L.ffn_up_exps ? L.ffn_up_exps->nb[2] : 0) + L.ffn_down_exps->nb[2];
+             }
+         }
+         if (per_expert_all_layers == 0) {
+             throw std::runtime_error("TOSH_DMOE_CACHE_MIB: the model has no layer with separate gate, up and down expert banks");
+         }
+         quota = (int) std::min<size_t>((size_t) n_expert, (size_t) (cache_mib*1048576.0)/per_expert_all_layers);
+         if (quota < 1) {
+             throw std::runtime_error("TOSH_DMOE_CACHE_MIB: the cache is smaller than one expert per layer");
+         }
+     }
+ 
+-    std::ifstream f(dynamic ? "" : path);
+-    if (!dynamic && !f) {
+-        throw std::runtime_error(format("TOSH_DMOE_RESIDENCY: cannot open %s", path));
+-    }
+-    for (std::string line; !dynamic && std::getline(f, line);) {
+-        std::istringstream ls(line);
+-        int il, e;
+-        if (!(ls >> il >> e)) {
+-            continue;
+-        }
+-        if (il < 0 || il >= n_layer || e < 0 || e >= n_expert) {
+-            throw std::runtime_error(format("TOSH_DMOE_RESIDENCY: (%d, %d) is out of range", il, e));
+-        }
+-        if (slot_of[il][e] < 0) {
+-            slot_of[il][e] = (int) resident[il].size();
+-            resident[il].push_back(e);
+-        }
+-    }
+-
+-    ggml_backend_dev_t gpu = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_GPU);
+-    if (gpu == nullptr) {
+-        throw std::runtime_error("TOSH_DMOE_RESIDENCY: no GPU device");
+-    }
+-    ggml_backend_buffer_type_t buft = ggml_backend_dev_buffer_type(gpu);
+-
+     std::unique_ptr<executor> ex_owner(new executor());
+     auto * ex = ex_owner.get();
+     if (const char * v = getenv("TOSH_DMOE_SPIN_US")) {
+         ex->spin_us = atoi(v);
+     }
+     if (const char * v = getenv("TOSH_DMOE_WATCHDOG_MS")) {
+         ex->watchdog_us = atof(v)*1e3;
+     }
+     ex->banks.resize(n_layer);
+ 
+-    ggml_init_params ip = { ggml_tensor_overhead()*(size_t) n_layer*4 + 1024, nullptr, true };
+-    ggml_context * ctx = ggml_init(ip);
++    // For multi-device, we create one ggml context per device and allocate from each device's buffer type
++    std::vector<ggml_context *> ctxs;
++    std::vector<ggml_backend_buffer_type_t> bufts;
++    std::vector<ggml_backend_buffer_t> bufs;
++
++    if (multi_device) {
++        ctxs.resize(g_moe_devices.size());
++        bufts.resize(g_moe_devices.size());
++        bufs.resize(g_moe_devices.size());
++
++        for (size_t di = 0; di < g_moe_devices.size(); ++di) {
++            int dev = g_moe_devices[di];
++            ggml_backend_dev_t gpu = nullptr;
++            // Find the backend device for this Metal device index
++            // The Metal backend creates devices in order, so we can get the nth GPU device
++            int gpu_count = 0;
++            for (int i = 0; i < ggml_backend_dev_count(); ++i) {
++                ggml_backend_dev_t d = ggml_backend_dev_get(i);
++                if (ggml_backend_dev_type(d) == GGML_BACKEND_DEVICE_TYPE_GPU) {
++                    if (gpu_count == dev) {
++                        gpu = d;
++                        break;
++                    }
++                    gpu_count++;
++                }
++            }
++            if (gpu == nullptr) {
++                throw std::runtime_error(format("TOSH_DMOE_CACHE_MIB: could not find GPU device %d", dev));
++            }
++            bufts[di] = ggml_backend_dev_buffer_type(gpu);
++            ggml_init_params ip = { ggml_tensor_overhead()*(size_t) n_layer*4 + 1024, nullptr, true };
++            ctxs[di] = ggml_init(ip);
++        }
++    } else {
++        // Single device path
++        ggml_backend_dev_t gpu = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_GPU);
++        if (gpu == nullptr) {
++            throw std::runtime_error("TOSH_DMOE_RESIDENCY: no GPU device");
++        }
++        ggml_backend_buffer_type_t buft = ggml_backend_dev_buffer_type(gpu);
++        ggml_init_params ip = { ggml_tensor_overhead()*(size_t) n_layer*4 + 1024, nullptr, true };
++        ggml_context * ctx = ggml_init(ip);
++        ctxs.push_back(ctx);
++        bufts.push_back(buft);
++    }
+ 
+     std::vector<std::pair<int, llama_tosh_dmoe_layer>> made;
+     for (int il = 0; il < n_layer; ++il) {
+         llama_layer & L = layers[il];
+         if (!dmoe_has_bank(L)) {
+             continue;
+         }
+         for (const ggml_tensor * t : { (const ggml_tensor *) dmoe_gate(L), (const ggml_tensor *) L.ffn_up_exps, (const ggml_tensor *) L.ffn_down_exps }) {
+@@ -1937,37 +2195,61 @@ static void dmoe_init(std::vector<llama_layer> & layers, const llama_hparams & h
+             dst->resize(ggml_nelements(b));
+             ggml_backend_tensor_get(b, dst->data(), 0, ggml_nbytes(b));
+         }
+ 
+         llama_tosh_dmoe_layer dl;
+         dl.il      = il;
+         dl.n_slots = dynamic ? quota : (int) resident[il].size();
+         const int64_t ns = std::max(1, dl.n_slots);
++
++        // Create tensors in the context for this layer's device
++        int dev = g_layer_dev[il];
++        size_t ctx_idx = 0;
++        if (multi_device) {
++            auto it = std::find(g_moe_devices.begin(), g_moe_devices.end(), dev);
++            if (it != g_moe_devices.end()) {
++                ctx_idx = it - g_moe_devices.begin();
++            }
++        }
++        ggml_context * ctx = ctxs[ctx_idx];
++
+         dl.arena_gate = ggml_new_tensor_3d(ctx, hb.gate->type, hb.gate->ne[0], hb.gate->ne[1], ns);
+         dl.arena_up   = hb.up ? ggml_new_tensor_3d(ctx, hb.up->type, hb.up->ne[0], hb.up->ne[1], ns) : nullptr;
+         dl.arena_down = ggml_new_tensor_3d(ctx, L.ffn_down_exps->type, L.ffn_down_exps->ne[0], L.ffn_down_exps->ne[1], ns);
+         dl.residency  = ggml_new_tensor_1d(ctx, GGML_TYPE_I32, n_expert);
+         ggml_format_name(dl.arena_gate, "dmoe_arena_gate-%d", il);
+         if (dl.arena_up) ggml_format_name(dl.arena_up, "dmoe_arena_up-%d", il);
+         ggml_format_name(dl.arena_down, "dmoe_arena_down-%d", il);
+         ggml_format_name(dl.residency,  "dmoe_residency-%d",  il);
+         made.push_back({ il, dl });
+     }
+ 
+     if (made.empty()) {
+         throw std::runtime_error("TOSH_DMOE_RESIDENCY: the model has no layer with separate gate, up and down expert banks");
+     }
+ 
+-    ggml_backend_buffer_t buf = ggml_backend_alloc_ctx_tensors_from_buft(ctx, buft);
+-    if (buf == nullptr) {
+-        throw std::runtime_error("TOSH_DMOE_RESIDENCY: the VRAM arena does not fit");
++    // Allocate buffers per device
++    g_arena_bufs.clear();
++    g_arena_bufs.resize(g_moe_devices.size(), nullptr);
++    size_t total_arena_bytes = 0;
++
++    for (size_t di = 0; di < ctxs.size(); ++di) {
++        ggml_backend_buffer_t buf = ggml_backend_alloc_ctx_tensors_from_buft(ctxs[di], bufts[di]);
++        if (buf == nullptr) {
++            throw std::runtime_error(format("TOSH_DMOE_RESIDENCY: the VRAM arena does not fit on device %d", g_moe_devices[di]));
++        }
++        ggml_backend_buffer_set_usage(buf, GGML_BACKEND_BUFFER_USAGE_WEIGHTS);
++        g_arena_bufs[di] = buf;
++        total_arena_bytes += ggml_backend_buffer_get_size(buf);
++        LLAMA_LOG_INFO("%s: device %d arena: %.2f MiB\n", __func__, g_moe_devices[di], ggml_backend_buffer_get_size(buf)/1048576.0);
+     }
+-    ggml_backend_buffer_set_usage(buf, GGML_BACKEND_BUFFER_USAGE_WEIGHTS);
+-    g_arena_buf = buf;
++
++    // For backward compat, also set g_arena_buf to first buffer
++    g_arena_buf = g_arena_bufs.empty() ? nullptr : g_arena_bufs[0];
+ 
+     size_t n_resident = 0;
+     for (auto & [il, dl] : made) {
+         const llama_layer & L = layers[il];
+         for (int s = 0; s < (int) resident[il].size(); ++s) {
+             const int e = resident[il][s];
+             for (auto [bank, arena] : { std::pair{ dmoe_gate(L), dl.arena_gate }, { L.ffn_up_exps, dl.arena_up }, { L.ffn_down_exps, dl.arena_down } }) {
+                 if (bank == nullptr) continue;
+@@ -2015,16 +2297,18 @@ static void dmoe_init(std::vector<llama_layer> & layers, const llama_hparams & h
+ 
+         auto * pol = new policy();
+         pol->n_layer  = n_layer;
+         pol->n_expert = n_expert;
+         pol->Q        = quota;
+         pol->tables   = (int32_t *) tb;
+         pol->banks    = &ex->banks;
+         pol->ex       = ex;
++        // For multi-device, the policy needs per-device uploaders
++        // For now, use the default uploader (device 0); Phase 5 will fix this
+         pol->up       = tosh_dmoe_get_uploader();
+         if (pol->up == nullptr) {
+             throw std::runtime_error("TOSH_DMOE_CACHE_MIB: the GPU backend offers no uploader");
+         }
+         auto envf = [](const char * k, double d) { const char * v = getenv(k); return v ? atof(v) : d; };
+         pol->decay        = (float) envf("TOSH_DMOE_DECAY", 0.98);
+         // a promotion costs about one reuse of token time, so 1.8 keeps a margin against churn
+         pol->admit_fixed  = envf("TOSH_DMOE_ADMIT", 1.8);
+@@ -2091,13 +2375,21 @@ static void dmoe_init(std::vector<llama_layer> & layers, const llama_hparams & h
+     g_exec = ex_owner.release();
+     ex->start();
+     static bool reported = false;
+     if (!reported) {
+         reported = true;
+         atexit(dmoe_report_at_exit);
+     }
+ 
+-    LLAMA_LOG_INFO("%s: mixed expert execution on %zu layers, %zu resident experts, VRAM arena %.2f MiB, %d host threads\n",
+-            __func__, made.size(), n_resident, ggml_backend_buffer_get_size(buf)/1048576.0, ex->n_threads);
++    if (multi_device) {
++        for (size_t di = 0; di < g_moe_devices.size(); ++di) {
++            size_t buf_size = g_arena_bufs[di] ? ggml_backend_buffer_get_size(g_arena_bufs[di]) : 0;
++            LLAMA_LOG_INFO("%s: mixed expert execution on device %d: %zu layers, VRAM arena %.2f MiB\n",
++                    __func__, g_moe_devices[di], made.size(), buf_size/1048576.0);
++        }
++    } else {
++        LLAMA_LOG_INFO("%s: mixed expert execution on %zu layers, %zu resident experts, VRAM arena %.2f MiB, %d host threads\n",
++                __func__, made.size(), n_resident, total_arena_bytes/1048576.0, ex->n_threads);
++    }
+ }
+ 
+ #endif
+diff --git a/src/llama-tosh-dmoe.h b/src/llama-tosh-dmoe.h
+index 2ae3adf06..a9cd8b969 100644
+--- a/src/llama-tosh-dmoe.h
++++ b/src/llama-tosh-dmoe.h
+@@ -1,11 +1,12 @@
+ #pragma once
+ 
+ #include "ggml.h"
++#include "ggml-backend.h"
+ 
+ #include <vector>
+ 
+ struct llama_layer;
+ struct llama_hparams;
+ 
+ // One MoE layer under mixed execution: the canonical bank stays in host memory and a VRAM arena
+ // holds only the resident experts, in slot order.
+@@ -18,16 +19,22 @@ struct llama_tosh_dmoe_layer {
+     ggml_tensor * residency  = nullptr; // [n_expert] i32, slot or -1
+ 
+     int n_slots = 0;
+ };
+ 
+ // Enabled by TOSH_DMOE_RESIDENCY=<file of "layer expert" lines>. No-op otherwise.
+ void llama_tosh_dmoe_init(std::vector<llama_layer> & layers, const llama_hparams & hparams);
+ 
++// Overload that accepts a layer->device index map for multi-GPU arena allocation.
++// layer_device_indices[il] is the GPU device index for layer il (or -1 for CPU layers).
++// The device index matches the Metal backend's device order (props.device).
++void llama_tosh_dmoe_init_ex(std::vector<llama_layer> & layers, const llama_hparams & hparams,
++                             const std::vector<int> & layer_device_indices);
++
+ // Whether the host executor can run this layer's experts: act 0 is silu, 1 swiglu_oai(alpha, limit), 2 gelu,
+ // and the gate/up biases the graph adds must be the ones copied at load.
+ bool llama_tosh_dmoe_accept(const llama_tosh_dmoe_layer * dl, int act, float alpha, float limit, bool gate_b, bool up_b);
+ 
+ // Whether wide batches report their routing to the residency policy.
+ bool llama_tosh_dmoe_observe_prefill();
+ 
+ // Wide batches: experts routed to at most this many rows of the chunk and not resident run on
+@@ -36,16 +43,19 @@ int llama_tosh_dmoe_rare_rows();
+ // the last tokens of a chunk keep their experts on the GPU, where prefill can make them resident
+ int llama_tosh_dmoe_rare_tail();
+ int llama_tosh_dmoe_wide_min_tokens();
+ 
+ // TOSH_DMOE_CACHE_MIB=auto defers the arena until a context knows its own VRAM: the arena is
+ // what remains of the card after it, the prefill slots and a reserve (TOSH_DMOE_RESERVE_MIB).
+ bool llama_tosh_dmoe_budget_pending();
+ void llama_tosh_dmoe_budget(size_t gpu_bytes);
++// Per-device budget for multi-GPU: gpu_bytes_per_dev[dev] is the bytes held by this process on that device.
++// The vector index matches the Metal device index (props.device). Single-GPU callers use the scalar overload.
++void llama_tosh_dmoe_budget(const std::vector<size_t> & gpu_bytes_per_dev);
+ // A context created while no other is alive may resize an automatic arena; contexts are counted.
+ bool llama_tosh_dmoe_rebudget_possible();
+ void llama_tosh_dmoe_context_opened();
+ void llama_tosh_dmoe_context_closed();
+ 
+ // Stops the host executor and the residency policy before the model's buffers go away.
+ void llama_tosh_dmoe_shutdown();
+ 
