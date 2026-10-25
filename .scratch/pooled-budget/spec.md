@@ -1,6 +1,6 @@
 # Spec: the pooled budget levers for 0.87.27-beta.3
 
-Status: ready to hand off, revision 2 (2026-10-25). Revision 1 was 2026-10-24. Map: `map.md`. Glossary: `CONTEXT.md`
+Status: ready to hand off, revision 3 (2026-10-25). Revision 1 was 2026-10-24. Map: `map.md`. Glossary: `CONTEXT.md`
 (**pooled budget**, **display card**, **expert tier**).
 
 Every build ticket below is implemented by OpenCode from a brief. The orchestrator reviews
@@ -33,6 +33,27 @@ A decode token on the expert tier takes about 78 ms:
   share. Host encode is 6.6 ms and mostly overlaps the GPU; 2.6 ms has no GPU work.
 
 ## Ranked work
+
+**Revision 3 (2026-10-25), the user's decision:** the GPU dense mat-vec kernel goes to the
+top. Ticket 10 measured it at 39.6 ms of a 78 ms 35B token, at an effective 39.8 GB/s
+against the D700's rated 264 GB/s, and it runs every model on the cards. The two-card tier
+(item 2) finishes after it. The AVX1 kernel (item 3) is bounded at about 5 ms per token by
+the bandwidth measurement.
+
+### 0. The GCN dense mat-vec kernel (new top item)
+
+- **0a. Study (read-only, then a microbenchmark):**
+  - which kernel the wave64 decode path runs for Q6_K and Q4_K mat-vec on the D700 (the
+    allowlist in `ggml_metal_library_get_pipeline_mul_mv`);
+  - its threadgroup shape, its reads per thread, and how it reduces;
+  - a standalone timing of that one op at the 35B's shapes, giving GB/s per shape, so
+    kernel changes have a fast gate that needs no model load.
+- **0b. Kernel work,** only behind 0a's microbenchmark. Gates:
+  - the microbenchmark's GB/s up beyond its noise;
+  - `test-backend-ops` for MUL_MAT on the touched types;
+  - the 35B and the 8B greedy text unchanged in their opening;
+  - decode up in the same session, against the same build without the change;
+  - 0 AVX2/FMA in the CPU code.
 
 ### 1. Measure the 62 ms (map ticket 09). Patch 0048, then a run. DONE 2026-10-25.
 
