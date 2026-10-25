@@ -1,8 +1,8 @@
 diff --git a/ggml/src/ggml-metal/ggml-metal-context.m b/ggml/src/ggml-metal/ggml-metal-context.m
-index 54ab54e30..759d6f26d 100644
+index 54ab54e30..a3cbe3a93 100644
 --- a/ggml/src/ggml-metal/ggml-metal-context.m
 +++ b/ggml/src/ggml-metal/ggml-metal-context.m
-@@ -413,16 +413,181 @@ static bool tosh_tl_on(void) {
+@@ -413,16 +413,176 @@ static bool tosh_tl_on(void) {
      }
      return on == 1;
  }
@@ -27,11 +27,6 @@ index 54ab54e30..759d6f26d 100644
 +        on = (v && v[0] == '1') ? 1 : 0;
 +    }
 +    return on == 1;
-+}
-+
-+// the node filter of ggml_metal_op, so the per-op cursor advances the same way
-+static bool tosh_opgpu_keep(const struct ggml_tensor * node) {
-+    return !ggml_op_is_empty(node->op) && !ggml_is_empty(node);
 +}
 +
 +struct tosh_opgpu_op {
@@ -184,7 +179,7 @@ index 54ab54e30..759d6f26d 100644
  static struct {
      _Atomic uint64_t seq[2];
      _Atomic uint64_t commit_ns[2];
-@@ -4171,16 +4336,117 @@ enum ggml_status ggml_metal_graph_compute(ggml_metal_t ctx, struct ggml_cgraph *
+@@ -4171,16 +4331,111 @@ enum ggml_status ggml_metal_graph_compute(ggml_metal_t ctx, struct ggml_cgraph *
              }
          }
  
@@ -200,22 +195,17 @@ index 54ab54e30..759d6f26d 100644
 +            tosh_opgpu_reg();
 +            tosh_opgpu_graph_start(gf->n_nodes);
 +
++            // every encoder sees the whole graph and encodes one op of it: the encoders look
++            // across neighbouring nodes to fuse them (gated_delta_net folds the gather before it
++            // and the state copy after it), and an encoder that starts at the op would decide
++            // those fusions differently from the normal path and compute something else
 +            id<MTLCommandBuffer> opgpu_last = nil;
-+            bool first_buf = true;
-+            int i = 0;
-+            while (i < gf->n_nodes) {
-+                if (!tosh_opgpu_keep(gf->nodes[i])) {
-+                    // the op encoder would filter this node out; nothing to time
-+                    i++;
-+                    continue;
-+                }
-+
++            int n_ops = -1;
++            for (int j = 0; n_ops < 0 || j < n_ops;) {
 +                id<MTLCommandBuffer> cmd_buf = [queue commandBufferWithUnretainedReferences];
-+                // continue the collective's buffer when it left one open, otherwise start a new one
-+                if (first_buf) {
++                if (opgpu_last == nil) {
 +                    ggml_metal_encode_pending_waits(ctx, cmd_buf);
 +                    ggml_metal_fb_residual_before(ctx, cmd_buf, ctx->gf, 0);
-+                    first_buf = false;
 +                }
 +
 +                ggml_metal_op_t ctx_op = ggml_metal_op_init(
@@ -223,20 +213,27 @@ index 54ab54e30..759d6f26d 100644
 +                    cmd_buf,
 +                    ctx->gf,
 +                    ctx->finfo,
-+                    i,
++                    0,
 +                    gf->n_nodes,
 +                    false, // one op per buffer: no concurrent encoding
 +                    ctx->capture_compute == 0,
 +                    ctx->debug_graph);
++                if (n_ops < 0) {
++                    n_ops = ggml_metal_op_n_nodes(ctx_op);
++                    if (n_ops == 0) {
++                        ggml_metal_op_free(ctx_op);
++                        break;
++                    }
++                }
 +
-+                const int res = ggml_metal_op_encode(ctx_op, 0);
++                struct ggml_tensor * node = ggml_metal_op_node(ctx_op, j);
++                const int res = ggml_metal_op_encode(ctx_op, j);
 +
 +                ggml_metal_op_free(ctx_op);
 +
 +                // quant types are told apart for the matmul pair ops, fused ops report
 +                // under their first node
 +                char name[TOSH_OPGPU_NAME_LEN];
-+                struct ggml_tensor * node = gf->nodes[i];
 +                const char * desc = ggml_op_desc(node);
 +                if (res > 1) {
 +                    snprintf(name, sizeof(name), "%s+fused", desc);
@@ -261,18 +258,10 @@ index 54ab54e30..759d6f26d 100644
 +                ggml_metal_cmd_buf_submit(ctx, cmd_buf);
 +
 +                if (res == 0) {
-+                    GGML_LOG_ERROR("%s: opgpu: op %d failed to encode, stopping the graph\n", __func__, i);
++                    GGML_LOG_ERROR("%s: opgpu: op %d failed to encode, stopping the graph\n", __func__, j);
 +                    break;
 +                }
-+
-+                // jump past the nodes a fused op consumed. ggml_metal_op counts relative to
-+                // its own filtered node list, so skip its empty-node filter the same way
-+                i++;
-+                for (int used = 1; used < res && i < gf->n_nodes; ++i) {
-+                    if (tosh_opgpu_keep(gf->nodes[i])) {
-+                        used++;
-+                    }
-+                }
++                j += res;
 +            }
 +
 +            if (opgpu_last) {
@@ -302,3 +291,51 @@ index 54ab54e30..759d6f26d 100644
              if (ggml_metal_merge_graph() && ctx->cmd_buf_hold != nil) {
                  cmd_buf = ctx->cmd_buf_hold;
                  ctx->cmd_buf_hold = nil;
+diff --git a/ggml/src/ggml-metal/ggml-metal-ops.cpp b/ggml/src/ggml-metal/ggml-metal-ops.cpp
+index 508a2378f..4c92a3995 100644
+--- a/ggml/src/ggml-metal/ggml-metal-ops.cpp
++++ b/ggml/src/ggml-metal/ggml-metal-ops.cpp
+@@ -214,16 +214,20 @@ ggml_metal_op_t ggml_metal_op_init(
+ void ggml_metal_op_free(ggml_metal_op_t ctx) {
+     delete ctx;
+ }
+ 
+ int ggml_metal_op_n_nodes(ggml_metal_op_t ctx) {
+     return ctx->n_nodes();
+ }
+ 
++ggml_tensor * ggml_metal_op_node(ggml_metal_op_t ctx, int i) {
++    return ctx->node(i);
++}
++
+ static bool ggml_metal_op_concurrency_reset(ggml_metal_op_t ctx) {
+     if (!ctx->mem_ranges) {
+         return true;
+     }
+ 
+     ggml_metal_encoder_memory_barrier(ctx->enc);
+ 
+     ggml_mem_ranges_reset(ctx->mem_ranges);
+diff --git a/ggml/src/ggml-metal/ggml-metal-ops.h b/ggml/src/ggml-metal/ggml-metal-ops.h
+index 01e4e92d4..24172938c 100644
+--- a/ggml/src/ggml-metal/ggml-metal-ops.h
++++ b/ggml/src/ggml-metal/ggml-metal-ops.h
+@@ -19,16 +19,18 @@ ggml_metal_op_t ggml_metal_op_init(
+         int  idx_end,
+         bool use_concurrency,
+         bool use_capture,
+         int  debug_graph);
+ 
+ void ggml_metal_op_free(ggml_metal_op_t ctx);
+ 
+ int ggml_metal_op_n_nodes(ggml_metal_op_t ctx);
++// the i-th node this encoder encodes (its filtered list), as ggml_metal_op_encode counts them
++struct ggml_tensor * ggml_metal_op_node(ggml_metal_op_t ctx, int i);
+ 
+ int ggml_metal_op_encode(ggml_metal_op_t ctx, int idx);
+ 
+ //
+ // available ops:
+ //
+ 
+ // tokens per expert

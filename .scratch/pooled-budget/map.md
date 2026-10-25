@@ -34,6 +34,7 @@ models bigger than the cards fast on the **pooled budget** (both D700s, 64 GB RA
 
 ## Decisions so far
 
+- [Which GPU ops take the 59 ms](issues/10-which-gpu-ops-take-the-59-ms.md): the dense Q6_K mat-vec is 39.6 ms of a 78 ms token, at an effective 39.8 GB/s against a rated 264; the join (CPU-expert wait) is 9.9 ms and the resident experts 9.3 ms
 - [What the 62 ms outside the host experts is](issues/09-what-the-62-ms-outside-the-host-experts-is.md): the GPU is busy 73.4 of 76.0 ms per token; the CPU experts (14.4 ms) are waits inside that, which leaves about 59 ms of GPU kernel time, the largest share
 - [Which MoE lever comes first](issues/03-which-moe-lever-comes-first.md): (b) the second card's arena first, then (a) the AVX1 kernel, (c) overlap last; (b) is mainly a capacity lever on the 35B
 - [The shape of a two-card expert tier](issues/07-the-shape-of-a-two-card-expert-tier.md): layer-split arenas extending the fork's Dynamic MoE, 8 KiB/token across the cards; not upstream's --moe-cache-mib, which uploads misses instead of computing them

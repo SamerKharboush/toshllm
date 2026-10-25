@@ -1,7 +1,7 @@
 # 10: Which GPU ops take the 59 ms
 
 Type: task
-Status: claimed
+Status: resolved
 Blocked by: 09
 
 ## Question
@@ -36,3 +36,21 @@ The table was: q6_K matmul 39.6 ms per token, MUL_MAT_ID q6_K 12.9, the join 5.7
 promotion uploads is untested. The prime suspect is the per-op path's own node-skip filter
 after fused ops. Debugging is delegated to OpenCode; 0049 must be fixed before its MoE
 numbers count.
+
+## Answer
+
+Per 35B decode token on card 1, from the corrected per-op mode (47 graphs; the text is
+identical to the normal mode):
+
+| op | ms per token |
+|---|---|
+| dense Q6_K mat-vec (311 ops; non-expert weights + output head) | 39.553 |
+| the Dynamic MoE join (the GPU waiting on the CPU experts) | 9.898 |
+| resident-expert Q6_K MUL_MAT_ID | 9.341 |
+| everything else, the largest RMS_NORM at 3.47 | about 19 |
+| **total** | **77.957** |
+
+The dense mat-vec reads 1.573 GB per token, an effective 39.8 GB/s; the D700's rated
+bandwidth is 264 GB/s.
+
+Evidence: `../../firellama-maxperf/evidence/which-gpu-ops-a-35b-decode-token-spends-2026-10-25.md`.
