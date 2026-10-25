@@ -100,7 +100,12 @@ The work comes in three briefs, in order. Each one is a separate patch or commit
   - Gate 1: on the 35B at `-c 16384`, the dry-run JSON lists two device budgets, each within
     its device's free VRAM.
   - Gate 2: the one-card dry-run JSON is byte-identical to today's for the same arguments.
-- **2b. Runtime, patch 0051.** Replace the single arena (`g_arena_buf`, one GPU from
+- **2b. Runtime, patches 0051-0053** (design:
+  `design/two-card-runtime-analysis-2026-10-25.md`). 0051 is per-device plumbing with no
+  one-card change. 0052 is per-device arenas and budget. 0053 is the executor polling every
+  card's event and signalling the layer's card, the policy's per-device uploaders and
+  observation rings, and the bank planner. The original plan follows.
+   Replace the single arena (`g_arena_buf`, one GPU from
   `ggml_backend_dev_by_type(GPU)` at `src/llama-tosh-dmoe.cpp:1865-1869`) with one arena
   buffer per device. Each layer's arena is allocated on the device that holds that layer's
   weights, and the executor stays one. The Metal rendezvous state is already per device
@@ -121,6 +126,10 @@ The work comes in three briefs, in order. Each one is a separate patch or commit
     `MCPStdioTransportTests` race. The tests assert the launch flags and the environment.
 
 ### 3. The AVX1 expert kernel (lever (a))
+
+**3a is done (2026-10-25):** the read-only bandwidth sustained at 12 threads is 51.6 GB/s.
+The CPU experts already stream an estimated 35.8 GB/s. So a perfect AVX1 kernel saves at most
+about 5 ms per token on the 35B (an estimate). Lever (a) stays open, but bounded.
 
 - **3a. Task: measure the bandwidth this Xeon sustains.** Use a STREAM-style triad over 12
   threads with 1 GB arrays, built AVX1 (`-mavx -mno-avx2 -mno-fma`). Repeat it 5 times; give
