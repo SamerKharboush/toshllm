@@ -1,0 +1,560 @@
+diff --git a/ggml/src/ggml-metal/ggml-metal-device.m b/ggml/src/ggml-metal/ggml-metal-device.m
+index 642248f96..f89506981 100644
+--- a/ggml/src/ggml-metal/ggml-metal-device.m
++++ b/ggml/src/ggml-metal/ggml-metal-device.m
+@@ -1235,39 +1235,54 @@ void ggml_metal_encoder_event(ggml_metal_encoder_t encoder, ggml_metal_cmd_buf_t
+ #ifdef TOSH_ENABLE_DYNAMIC_MOE
+ static uint64_t ggml_metal_dmoe_ev_get(void * ev) { return [(id<MTLSharedEvent>) ev signaledValue]; }
+ static void ggml_metal_dmoe_ev_set(void * ev, uint64_t v) { [(id<MTLSharedEvent>) ev setSignaledValue:v]; }
+ 
+ void * ggml_metal_device_dmoe_event(ggml_metal_device_t dev) {
+     [dev->dmoe_lock lock];
+     if (dev->dmoe_ev == nil) {
+         dev->dmoe_ev = [dev->mtl_device newSharedEvent];
+-        tosh_dmoe_set_event(dev->dmoe_ev, ggml_metal_dmoe_ev_get, ggml_metal_dmoe_ev_set);
++        int dev_idx = dev->props.device;
++        tosh_dmoe_set_event_dev(dev_idx, dev->dmoe_ev, ggml_metal_dmoe_ev_get, ggml_metal_dmoe_ev_set);
++        // Also register as legacy (device 0) for single-GPU compat
++        if (dev_idx == 0) {
++            tosh_dmoe_set_event(dev->dmoe_ev, ggml_metal_dmoe_ev_get, ggml_metal_dmoe_ev_set);
++        }
+     }
+     [dev->dmoe_lock unlock];
+     return dev->dmoe_ev;
+ }
+ 
+ // signalled when a wide join is reached, before it waits on the host
+ void * ggml_metal_device_dmoe_reach_event(ggml_metal_device_t dev) {
+     [dev->dmoe_lock lock];
+     if (dev->dmoe_reach == nil) {
+         dev->dmoe_reach = [dev->mtl_device newSharedEvent];
+-        tosh_dmoe_set_reach_event(dev->dmoe_reach, ggml_metal_dmoe_ev_get);
++        int dev_idx = dev->props.device;
++        tosh_dmoe_set_reach_event_dev(dev_idx, dev->dmoe_reach, ggml_metal_dmoe_ev_get);
++        // Also register as legacy (device 0) for single-GPU compat
++        if (dev_idx == 0) {
++            tosh_dmoe_set_reach_event(dev->dmoe_reach, ggml_metal_dmoe_ev_get);
++        }
+     }
+     [dev->dmoe_lock unlock];
+     return dev->dmoe_reach;
+ }
+ 
+ struct ggml_metal_buffer_id ggml_metal_device_dmoe_obs_ring(ggml_metal_device_t dev) {
+     [dev->dmoe_lock lock];
+     if (dev->dmoe_obs == nil) {
+         dev->dmoe_obs = [dev->mtl_device newBufferWithLength:TOSH_DMOE_OBS_RING_BYTES options:MTLResourceStorageModeShared];
+         if (dev->dmoe_obs != nil) {
+-            tosh_dmoe_set_obs_ring([dev->dmoe_obs contents]);
++            int dev_idx = dev->props.device;
++            tosh_dmoe_set_obs_ring_dev(dev_idx, [dev->dmoe_obs contents]);
++            // Also register as legacy (device 0) for single-GPU compat
++            if (dev_idx == 0) {
++                tosh_dmoe_set_obs_ring([dev->dmoe_obs contents]);
++            }
+         }
+     }
+     [dev->dmoe_lock unlock];
+     struct ggml_metal_buffer_id res = { dev->dmoe_obs, 0 };
+     return res;
+ }
+ 
+ struct ggml_metal_buffer_id ggml_metal_device_dmoe_tables(ggml_metal_device_t dev) {
+@@ -1424,60 +1439,79 @@ static bool ggml_metal_dmoe_download(void * ctx_raw, const struct tosh_dmoe_copy
+             i = j;
+         }
+         [up->lock unlock];
+         return ok;
+     }
+ }
+ 
+ static void ggml_metal_dmoe_uploader_init(ggml_metal_device_t dev);
+-static ggml_metal_device_t g_uploader_dev = NULL;
++
++// created on first use, since mixed execution can be chosen after the devices start; every
++// device seen at init gets its own uploader, registered under its index
++static ggml_metal_device_t g_uploader_devs[8] = { NULL };
++static int g_uploader_n = 0;
+ static void ggml_metal_dmoe_uploader_make(void) {
+-    if (g_uploader_dev != NULL) {
+-        ggml_metal_dmoe_uploader_init(g_uploader_dev);
++    for (int i = 0; i < g_uploader_n; ++i) {
++        ggml_metal_dmoe_uploader_init(g_uploader_devs[i]);
+     }
+ }
+ 
+ static void ggml_metal_dmoe_uploader_init(ggml_metal_device_t dev) {
+     struct ggml_metal_dmoe_up * up = calloc(1, sizeof(struct ggml_metal_dmoe_up));
+     up->dev   = dev;
+     up->queue = [dev->mtl_device newCommandQueue];
+     for (int i = 0; i < DMOE_UP_SLOTS; ++i) {
+         up->stage[i] = [dev->mtl_device newBufferWithLength:DMOE_UP_BYTES options:MTLResourceStorageModeShared];
+     }
+     up->lock = [[NSLock alloc] init];
+     const char * f = getenv("TOSH_DMOE_TEST_UPLOAD_FAIL");
+     up->fail_at = f ? atol(f) : -1;
+     struct tosh_dmoe_uploader u = { up, ggml_metal_dmoe_upload, ggml_metal_dmoe_upload_status, ggml_metal_dmoe_upload_gpu_us,
+                                     ggml_metal_dmoe_download };
+-    tosh_dmoe_set_uploader(&u);
++    int dev_idx = dev->props.device;
++    tosh_dmoe_set_uploader_dev(dev_idx, &u);
++    // Also register as legacy (device 0) for single-GPU compat
++    if (dev_idx == 0) {
++        tosh_dmoe_set_uploader(&u);
++    }
+ }
+ 
+ struct ggml_metal_buffer_id ggml_metal_device_dmoe_wide_stage(ggml_metal_device_t dev, size_t bytes) {
+     [dev->dmoe_lock lock];
+     if (dev->dmoe_wide == nil) {
+         dev->dmoe_wide = [dev->mtl_device newBufferWithLength:bytes options:MTLResourceStorageModeShared];
+         GGML_ASSERT(dev->dmoe_wide != nil);
+-        tosh_dmoe_set_wide_stage([dev->dmoe_wide contents], bytes);
++        int dev_idx = dev->props.device;
++        tosh_dmoe_set_wide_stage_dev(dev_idx, [dev->dmoe_wide contents], bytes);
++        // Also register as legacy (device 0) for single-GPU compat
++        if (dev_idx == 0) {
++            tosh_dmoe_set_wide_stage([dev->dmoe_wide contents], bytes);
++        }
+     }
+     GGML_ASSERT([dev->dmoe_wide length] >= bytes && "the wide stage size cannot change once allocated");
+     [dev->dmoe_lock unlock];
+     struct ggml_metal_buffer_id res = { dev->dmoe_wide, 0 };
+     return res;
+ }
+ 
+ struct ggml_metal_buffer_id ggml_metal_device_dmoe_stage(ggml_metal_device_t dev, size_t layer_stride) {
+     [dev->dmoe_lock lock];
+     const size_t size = layer_stride*TOSH_DMOE_MAX_LAYERS;
+     if (dev->dmoe_stage == nil || [dev->dmoe_stage length] < size) {
+         GGML_ASSERT(dev->dmoe_stage == nil && "the stage stride cannot change once allocated");
+         dev->dmoe_stage = [dev->mtl_device newBufferWithLength:size options:MTLResourceStorageModeShared];
+         GGML_ASSERT(dev->dmoe_stage != nil);
+         memset([dev->dmoe_stage contents], 0, size);
+-        tosh_dmoe_set_stage([dev->dmoe_stage contents], layer_stride);
++        int dev_idx = dev->props.device;
++        tosh_dmoe_set_stage_dev(dev_idx, [dev->dmoe_stage contents], layer_stride);
++        // Also register as legacy (device 0) for single-GPU compat
++        if (dev_idx == 0) {
++            tosh_dmoe_set_stage([dev->dmoe_stage contents], layer_stride);
++        }
+     }
+     [dev->dmoe_lock unlock];
+     struct ggml_metal_buffer_id res = { dev->dmoe_stage, 0 };
+     return res;
+ }
+ #endif
+ 
+ //
+@@ -1768,19 +1802,20 @@ ggml_metal_device_t ggml_metal_device_init(int device, int n_devices) {
+                 if (dev->mtl_queue == nil) {
+                     GGML_LOG_ERROR("%s: error: failed to create command queue\n", __func__);
+                 }
+ 
+                 dev->stage_lock = [[NSRecursiveLock alloc] init];
+                 dev->wrap_lock  = [[NSLock alloc] init];
+                 dev->dmoe_lock  = [[NSLock alloc] init];
+ #ifdef TOSH_ENABLE_DYNAMIC_MOE
+-                if (g_uploader_dev == NULL) {
+-                    // created on first use: mixed execution can be chosen after the device starts
+-                    g_uploader_dev = dev;
++                if (g_uploader_n < 8) {
++                    g_uploader_devs[g_uploader_n++] = dev;
++                }
++                if (g_uploader_n == 1) {
+                     tosh_dmoe_set_uploader_factory(ggml_metal_dmoe_uploader_make);
+                 }
+ #endif
+ 
+                 dev->addr_virt = 0x000000400ULL;
+ 
+                 dev->props.device = device;
+ 
+diff --git a/tosh-moe/tosh-dmoe.cpp b/tosh-moe/tosh-dmoe.cpp
+index 75a1fb1b1..313900fa6 100644
+--- a/tosh-moe/tosh-dmoe.cpp
++++ b/tosh-moe/tosh-dmoe.cpp
+@@ -8,22 +8,24 @@
+ #include <condition_variable>
+ #include <algorithm>
+ #include <mutex>
+ #include <thread>
+ #include <time.h>
+ 
+ namespace {
+ 
+-std::atomic<char *>   g_stage{nullptr};
+-std::atomic<size_t>   g_stride{0};
++static const int MAX_DEVICES = 8;
+ 
+-void *                g_ev = nullptr;
+-uint64_t            (*g_ev_get)(void *) = nullptr;
+-void                (*g_ev_set)(void *, uint64_t) = nullptr;
++std::atomic<char *>   g_stage[MAX_DEVICES];
++std::atomic<size_t>   g_stride[MAX_DEVICES];
++
++void *                g_ev[MAX_DEVICES] = { nullptr };
++uint64_t            (*g_ev_get[MAX_DEVICES])(void *) = { nullptr };
++void                (*g_ev_set[MAX_DEVICES])(void *, uint64_t) = { nullptr };
+ 
+ std::atomic<uint64_t> g_value{1};
+ 
+ tosh_dmoe_job         g_jobs[TOSH_DMOE_RING];
+ 
+ std::mutex              g_active_mutex;
+ std::condition_variable g_active_cv;
+ std::atomic<bool>       g_active{false};
+@@ -36,67 +38,161 @@ int                  g_tables_layers = 0;
+ int                  g_tables_experts = 0;
+ std::atomic<int>     g_version{0};
+ 
+ std::atomic<uint64_t> g_tick{0};
+ std::atomic<uint64_t> g_completed{0};
+ std::mutex              g_done_mutex;
+ std::condition_variable g_done_cv;
+ 
+-tosh_dmoe_uploader    g_uploader = {};
+-std::atomic<bool>     g_has_uploader{false};
++tosh_dmoe_uploader    g_uploader[MAX_DEVICES] = {};
++std::atomic<bool>     g_has_uploader[MAX_DEVICES] = { false };
+ 
+ std::atomic<tosh_dmoe_bank_plan_fn> g_planner{nullptr};
+ 
+-void *                g_obs_ring = nullptr;
++void *                g_obs_ring[MAX_DEVICES] = { nullptr };
+ tosh_dmoe_obs_record  g_obs[TOSH_DMOE_OBS_RECORDS];
+-std::atomic<uint64_t> g_obs_seq{0};
+-uint32_t              g_obs_off = 0;
+-std::atomic<uint64_t> g_obs_pos{0};
++std::atomic<uint64_t> g_obs_seq[MAX_DEVICES] = { 0 };
++uint32_t              g_obs_off[MAX_DEVICES] = { 0 };
++std::atomic<uint64_t> g_obs_pos[MAX_DEVICES] = { 0 };
+ std::mutex            g_obs_mutex;
+ 
++static void * g_reach_ev[MAX_DEVICES] = { nullptr };
++static uint64_t (*g_reach_get[MAX_DEVICES])(void *) = { nullptr };
++
++static void * g_wide_stage[MAX_DEVICES] = { nullptr };
++static size_t g_wide_bytes[MAX_DEVICES] = { 0 };
++
++int g_highest_dev = -1;
++
+ }
+ 
+ static std::atomic<bool> g_forced{false};
+ void tosh_dmoe_enable(void) { g_forced.store(true); }
+ 
+ bool tosh_dmoe_enabled(void) {
+     static const bool on = getenv("TOSH_DMOE_RESIDENCY") != nullptr || getenv("TOSH_DMOE_CACHE_MIB") != nullptr;
+     return on || g_forced.load(std::memory_order_relaxed);
+ }
+ 
+ void tosh_dmoe_set_stage(void * host, size_t layer_stride) {
+-    g_stride.store(layer_stride);
+-    g_stage.store((char *) host);
++    g_stride[0].store(layer_stride);
++    g_stage[0].store((char *) host);
+ }
+ 
+ void * tosh_dmoe_stage_layer(int il) {
+-    char * s = g_stage.load();
+-    return s ? s + (size_t) il*g_stride.load() : nullptr;
++    char * s = g_stage[0].load();
++    return s ? s + (size_t) il*g_stride[0].load() : nullptr;
+ }
+ 
+ void tosh_dmoe_set_event(void * ev, uint64_t (*get)(void *), void (*set)(void *, uint64_t)) {
+-    g_ev_get = get;
+-    g_ev_set = set;
+-    g_ev     = ev;
++    g_ev_get[0] = get;
++    g_ev_set[0] = set;
++    g_ev[0]     = ev;
+ }
+ 
+ uint64_t tosh_dmoe_event_get(void) {
+-    return g_ev ? g_ev_get(g_ev) : 0;
++    return g_ev[0] ? g_ev_get[0](g_ev[0]) : 0;
+ }
+ 
+ void tosh_dmoe_event_set(uint64_t value) {
+-    if (g_ev) {
+-        g_ev_set(g_ev, value);
++    if (g_ev[0]) {
++        g_ev_set[0](g_ev[0], value);
+     }
+ }
+ 
+ uint64_t tosh_dmoe_next_value(void) { return g_value.fetch_add(2); }
+ uint64_t tosh_dmoe_last_value(void) { return g_value.load() - 2; }
+ 
++// Per-device rendezvous API
++void tosh_dmoe_set_stage_dev(int dev, void * host, size_t layer_stride) {
++    if (dev < 0 || dev >= MAX_DEVICES) return;
++    g_stride[dev].store(layer_stride);
++    g_stage[dev].store((char *) host);
++    if (dev > g_highest_dev) g_highest_dev = dev;
++}
++
++void * tosh_dmoe_stage_layer_dev(int dev, int il) {
++    if (dev < 0 || dev >= MAX_DEVICES) return nullptr;
++    char * s = g_stage[dev].load();
++    return s ? s + (size_t) il*g_stride[dev].load() : nullptr;
++}
++
++void tosh_dmoe_set_event_dev(int dev, void * ev, uint64_t (*get)(void *), void (*set)(void *, uint64_t)) {
++    if (dev < 0 || dev >= MAX_DEVICES) return;
++    g_ev_get[dev] = get;
++    g_ev_set[dev] = set;
++    g_ev[dev]     = ev;
++    if (dev > g_highest_dev) g_highest_dev = dev;
++}
++
++uint64_t tosh_dmoe_event_get_dev(int dev) {
++    if (dev < 0 || dev >= MAX_DEVICES) return 0;
++    return g_ev[dev] ? g_ev_get[dev](g_ev[dev]) : 0;
++}
++
++void tosh_dmoe_event_set_dev(int dev, uint64_t value) {
++    if (dev < 0 || dev >= MAX_DEVICES) return;
++    if (g_ev[dev]) {
++        g_ev_set[dev](g_ev[dev], value);
++    }
++}
++
++void tosh_dmoe_set_reach_event_dev(int dev, void * ev, uint64_t (*get)(void *)) {
++    if (dev < 0 || dev >= MAX_DEVICES) return;
++    g_reach_ev[dev] = ev;
++    g_reach_get[dev] = get;
++    if (dev > g_highest_dev) g_highest_dev = dev;
++}
++
++uint64_t tosh_dmoe_reach_get_dev(int dev) {
++    if (dev < 0 || dev >= MAX_DEVICES) return 0;
++    return g_reach_get[dev] ? g_reach_get[dev](g_reach_ev[dev]) : 0;
++}
++
++void tosh_dmoe_set_wide_stage_dev(int dev, void * host, size_t bytes) {
++    if (dev < 0 || dev >= MAX_DEVICES) return;
++    g_wide_stage[dev] = host;
++    g_wide_bytes[dev] = bytes;
++    if (dev > g_highest_dev) g_highest_dev = dev;
++}
++
++void * tosh_dmoe_wide_stage_dev(int dev, size_t * bytes) {
++    if (dev < 0 || dev >= MAX_DEVICES) return nullptr;
++    if (bytes) *bytes = g_wide_bytes[dev];
++    return g_wide_stage[dev];
++}
++
++void tosh_dmoe_set_obs_ring_dev(int dev, void * host) {
++    if (dev < 0 || dev >= MAX_DEVICES) return;
++    g_obs_ring[dev] = host;
++    if (dev > g_highest_dev) g_highest_dev = dev;
++}
++
++void * tosh_dmoe_obs_ring_dev(int dev) {
++    if (dev < 0 || dev >= MAX_DEVICES) return nullptr;
++    return g_obs_ring[dev];
++}
++
++void tosh_dmoe_set_uploader_dev(int dev, const struct tosh_dmoe_uploader * u) {
++    if (dev < 0 || dev >= MAX_DEVICES) return;
++    g_uploader[dev] = *u;
++    g_has_uploader[dev].store(true);
++    if (dev > g_highest_dev) g_highest_dev = dev;
++}
++
++const struct tosh_dmoe_uploader * tosh_dmoe_get_uploader_dev(int dev) {
++    if (dev < 0 || dev >= MAX_DEVICES) return nullptr;
++    return g_has_uploader[dev].load() ? &g_uploader[dev] : nullptr;
++}
++
++int tosh_dmoe_n_devices(void) {
++    return g_highest_dev + 1;
++}
++
+ void tosh_dmoe_set_tables(int32_t * host, size_t bytes, int n_layers, int n_expert) {
+     g_tables_bytes   = bytes;
+     g_tables_layers  = n_layers;
+     g_tables_experts = n_expert;
+     g_tables         = host;
+ }
+ 
+ int32_t * tosh_dmoe_tables(size_t * bytes, int * n_layers, int * n_expert) {
+@@ -110,22 +206,20 @@ void tosh_dmoe_publish_version(int version) { g_version.store(version, std::memo
+ int  tosh_dmoe_published_version(void)      { return g_version.load(std::memory_order_acquire); }
+ 
+ uint64_t tosh_dmoe_tick_next(void) { return g_tick.fetch_add(1) + 1; }
+ static std::atomic<bool> g_wide{false};
+ void tosh_dmoe_note_wide(bool wide) { g_wide.store(wide); }
+ bool tosh_dmoe_wide(void)           { return g_wide.load(); }
+ uint64_t tosh_dmoe_tick(void)      { return g_tick.load(); }
+ 
+-static void * g_wide_stage = nullptr;
+-static size_t g_wide_bytes = 0;
+-void tosh_dmoe_set_wide_stage(void * host, size_t bytes) { g_wide_stage = host; g_wide_bytes = bytes; }
++void tosh_dmoe_set_wide_stage(void * host, size_t bytes) { g_wide_stage[0] = host; g_wide_bytes[0] = bytes; }
+ void * tosh_dmoe_wide_stage(size_t * bytes) {
+-    if (bytes) *bytes = g_wide_bytes;
+-    return g_wide_stage;
++    if (bytes) *bytes = g_wide_bytes[0];
++    return g_wide_stage[0];
+ }
+ 
+ namespace {
+ struct tl_event { int kind, il; double t0, t1; };
+ std::mutex g_tl_mutex;
+ std::vector<tl_event> g_tl;
+ void tl_dump() {
+     const char * p = getenv("TOSH_DMOE_TIMELINE");
+@@ -250,20 +344,18 @@ int tosh_dmoe_rare_rows_live(void) { return g_rare.rows.load(std::memory_order_r
+ void tosh_dmoe_rare_dma_done(int il, double t_end) {
+     if (il < 0 || il >= TOSH_DMOE_MAX_LAYERS) return;
+     std::lock_guard<std::mutex> lock(g_rare.m);
+     auto & L = g_rare.layers[il];
+     L.dma_end[L.dma_seq % 8] = t_end;
+     L.dma_seq++;
+ }
+ 
+-static void * g_reach_ev = nullptr;
+-static uint64_t (*g_reach_get)(void *) = nullptr;
+-void tosh_dmoe_set_reach_event(void * ev, uint64_t (*get)(void *)) { g_reach_ev = ev; g_reach_get = get; }
+-uint64_t tosh_dmoe_reach_get(void) { return g_reach_get ? g_reach_get(g_reach_ev) : 0; }
++void tosh_dmoe_set_reach_event(void * ev, uint64_t (*get)(void *)) { g_reach_ev[0] = ev; g_reach_get[0] = get; }
++uint64_t tosh_dmoe_reach_get(void) { return g_reach_get[0] ? g_reach_get[0](g_reach_ev[0]) : 0; }
+ 
+ void tosh_dmoe_rare_host_done(int il, double t_start, double t_end, bool gpu_waiting) {
+     if (il < 0 || il >= TOSH_DMOE_MAX_LAYERS) return;
+     std::lock_guard<std::mutex> lock(g_rare.m);
+     g_rare.host_s += t_end - t_start;
+     g_rare.n_wait += gpu_waiting;
+     auto & L = g_rare.layers[il];
+     const uint64_t h = L.host_seq++;
+@@ -374,71 +466,71 @@ bool tosh_dmoe_wait_completed(uint64_t seen, int timeout_us) {
+ 
+ void tosh_dmoe_set_bank_planner(tosh_dmoe_bank_plan_fn fn) { g_planner.store(fn); }
+ 
+ bool tosh_dmoe_bank_planner(const void * host, size_t size, tosh_dmoe_bank_plan * plan) {
+     const tosh_dmoe_bank_plan_fn fn = g_planner.load();
+     return fn != nullptr && fn(host, size, plan);
+ }
+ 
+-void   tosh_dmoe_set_obs_ring(void * host) { g_obs_ring = host; }
+-void * tosh_dmoe_obs_ring(void)            { return g_obs_ring; }
+-uint64_t tosh_dmoe_obs_head(void)          { return g_obs_seq.load(); }
++void   tosh_dmoe_set_obs_ring(void * host) { g_obs_ring[0] = host; }
++void * tosh_dmoe_obs_ring(void)            { return g_obs_ring[0]; }
++uint64_t tosh_dmoe_obs_head(void)          { return g_obs_seq[0].load(); }
+ 
+ tosh_dmoe_obs_record * tosh_dmoe_obs_reserve(int il, int n_used, int n_tokens) {
+     const uint32_t bytes = (uint32_t) n_used*n_tokens*sizeof(int32_t);
+     if (bytes == 0 || bytes > TOSH_DMOE_OBS_RING_BYTES/4) {
+         return nullptr;
+     }
+     std::lock_guard<std::mutex> lock(g_obs_mutex);
+-    if (g_obs_off + bytes > TOSH_DMOE_OBS_RING_BYTES) {
+-        g_obs_pos.fetch_add(TOSH_DMOE_OBS_RING_BYTES - g_obs_off);
+-        g_obs_off = 0;
++    if (g_obs_off[0] + bytes > TOSH_DMOE_OBS_RING_BYTES) {
++        g_obs_pos[0].fetch_add(TOSH_DMOE_OBS_RING_BYTES - g_obs_off[0]);
++        g_obs_off[0] = 0;
+     }
+-    const uint64_t seq = g_obs_seq.load() + 1;
++    const uint64_t seq = g_obs_seq[0].load() + 1;
+     tosh_dmoe_obs_record * r = &g_obs[seq % TOSH_DMOE_OBS_RECORDS];
+     r->sync     = tosh_dmoe_completed_value();
+-    r->offset   = g_obs_off;
+-    r->pos      = g_obs_pos.load();
++    r->offset   = g_obs_off[0];
++    r->pos      = g_obs_pos[0].load();
+     r->il       = il;
+     r->n_used   = n_used;
+     r->n_tokens = n_tokens;
+     r->tick     = (uint32_t) tosh_dmoe_tick();
+     __atomic_store_n(&r->seq, seq, __ATOMIC_RELEASE);
+-    g_obs_seq.store(seq);
+-    g_obs_off += (bytes + 255) & ~255u;
+-    g_obs_pos.fetch_add((bytes + 255) & ~255u);
++    g_obs_seq[0].store(seq);
++    g_obs_off[0] += (bytes + 255) & ~255u;
++    g_obs_pos[0].fetch_add((bytes + 255) & ~255u);
+     return r;
+ }
+ 
+ bool tosh_dmoe_obs_intact(const tosh_dmoe_obs_record * r) {
+     const uint64_t bytes = (uint64_t) r->n_used*r->n_tokens*sizeof(int32_t);
+-    return g_obs_pos.load() - r->pos + bytes <= TOSH_DMOE_OBS_RING_BYTES;
++    return g_obs_pos[0].load() - r->pos + bytes <= TOSH_DMOE_OBS_RING_BYTES;
+ }
+ 
+ tosh_dmoe_obs_record * tosh_dmoe_obs_record_at(uint64_t seq) {
+     tosh_dmoe_obs_record * r = &g_obs[seq % TOSH_DMOE_OBS_RECORDS];
+     return __atomic_load_n(&r->seq, __ATOMIC_ACQUIRE) == seq ? r : nullptr;
+ }
+ 
+ void tosh_dmoe_set_uploader(const tosh_dmoe_uploader * u) {
+-    g_uploader = *u;
+-    g_has_uploader.store(true);
++    g_uploader[0] = *u;
++    g_has_uploader[0].store(true);
+ }
+ 
+ static void (*g_uploader_factory)(void) = nullptr;
+ void tosh_dmoe_set_uploader_factory(void (*make)(void)) { g_uploader_factory = make; }
+ 
+ const tosh_dmoe_uploader * tosh_dmoe_get_uploader(void) {
+     static std::mutex m;
+-    if (!g_has_uploader.load() && g_uploader_factory != nullptr) {
++    if (!g_has_uploader[0].load() && g_uploader_factory != nullptr) {
+         std::lock_guard<std::mutex> lock(m);
+-        if (!g_has_uploader.load()) g_uploader_factory();
++        if (!g_has_uploader[0].load()) g_uploader_factory();
+     }
+-    return g_has_uploader.load() ? &g_uploader : nullptr;
++    return g_has_uploader[0].load() ? &g_uploader[0] : nullptr;
+ }
+ 
+ tosh_dmoe_job * tosh_dmoe_job_of(uint64_t value) {
+     return &g_jobs[(value >> 1) % TOSH_DMOE_RING];
+ }
+ 
+ void tosh_dmoe_set_active(bool active) {
+     if (g_active.exchange(active) == active) {
+diff --git a/tosh-moe/tosh-dmoe.h b/tosh-moe/tosh-dmoe.h
+index e5a5098fe..c0a6b225c 100644
+--- a/tosh-moe/tosh-dmoe.h
++++ b/tosh-moe/tosh-dmoe.h
+@@ -97,16 +97,32 @@ bool tosh_dmoe_enabled(void);
+ 
+ // Set by the GPU backend.
+ void     tosh_dmoe_set_stage(void * host, size_t layer_stride);
+ void *   tosh_dmoe_stage_layer(int il);
+ void     tosh_dmoe_set_event(void * ev, uint64_t (*get)(void *), void (*set)(void *, uint64_t));
+ uint64_t tosh_dmoe_event_get(void);
+ void     tosh_dmoe_event_set(uint64_t value);
+ 
++// Per-device rendezvous state (max 8 devices). Legacy API maps to device 0.
++void     tosh_dmoe_set_stage_dev(int dev, void * host, size_t layer_stride);
++void *   tosh_dmoe_stage_layer_dev(int dev, int il);
++void     tosh_dmoe_set_event_dev(int dev, void * ev, uint64_t (*get)(void *), void (*set)(void *, uint64_t));
++uint64_t tosh_dmoe_event_get_dev(int dev);
++void     tosh_dmoe_event_set_dev(int dev, uint64_t value);
++void     tosh_dmoe_set_reach_event_dev(int dev, void * ev, uint64_t (*get)(void *));
++uint64_t tosh_dmoe_reach_get_dev(int dev);
++void     tosh_dmoe_set_wide_stage_dev(int dev, void * host, size_t bytes);
++void *   tosh_dmoe_wide_stage_dev(int dev, size_t * bytes);
++void     tosh_dmoe_set_obs_ring_dev(int dev, void * host);
++void *   tosh_dmoe_obs_ring_dev(int dev);
++void     tosh_dmoe_set_uploader_dev(int dev, const struct tosh_dmoe_uploader * u);
++const struct tosh_dmoe_uploader * tosh_dmoe_get_uploader_dev(int dev);
++int      tosh_dmoe_n_devices(void);
++
+ // Publish values are odd and grow in GPU order; the answer is value + 1. They are handed out
+ // when a graph is submitted, so a publish and its join agree however the graph is split.
+ uint64_t tosh_dmoe_next_value(void);
+ 
+ struct tosh_dmoe_job * tosh_dmoe_job_of(uint64_t value);
+ 
+ // The host executor only spins while a graph with mixed layers is in flight.
+ void tosh_dmoe_set_active(bool active);
