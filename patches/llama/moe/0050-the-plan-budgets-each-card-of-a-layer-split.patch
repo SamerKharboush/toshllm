@@ -1,0 +1,593 @@
+diff --git a/common/tosh-plan.cpp b/common/tosh-plan.cpp
+index 346984fd6..04b6a2084 100644
+--- a/common/tosh-plan.cpp
++++ b/common/tosh-plan.cpp
+@@ -84,18 +84,25 @@ struct host_mem {
+     double self_rss_mib    = 0;
+     int    pressure_level  = 1;  // kern.memorystatus_vm_pressure_level: 1 normal, 2 warn, 4 critical
+     bool   swap_growing    = false;
+     bool   simulated       = false;
+ };
+ 
+ struct probe {
+     bool   ok = false;
+-    double model = 0, context = 0, compute = 0;   // GPU, MiB
++    double model = 0, context = 0, compute = 0;   // GPU, MiB (device 0, for 1-GPU compatibility)
+     double host_model = 0, host_other = 0;
++    // per-device breakdown (all GPUs from mem, in order)
++    std::vector<double> dev_model;
++    std::vector<double> dev_context;
++    std::vector<double> dev_compute;
++    std::vector<double> dev_free_mib;
++    std::vector<double> dev_total_mib;
++    int n_dev = 0;  // number of GPU devices (mem.size() - 1)
+ };
+ 
+ double env_mib(const char * k, double d) {
+     const char * v = getenv(k);
+     return v ? atof(v) : d;
+ }
+ 
+ // metadata comes from the first shard, tensors from every shard of a split model
+@@ -333,19 +340,34 @@ probe run_probe(const common_params & params, int n_ctx, ggml_type kv, int ub, b
+     try {
+         std::vector<ggml_backend_dev_t> devs;
+         uint32_t ngl = 0, ctx_train = 0, n_expert = 0;
+         const auto mem = common_get_device_memory_data(params.model.path.c_str(), &mp, &cp, devs, ngl, ctx_train, n_expert,
+                                                        GGML_LOG_LEVEL_ERROR);
+         if (mem.size() < 2) {
+             return p;
+         }
+-        p.model   = mem[0].model/MiB;
+-        p.context = mem[0].context/MiB;
+-        p.compute = mem[0].compute/MiB;
++        // GPU devices are all but the last (host)
++        p.n_dev = (int)mem.size() - 1;
++        p.dev_model.resize(p.n_dev);
++        p.dev_context.resize(p.n_dev);
++        p.dev_compute.resize(p.n_dev);
++        p.dev_free_mib.resize(p.n_dev);
++        p.dev_total_mib.resize(p.n_dev);
++        for (int d = 0; d < p.n_dev; ++d) {
++            p.dev_model[d]   = mem[d].model/MiB;
++            p.dev_context[d] = mem[d].context/MiB;
++            p.dev_compute[d] = mem[d].compute/MiB;
++            p.dev_free_mib[d]  = mem[d].free/MiB;
++            p.dev_total_mib[d] = mem[d].total/MiB;
++        }
++        // Keep scalar fields as device 0 for 1-GPU compatibility
++        p.model   = p.dev_model[0];
++        p.context = p.dev_context[0];
++        p.compute = p.dev_compute[0];
+         p.host_model = mem.back().model/MiB;
+         p.host_other = (mem.back().context + mem.back().compute)/MiB;
+         p.ok = true;
+     } catch (const std::exception & e) {
+         LOG_WRN("%s: memory probe failed: %s\n", __func__, e.what());
+     }
+     return p;
+ }
+@@ -370,16 +392,68 @@ bool read_vram(double & free_mib, double & total_mib) {
+     if (sim > 0) {
+         // what other processes hold on the real card is kept as the simulated card's baseline
+         free_mib = std::max(0.0, sim - (total_mib - free_mib));
+         total_mib = sim;
+     }
+     return total_mib > 0;
+ }
+ 
++// Read VRAM for all GPU devices in enumeration order.
++// Returns vectors of free_mib and total_mib for each GPU device.
++void read_vram_per_device(std::vector<double> & free_mib, std::vector<double> & total_mib) {
++    free_mib.clear();
++    total_mib.clear();
++    const size_t nd = ggml_backend_dev_count();
++    int gpu_index = 0;
++    for (size_t i = 0; i < nd; ++i) {
++        ggml_backend_dev_t dev = ggml_backend_dev_get(i);
++        if (!dev) continue;
++        if (ggml_backend_dev_type(dev) != GGML_BACKEND_DEVICE_TYPE_GPU &&
++            ggml_backend_dev_type(dev) != GGML_BACKEND_DEVICE_TYPE_IGPU) {
++            continue;
++        }
++        size_t f = 0, t = 0;
++#ifdef TOSH_ENABLE_DYNAMIC_MOE
++        if (gpu_index == 0) {
++            // Device 0: use the existing read_vram logic (which uses tosh_vram_read internally)
++            double free_d = 0, total_d = 0;
++            if (!read_vram(free_d, total_d)) {
++                // fall back to backend query
++                ggml_backend_dev_memory(dev, &f, &t);
++            } else {
++                f = (size_t) (free_d * MiB);
++                t = (size_t) (total_d * MiB);
++            }
++        } else {
++            // Device >0: try tosh_dmoe_vram_dev first (set by Metal backend at init)
++            if (!tosh_dmoe_vram_dev(gpu_index, &f, &t)) {
++                // fall back to backend query
++                ggml_backend_dev_memory(dev, &f, &t);
++            }
++        }
++#else
++        ggml_backend_dev_memory(dev, &f, &t);
++#endif
++        if (t > 0) {
++            free_mib.push_back(f/MiB);
++            total_mib.push_back(t/MiB);
++        }
++        ++gpu_index;
++    }
++    // Apply simulation override if set (applies to all devices equally)
++    const double sim = env_mib("TOSH_AUTO_SIM_VRAM_MIB", 0);
++    if (sim > 0) {
++        for (size_t i = 0; i < free_mib.size(); ++i) {
++            free_mib[i] = std::max(0.0, sim - (total_mib[i] - free_mib[i]));
++            total_mib[i] = sim;
++        }
++    }
++}
++
+ const char * kv_name(ggml_type t) { return ggml_type_name(t); }
+ 
+ } // namespace
+ 
+ const char * tosh_plan_state_name(tosh_plan_state s) {
+     switch (s) {
+         case TOSH_PLAN_NOT_PLANNED:            return "NOT_PLANNED";
+         case TOSH_PLAN_FULL_GPU_OPTIMAL:       return "FULL_GPU_OPTIMAL";
+@@ -485,17 +559,28 @@ std::string tosh_plan_json(const tosh_plan & p) {
+     o += ", \"candidates\": [";
+     for (size_t i = 0; i < p.candidates.size(); ++i) {
+         const auto & c = p.candidates[i];
+         o += i ? ", {" : "{";
+         o += "\"name\": " + jstr(c.name) + ", \"mode\": " + jstr(c.mode) + ", \"kv\": " + jstr(kv_name(c.kv)) + ", \"valid\": " + (c.valid ? "true" : "false") + ", \"reason\": " + jstr(c.reason);
+         o += string_format(", \"ubatch\": %d, \"ncmoe\": %d, \"private_mib\": %.0f, \"free_mib\": %.0f, \"arena_mib\": %.0f, \"kv_mib\": %.0f, \"compute_mib\": %.0f}",
+                            c.ubatch, c.ncmoe, c.private_mib, c.free_mib, c.arena_mib, c.kv_mib, c.compute_mib);
+     }
+-    return o + "]}";
++    o += "]";
++    if (!p.devices.empty()) {
++        o += ", \"devices\": [";
++        for (size_t i = 0; i < p.devices.size(); ++i) {
++            const auto & d = p.devices[i];
++            o += i ? ", {" : "{";
++            o += string_format("\"index\": %d, \"free_mib\": %.0f, \"total_mib\": %.0f, \"model_mib\": %.0f, \"kv_mib\": %.0f, \"compute_mib\": %.0f, \"arena_mib\": %.0f}",
++                               d.index, d.free_mib, d.total_mib, d.model_mib, d.kv_mib, d.compute_mib, d.arena_mib);
++        }
++        o += "]";
++    }
++    return o + "}";
+ }
+ 
+ static void plan_log(const tosh_plan & p) {
+     LOG_DBG("Tosh auto memory plan\n");
+     LOG_DBG("  requested context %d, VRAM %.1f GiB (%.1f free), reserve %.1f GiB\n",
+             p.n_ctx, p.vram_total_mib/1024, p.vram_free_mib/1024, p.reserve_mib/1024);
+     for (const auto & c : p.candidates) {
+         LOG_DBG("  %-22s ub %4d  private %6.0f MiB  free %6.0f MiB  arena %6.0f MiB  %s: %s\n", c.name.c_str(), c.ubatch,
+@@ -657,16 +742,35 @@ bool tosh_plan_apply(common_params & params, tosh_plan * out) {
+         f.model += mi.bank_mib;
+         f.host_model = std::max(0.0, f.host_model - mi.bank_mib);
+         full.push_back({ kvs[k], f });
+     }
+     if (!read_vram(p.vram_free_mib, p.vram_total_mib)) {
+         LOG_WRN("%s: no GPU memory reading, planning off\n", __func__);
+         return false;
+     }
++    // Read per-device VRAM and populate device info when multiple GPUs are present
++    const int n_dev = dm[0][0].n_dev;
++    std::vector<double> dev_free_mib, dev_total_mib;
++    read_vram_per_device(dev_free_mib, dev_total_mib);
++    if (n_dev >= 2 && (int)dev_free_mib.size() >= n_dev) {
++        p.devices.resize(n_dev);
++        for (int d = 0; d < n_dev; ++d) {
++            p.devices[d].index = d;
++            p.devices[d].free_mib    = d < (int)dev_free_mib.size()   ? dev_free_mib[d]   : dm[0][0].dev_free_mib[d];
++            p.devices[d].total_mib   = d < (int)dev_total_mib.size()  ? dev_total_mib[d]  : dm[0][0].dev_total_mib[d];
++            p.devices[d].model_mib   = dm[0][0].dev_model[d];
++            p.devices[d].kv_mib      = dm[0][0].dev_context[d];
++            p.devices[d].compute_mib = dm[0][0].dev_compute[d];
++            p.devices[d].arena_mib   = 0;  // will be set after candidate selection
++        }
++        // Keep scalar fields as device 0 for 1-GPU compatibility (already set from probe)
++        p.vram_free_mib  = p.devices[0].free_mib;
++        p.vram_total_mib = p.devices[0].total_mib;
++    }
+     // every weight the probe left in host memory besides the bank and what is read lazily
+     p.host_weights_mib = dm[0][0].ok ? std::max(mi.embd_mib, dm[0][0].host_model - mi.bank_mib - mi.lazy_mib) : mi.embd_mib;
+     p.host_lazy_mib = mi.lazy_mib;
+     const bool runtime = host_policy_runtime() && dmoe_built;
+     const tosh_plan base = p;
+ 
+     // the decision from one host memory snapshot; run again when memory changed before committing
+     auto decide = [&](const host_mem & hi) -> const tosh_plan_candidate * {
+@@ -751,83 +855,151 @@ bool tosh_plan_apply(common_params & params, tosh_plan * out) {
+                why.find("LOCK_LIMIT") != std::string::npos ? "WIRE_LIMIT" :
+                why.find("STRUCTURAL_WARM") != std::string::npos ? "STRUCTURAL_WARM_TOO_SMALL" :
+                why.find("COVERAGE") != std::string::npos ? "COVERAGE_TOO_LOW" :
+                why.find("PRESSURE") != std::string::npos ? "HOST_MEMORY_PRESSURE_HIGH" : "CURRENT_RAM_LIMIT";
+     };
+     auto evaluate = [&](double R) {
+         p.candidates.clear();
+         p.reserve_mib = R;
++        const int n_dev = dm[0][0].n_dev;
++        const bool multi_gpu = n_dev >= 2 && !p.devices.empty();
+         for (auto & [kv, pr] : full) {
+             tosh_plan_candidate c;
+             c.name = std::string("full_gpu+") + kv_name(kv); c.mode = "full_gpu"; c.kv = kv; c.ubatch = ub_full;
+-            c.private_mib = pr.model + pr.context + pr.compute;
+-            c.free_mib    = p.vram_free_mib - c.private_mib;
+-            c.kv_mib = pr.context; c.compute_mib = pr.compute;
+-            c.valid  = pr.ok && c.free_mib >= R;
+-            c.need_vram_mib = c.private_mib + R; c.need_host_mib = host_engine;
+-            c.reason = !pr.ok ? "probe failed" : c.valid ? "fits with the reserve" :
+-                       c.free_mib >= 0 ? "VRAM_LIMIT: loads, but leaves less than the reserve for the requested context" : "VRAM_LIMIT: does not fit";
++            if (multi_gpu) {
++                c.private_mib = 0;
++                c.free_mib = 0;
++                c.need_vram_mib = 0;
++                c.valid = pr.ok;
++                for (int d = 0; d < n_dev; ++d) {
++                    const double dev_model_full = pr.dev_model[d] + mi.bank_mib / n_dev;
++                    const double dev_need = dev_model_full + pr.dev_context[d] + pr.dev_compute[d] + R;
++                    c.private_mib += dev_model_full + pr.dev_context[d] + pr.dev_compute[d];
++                    c.need_vram_mib += dev_need;
++                    if (p.devices[d].free_mib < dev_need) {
++                        c.valid = false;
++                    }
++                    c.free_mib += p.devices[d].free_mib - dev_need;
++                }
++                c.kv_mib = pr.context; c.compute_mib = pr.compute;
++                c.reason = !pr.ok ? "probe failed" : c.valid ? "fits with the reserve" :
++                           c.free_mib >= 0 ? "VRAM_LIMIT: loads, but leaves less than the reserve for the requested context" : "VRAM_LIMIT: does not fit";
++            } else {
++                c.private_mib = pr.model + pr.context + pr.compute;
++                c.free_mib    = p.vram_free_mib - c.private_mib;
++                c.kv_mib = pr.context; c.compute_mib = pr.compute;
++                c.valid  = pr.ok && c.free_mib >= R;
++                c.need_vram_mib = c.private_mib + R; c.need_host_mib = host_engine;
++                c.reason = !pr.ok ? "probe failed" : c.valid ? "fits with the reserve" :
++                           c.free_mib >= 0 ? "VRAM_LIMIT: loads, but leaves less than the reserve for the requested context" : "VRAM_LIMIT: does not fit";
++            }
+             p.candidates.push_back(c);
+         }
+         for (size_t k = 0; k < kvs.size() && dmoe_built; ++k) {
+             for (int u = 0; u < 3; ++u) {
+                 const probe & pr = dm[k][u];
+                 tosh_plan_candidate c;
+                 c.name = std::string("dmoe+") + kv_name(kvs[k]); c.mode = "dmoe"; c.kv = kvs[k]; c.ubatch = ubs[u];
+-                const double base = pr.model + pr.context + pr.compute;
+-                c.arena_mib   = std::max(0.0, p.vram_free_mib - base - slots - overhead - R);
+-                c.private_mib = base + slots + overhead + c.arena_mib;
+-                c.free_mib    = p.vram_free_mib - c.private_mib;
+-                c.kv_mib = pr.context; c.compute_mib = pr.compute;
+-                c.need_vram_mib = base + slots + overhead + p.min_arena_mib + R;
+-                const double cover = mi.bank_mib*BOUNDED_MIN_COVERAGE - c.arena_mib;
+-                c.need_host_mib = !runtime || full_host_ok ? host_dmoe :
+-                                  host_engine + staging_mib + std::max(mi.warm_floor_mib, disk_experts() ? std::min(cover, bounded_warm) : cover);
+-                // a bounded cache must still cover the bank together with the arena, unless the disk may serve the rest
+-                std::string host_reason = dmoe_block;
+-                if (!host_reason.empty() && bounded_warm > 0) {
+-                    const double cov = (c.arena_mib + bounded_warm)/mi.bank_mib;
+-                    host_reason = cov >= (disk_experts() ? BOUNDED_DISK_MIN_COVERAGE : BOUNDED_MIN_COVERAGE) ? "" :
+-                                  string_format("BOUNDED_HOST_COVERAGE_REJECTED: %.1f GiB RAM cache, coverage %.2f", bounded_warm/1024, cov);
++                if (multi_gpu) {
++                    c.dev_arena_mib.resize(n_dev);
++                    c.arena_mib = 0;
++                    c.private_mib = 0;
++                    c.free_mib = 0;
++                    c.need_vram_mib = 0;
++                    c.valid = pr.ok;
++                    for (int d = 0; d < n_dev; ++d) {
++                        const double base = pr.dev_model[d] + pr.dev_context[d] + pr.dev_compute[d];
++                        const double arena_d = std::max(0.0, p.devices[d].free_mib - base - slots - overhead - R);
++                        c.dev_arena_mib[d] = arena_d;
++                        c.arena_mib += arena_d;
++                        c.private_mib += base + slots + overhead + arena_d;
++                        c.free_mib += p.devices[d].free_mib - (base + slots + overhead + arena_d);
++                        c.need_vram_mib += base + slots + overhead + (p.min_arena_mib / n_dev) + R;
++                        if (arena_d < p.min_arena_mib / n_dev) {
++                            c.valid = false;
++                        }
++                    }
++                    c.kv_mib = pr.context; c.compute_mib = pr.compute;
++                    const double cover = mi.bank_mib*BOUNDED_MIN_COVERAGE - c.arena_mib;
++                    c.need_host_mib = !runtime || full_host_ok ? host_dmoe :
++                                      host_engine + staging_mib + std::max(mi.warm_floor_mib, disk_experts() ? std::min(cover, bounded_warm) : cover);
++                    std::string host_reason = dmoe_block;
++                    if (!host_reason.empty() && bounded_warm > 0) {
++                        const double cov = (c.arena_mib + bounded_warm)/mi.bank_mib;
++                        host_reason = cov >= (disk_experts() ? BOUNDED_DISK_MIN_COVERAGE : BOUNDED_MIN_COVERAGE) ? "" :
++                                      string_format("BOUNDED_HOST_COVERAGE_REJECTED: %.1f GiB RAM cache, coverage %.2f", bounded_warm/1024, cov);
++                    }
++                    c.valid  = c.valid && host_reason.empty();
++                    c.reason = !pr.ok ? "probe failed" : !host_reason.empty() ? host_reason :
++                               c.valid ? (dmoe_block.empty() ? "context and reserve kept" :
++                                          string_format("context and reserve kept, %.1f GiB of the bank in RAM", bounded_warm/1024)) :
++                               string_format("VRAM_LIMIT: arena %.0f MiB under the useful minimum %.0f", c.arena_mib, p.min_arena_mib);
++                } else {
++                    const double base = pr.model + pr.context + pr.compute;
++                    c.arena_mib   = std::max(0.0, p.vram_free_mib - base - slots - overhead - R);
++                    c.private_mib = base + slots + overhead + c.arena_mib;
++                    c.free_mib    = p.vram_free_mib - c.private_mib;
++                    c.kv_mib = pr.context; c.compute_mib = pr.compute;
++                    c.need_vram_mib = base + slots + overhead + p.min_arena_mib + R;
++                    const double cover = mi.bank_mib*BOUNDED_MIN_COVERAGE - c.arena_mib;
++                    c.need_host_mib = !runtime || full_host_ok ? host_dmoe :
++                                      host_engine + staging_mib + std::max(mi.warm_floor_mib, disk_experts() ? std::min(cover, bounded_warm) : cover);
++                    // a bounded cache must still cover the bank together with the arena, unless the disk may serve the rest
++                    std::string host_reason = dmoe_block;
++                    if (!host_reason.empty() && bounded_warm > 0) {
++                        const double cov = (c.arena_mib + bounded_warm)/mi.bank_mib;
++                        host_reason = cov >= (disk_experts() ? BOUNDED_DISK_MIN_COVERAGE : BOUNDED_MIN_COVERAGE) ? "" :
++                                      string_format("BOUNDED_HOST_COVERAGE_REJECTED: %.1f GiB RAM cache, coverage %.2f", bounded_warm/1024, cov);
++                    }
++                    c.valid  = pr.ok && host_reason.empty() && c.arena_mib >= p.min_arena_mib;
++                    c.reason = !pr.ok ? "probe failed" : !host_reason.empty() ? host_reason :
++                               c.valid ? (dmoe_block.empty() ? "context and reserve kept" :
++                                          string_format("context and reserve kept, %.1f GiB of the bank in RAM", bounded_warm/1024)) :
++                               string_format("VRAM_LIMIT: arena %.0f MiB under the useful minimum %.0f", c.arena_mib, p.min_arena_mib);
+                 }
+-                c.valid  = pr.ok && host_reason.empty() && c.arena_mib >= p.min_arena_mib;
+-                c.reason = !pr.ok ? "probe failed" : !host_reason.empty() ? host_reason :
+-                           c.valid ? (dmoe_block.empty() ? "context and reserve kept" :
+-                                      string_format("context and reserve kept, %.1f GiB of the bank in RAM", bounded_warm/1024)) :
+-                           string_format("VRAM_LIMIT: arena %.0f MiB under the useful minimum %.0f", c.arena_mib, p.min_arena_mib);
+                 p.candidates.push_back(c);
+             }
+         }
+         // legacy: the fewest layers of experts on the host that leave the reserve
+         for (auto & [kv, pr] : full) {
+             tosh_plan_candidate c;
+             c.name = std::string("legacy+") + kv_name(kv); c.mode = "legacy_offload"; c.kv = kv; c.ubatch = ub_full;
+-            const double per_layer = mi.bank_mib/std::max(1, mi.n_moe);
+-            const double full_priv = pr.model + pr.context + pr.compute;
+-            for (int n = 1; n <= mi.n_layer && pr.ok; ++n) {
+-                const double priv = full_priv - n*per_layer + slots;
+-                if (p.vram_free_mib - priv >= R) {
+-                    c.ncmoe = n; c.private_mib = priv; c.free_mib = p.vram_free_mib - priv; c.valid = true;
+-                    break;
++            if (multi_gpu) {
++                c.valid = false;
++                c.reason = "LEGACY_OFFLOAD_UNSAFE: not planned across devices";
++                c.private_mib = 0;
++                c.free_mib = 0;
++                c.kv_mib = pr.context; c.compute_mib = pr.compute;
++                c.need_vram_mib = 0;
++                c.need_host_mib = mi.bank_mib + p.host_weights_mib + 1024.0;
++            } else {
++                const double per_layer = mi.bank_mib/std::max(1, mi.n_moe);
++                const double full_priv = pr.model + pr.context + pr.compute;
++                for (int n = 1; n <= mi.n_layer && pr.ok; ++n) {
++                    const double priv = full_priv - n*per_layer + slots;
++                    if (p.vram_free_mib - priv >= R) {
++                        c.ncmoe = n; c.private_mib = priv; c.free_mib = p.vram_free_mib - priv; c.valid = true;
++                        break;
++                    }
+                 }
++                c.kv_mib = pr.context; c.compute_mib = pr.compute;
++                const double host_legacy = mi.bank_mib*c.ncmoe/std::max(1, mi.n_moe) + p.host_weights_mib + 1024.0;
++                c.need_vram_mib = (c.valid ? c.private_mib : full_priv - mi.bank_mib + slots) + R;
++                c.need_host_mib = c.valid ? host_legacy : mi.bank_mib + p.host_weights_mib + 1024.0;
++                const bool host_ok = runtime ? p.host_pressure != "CRITICAL" && host_legacy <= p.effective_mib :
++                                     hi.available_mib <= 0 || host_legacy + HOST_MARGIN_MIB <= hi.available_mib;
++                const double host_allowed = runtime ? p.effective_mib : hi.available_mib - HOST_MARGIN_MIB;
++                c.reason = !c.valid ? "VRAM_LIMIT: does not fit" : !host_ok ?
++                    string_format("%s: %d layers of experts on the host need %.1f GiB, %.1f GiB allowed now",
++                                  runtime && p.effective_mib == p.static_cap_mib ? "STATIC_RAM_LIMIT" : "CURRENT_RAM_LIMIT",
++                                  c.ncmoe, host_legacy/1024, host_allowed/1024) :
++                    string_format("%d layers of experts on the host", c.ncmoe);
++                c.valid = c.valid && host_ok;
+             }
+-            c.kv_mib = pr.context; c.compute_mib = pr.compute;
+-            const double host_legacy = mi.bank_mib*c.ncmoe/std::max(1, mi.n_moe) + p.host_weights_mib + 1024.0;
+-            c.need_vram_mib = (c.valid ? c.private_mib : full_priv - mi.bank_mib + slots) + R;
+-            c.need_host_mib = c.valid ? host_legacy : mi.bank_mib + p.host_weights_mib + 1024.0;
+-            const bool host_ok = runtime ? p.host_pressure != "CRITICAL" && host_legacy <= p.effective_mib :
+-                                 hi.available_mib <= 0 || host_legacy + HOST_MARGIN_MIB <= hi.available_mib;
+-            const double host_allowed = runtime ? p.effective_mib : hi.available_mib - HOST_MARGIN_MIB;
+-            c.reason = !c.valid ? "VRAM_LIMIT: does not fit" : !host_ok ?
+-                string_format("%s: %d layers of experts on the host need %.1f GiB, %.1f GiB allowed now",
+-                              runtime && p.effective_mib == p.static_cap_mib ? "STATIC_RAM_LIMIT" : "CURRENT_RAM_LIMIT",
+-                              c.ncmoe, host_legacy/1024, host_allowed/1024) :
+-                string_format("%d layers of experts on the host", c.ncmoe);
+-            c.valid = c.valid && host_ok;
+             p.candidates.push_back(c);
+         }
+     };
+ 
+     auto find = [&](const std::string & mode, ggml_type kv, int ub) -> tosh_plan_candidate * {
+         for (auto & c : p.candidates) if (c.mode == mode && c.kv == kv && (ub == 0 || c.ubatch == ub)) return &c;
+         return nullptr;
+     };
+@@ -953,16 +1125,22 @@ bool tosh_plan_apply(common_params & params, tosh_plan * out) {
+             if (runtime) p.coverage = (sel->arena_mib + mi.bank_mib)/mi.bank_mib;
+         } else {
+             p.state = TOSH_PLAN_LEGACY_OFFLOAD_BETTER;
+             p.host_required_mib = mi.bank_mib*sel->ncmoe/std::max(1, mi.n_moe) + host_engine;
+             p.mlock = "not_required";
+             if (!dmoe_block.empty()) p.fallback = dmoe_block;
+         }
+     }
++    // Update per-device arena in plan's devices vector from selected candidate
++    if (sel != nullptr && !p.devices.empty() && sel->mode == "dmoe" && !sel->dev_arena_mib.empty()) {
++        for (size_t d = 0; d < p.devices.size() && d < sel->dev_arena_mib.size(); ++d) {
++            p.devices[d].arena_mib = sel->dev_arena_mib[d];
++        }
++    }
+     if (runtime) {
+         if (sel == nullptr || sel->mode != "dmoe" || full_host_ok) {
+             if (p.bounded_code == "BOUNDED_HOST_SELECTED") p.bounded_code = "BOUNDED_HOST_COVERAGE_REJECTED";
+         }
+         p.projected_rss_mib  = hi.self_rss_mib + p.host_required_mib;
+         p.projected_left_mib = hi.reclaimable_mib - p.host_required_mib;
+     }
+     // what ruled out each mode preferred over the selected one
+diff --git a/common/tosh-plan.h b/common/tosh-plan.h
+index 186a81684..c2c065553 100644
+--- a/common/tosh-plan.h
++++ b/common/tosh-plan.h
+@@ -44,16 +44,18 @@ struct tosh_plan_candidate {
+     std::string reason;
+     double      private_mib = 0;    // projected VRAM this process holds
+     double      free_mib    = 0;    // projected VRAM left on the card
+     double      arena_mib   = 0;
+     double      kv_mib      = 0;
+     double      compute_mib = 0;
+     double      need_vram_mib = 0;  // VRAM with the reserve at the mode's smallest useful size
+     double      need_host_mib = 0;
++    // per-device arena breakdown (only for multi-GPU dmoe)
++    std::vector<double> dev_arena_mib;
+ };
+ 
+ struct tosh_plan {
+     tosh_plan_state state = TOSH_PLAN_NOT_PLANNED;
+     tosh_plan_mode  plan_mode = TOSH_PLAN_MODE_NONE;
+     std::string primary_reason;     // why this mode and not the preferred one, e.g. CURRENT_RAM_LIMIT
+     std::vector<std::string> warnings;  // e.g. COVERAGE_CONSTRAINED, RESERVE_LOWERED, REPLANNED
+     std::string limiting_resource;  // VRAM, HOST_RAM, WIRE, METADATA or NONE
+@@ -112,16 +114,27 @@ struct tosh_plan {
+     double      static_cap_mib    = 0;  // every budget below is bytes this load may still add
+     double      dynamic_cap_mib   = 0;
+     double      lockable_mib      = 0;
+     double      effective_mib     = 0;
+     double      warm_mib          = 0;
+     double      coverage          = 0;
+     double      projected_rss_mib = 0;
+     double      projected_left_mib = 0; // reclaimable memory left to the system after the load
++    // per-device breakdown (only populated when n_dev >= 2)
++    struct tosh_plan_device {
++        int     index = 0;
++        double  free_mib       = 0;
++        double  total_mib      = 0;
++        double  model_mib      = 0;
++        double  kv_mib         = 0;
++        double  compute_mib    = 0;
++        double  arena_mib      = 0;
++    };
++    std::vector<tosh_plan_device> devices;
+     std::vector<tosh_plan_candidate> candidates;
+ };
+ 
+ const char * tosh_plan_state_name(tosh_plan_state s);
+ const char * tosh_plan_mode_name(tosh_plan_mode m);
+ std::string  tosh_plan_json(const tosh_plan & plan);
+ 
+ // Plans and applies the result to params. Returns false when planning is off or not needed, and
+diff --git a/ggml/src/ggml-metal/ggml-metal-device.m b/ggml/src/ggml-metal/ggml-metal-device.m
+index 4ec61f38d..642248f96 100644
+--- a/ggml/src/ggml-metal/ggml-metal-device.m
++++ b/ggml/src/ggml-metal/ggml-metal-device.m
+@@ -2107,21 +2107,31 @@ ggml_metal_device_t ggml_metal_device_init(int device, int n_devices) {
+                 // the expert arena is sized from what the card has free before anything is allocated;
+                 // taken for every process, since mixed execution can be chosen after the device starts
+                 {
+                     tosh_dmoe_set_private_query(ggml_metal_private_bytes);
+                     if (g_vram_dev == nil) {
+                         g_vram_dev = dev->mtl_device;
+                         tosh_dmoe_set_vram_query(ggml_metal_vram_query);
+                     }
+-                    size_t vfree = 0, vtotal = 0;
+-                    if (tosh_vram_read(&vfree, &vtotal)) {
+-                        tosh_dmoe_set_vram(vfree, vtotal);
+-                    } else {
+-                        tosh_dmoe_set_vram(dev->props.max_working_set_size, dev->props.max_working_set_size);
++                    // record VRAM for this specific Metal device (index matches Metal backend's device order)
++                    int64_t vfree = 0, vused = 0;
++                    if (ggml_metal_vram_stats(dev->mtl_device, &vfree, &vused)) {
++                        size_t total = (size_t) vfree + (size_t) vused;
++                        size_t free  = vfree > 0 ? (size_t) vfree : total; // driver free can lag; use not-in-use as free
++                        tosh_dmoe_set_vram_dev(device, free, total);
++                    }
++                    // also set the legacy single-device VRAM from the first device
++                    if (device == 0) {
++                        size_t vfree2 = 0, vtotal2 = 0;
++                        if (tosh_vram_read(&vfree2, &vtotal2)) {
++                            tosh_dmoe_set_vram(vfree2, vtotal2);
++                        } else {
++                            tosh_dmoe_set_vram(dev->props.max_working_set_size, dev->props.max_working_set_size);
++                        }
+                     }
+                 }
+ #endif
+ 
+                 {
+                     const char * val = getenv("GGML_METAL_FUSION_DEBUG");
+                     dev->finfo = ggml_metal_fusion_info_init(
+                             getenv("GGML_METAL_FUSION_DISABLE") == nil,
+diff --git a/tosh-moe/tosh-dmoe.cpp b/tosh-moe/tosh-dmoe.cpp
+index 7423a52cf..75a1fb1b1 100644
+--- a/tosh-moe/tosh-dmoe.cpp
++++ b/tosh-moe/tosh-dmoe.cpp
+@@ -152,27 +152,42 @@ void tosh_dmoe_timeline(int kind, int il, double t0, double t1) {
+     static const bool on = getenv("TOSH_DMOE_TIMELINE") != nullptr;
+     if (!on) return;
+     std::lock_guard<std::mutex> lock(g_tl_mutex);
+     if (g_tl.empty()) { g_tl.reserve(1 << 20); atexit(tl_dump); }
+     if (g_tl.size() < (1 << 22)) g_tl.push_back({ kind, il, t0, t1 });
+ }
+ 
+ static size_t g_vram_free = 0, g_vram_total = 0;
++static size_t g_vram_dev_free[8]  = { 0 };
++static size_t g_vram_dev_total[8] = { 0 };
+ void tosh_dmoe_set_vram(size_t free_at_start, size_t total) {
+     if (g_vram_total == 0) { g_vram_free = free_at_start; g_vram_total = total; }
+ }
+-static size_t (*g_private_query)(void) = nullptr;
+-void   tosh_dmoe_set_private_query(size_t (*fn)(void)) { g_private_query = fn; }
+-size_t tosh_dmoe_private_bytes(void) { return g_private_query ? g_private_query() : 0; }
+-
++void tosh_dmoe_set_vram_dev(int index, size_t free_at_start, size_t total) {
++    if (index >= 0 && index < 8 && g_vram_dev_total[index] == 0) {
++        g_vram_dev_free[index]  = free_at_start;
++        g_vram_dev_total[index] = total;
++    }
++}
+ bool tosh_dmoe_vram(size_t * free_at_start, size_t * total) {
+     *free_at_start = g_vram_free; *total = g_vram_total;
+     return g_vram_total > 0;
+ }
++bool tosh_dmoe_vram_dev(int index, size_t * free_at_start, size_t * total) {
++    if (index >= 0 && index < 8 && g_vram_dev_total[index] > 0) {
++        *free_at_start = g_vram_dev_free[index];
++        *total = g_vram_dev_total[index];
++        return true;
++    }
++    return false;
++}
++static size_t (*g_private_query)(void) = nullptr;
++void   tosh_dmoe_set_private_query(size_t (*fn)(void)) { g_private_query = fn; }
++size_t tosh_dmoe_private_bytes(void) { return g_private_query ? g_private_query() : 0; }
+ 
+ static bool (*g_vram_query)(int64_t *, int64_t *) = nullptr;
+ void tosh_dmoe_set_vram_query(bool (*fn)(int64_t *, int64_t *)) { g_vram_query = fn; }
+ 
+ bool tosh_vram_read(size_t * vfree, size_t * total) {
+     if (g_vram_query == nullptr) {
+         return false;
+     }
+diff --git a/tosh-moe/tosh-dmoe.h b/tosh-moe/tosh-dmoe.h
+index cc40c42f8..e5a5098fe 100644
+--- a/tosh-moe/tosh-dmoe.h
++++ b/tosh-moe/tosh-dmoe.h
+@@ -73,16 +73,19 @@ void tosh_dmoe_rare_interrupt(void);
+ 
+ // Prefill timeline for overlap studies (TOSH_DMOE_TIMELINE=<file>): kind, layer, host seconds.
+ void tosh_dmoe_timeline(int kind, int il, double t0, double t1);
+ double tosh_dmoe_host_seconds(void);
+ 
+ // Free VRAM before this process allocated anything, and the card's total, as the driver sees them.
+ void tosh_dmoe_set_vram(size_t free_at_start, size_t total);
+ bool tosh_dmoe_vram(size_t * free_at_start, size_t * total);
++// Per-device VRAM (for multi-GPU). Index matches the Metal backend's device order.
++void tosh_dmoe_set_vram_dev(int index, size_t free_at_start, size_t total);
++bool tosh_dmoe_vram_dev(int index, size_t * free_at_start, size_t * total);
+ // The driver's live counters (free, and in use by every process), set by the GPU backend.
+ void tosh_dmoe_set_vram_query(bool (*fn)(int64_t * vfree, int64_t * vused));
+ // Free VRAM as the card's size less what every process holds, median of three samples. The
+ // driver's free counter lags behind released memory; a disagreement is logged, not used.
+ bool tosh_vram_read(size_t * vfree, size_t * total);
+ // Mixed execution chosen at run time, after the environment was first read.
+ void tosh_dmoe_enable(void);
+ // VRAM this process holds in the GPU backend's own buffers, 0 when the backend does not say
