@@ -1,0 +1,1047 @@
+diff --git a/ggml/src/ggml-backend.cpp b/ggml/src/ggml-backend.cpp
+index 34691d875..14d62621e 100644
+--- a/ggml/src/ggml-backend.cpp
++++ b/ggml/src/ggml-backend.cpp
+@@ -2044,17 +2044,20 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
+                 } else {
+                     ggml_backend_synchronize(split_backend);
+                 }
+                 ggml_backend_tensor_copy(input, input_cpy);
+             } else {
+                 // with a large batch virtually every expert is used, so instead of waiting
+                 // for the routing ids, upload the full tensor through the prefetch backend
+                 // and let the copy overlap compute of the previous split
+-                if (sched->prefetch_experts && !sched->callback_eval && split_prefetch_slot == -1 && split->graph.n_nodes > 0) {
++                // the prefetch backend and its slots live on the card of the first split that
++                // used them; a split on another card takes the regular copy
++                if (sched->prefetch_experts && !sched->callback_eval && split_prefetch_slot == -1 && split->graph.n_nodes > 0 &&
++                    (sched->prefetch_backend == NULL || sched->prefetch_backend->device == split_backend->device)) {
+                     ggml_tensor * node = split->graph.nodes[0];
+                     if (ggml_backend_buffer_get_usage(input->buffer) == GGML_BACKEND_BUFFER_USAGE_WEIGHTS &&
+                         ggml_backend_buffer_is_host(input->buffer) &&
+                         node->op == GGML_OP_MUL_MAT_ID && node->src[0] == input_cpy) {
+                         const ggml_tensor * ids = node->src[2];
+                         const int64_t n_expert = input->ne[2];
+                         const bool compact = tosh_dmoe_compact();
+                         if ((compact || ids->ne[0]*ids->ne[1] >= 2*n_expert) &&
+diff --git a/ggml/src/ggml-metal/ggml-metal-context.m b/ggml/src/ggml-metal/ggml-metal-context.m
+index a3cbe3a93..f5bf00a0f 100644
+--- a/ggml/src/ggml-metal/ggml-metal-context.m
++++ b/ggml/src/ggml-metal/ggml-metal-context.m
+@@ -1373,17 +1373,17 @@ void ggml_metal_synchronize(ggml_metal_t ctx) {
+     uint64_t cbp_t = cbp_on ? clock_gettime_nsec_np(CLOCK_UPTIME_RAW) : 0;
+     if (ctx->cmd_buf_last) {
+         [ctx->cmd_buf_last waitUntilCompleted];
+         ctx->cmd_buf_last = nil;
+     }
+ #ifdef TOSH_ENABLE_DYNAMIC_MOE
+     if (tosh_dmoe_enabled()) {
+         // a wide batch synchronizes mid-graph to read its routing; its join still needs the host
+-        if (tosh_dmoe_event_get() >= tosh_dmoe_last_value() + 1) {
++        if (tosh_dmoe_event_get_dev(ggml_metal_device_index(ctx->dev)) >= tosh_dmoe_last_value() + 1) {
+             tosh_dmoe_set_active(false);
+         }
+         tosh_dmoe_mark_completed();
+     }
+     if (tosh_dmoe_failed() != NULL && !ctx->has_error) {
+         GGML_LOG_ERROR("%s: mixed expert execution failed: %s\n", __func__, tosh_dmoe_failed());
+         ctx->has_error = true;
+     }
+@@ -1722,16 +1722,27 @@ static bool ggml_metal_dmoe_bank_upload(ggml_metal_t ctx, struct ggml_tensor * t
+     if (plan.expert_bytes*plan.n_expert != size) {
+         return false;
+     }
+     struct ggml_metal_buffer_id bid_dst   = ggml_metal_get_buffer_id(tensor);
+     struct ggml_metal_buffer_id bid_arena = ggml_metal_get_buffer_id((const struct ggml_tensor *) plan.arena);
+     if (bid_dst.metal == nil || bid_arena.metal == nil) {
+         return false;
+     }
++    // fall back to the normal upload when the arena or destination lives on another card, so a
++    // command buffer on this card never touches the other card's buffers
++    id<MTLDevice> this_dev = (id<MTLDevice>) ggml_metal_device_get_obj(ctx->dev);
++    if ([bid_arena.metal device] != this_dev || [bid_dst.metal device] != this_dev) {
++        static bool warned = false;
++        if (!warned) {
++            warned = true;
++            GGML_LOG_WARN("%s: bank upload for layer %d is on another device; falling back to normal upload\n", __func__, plan.il);
++        }
++        return false;
++    }
+ 
+     static bool registered = false;
+     if (!registered) {
+         registered = true;
+         atexit(ggml_metal_dmoe_pf_report);
+     }
+     if (plan.rows != NULL && ggml_metal_dmoe_compact_upload(ctx, &plan, bid_dst, bid_arena, data)) {
+         return true;
+@@ -1866,16 +1877,21 @@ void ggml_metal_set_tensor_async(ggml_metal_t ctx, struct ggml_tensor * tensor,
+ 
+         // Expert prefetch keeps the zero-copy source path while it fits the
+         // device budget, then falls back to a bounded shared staging ring.
+ #ifdef TOSH_ENABLE_DYNAMIC_MOE
+         if (ctx->is_prefetch && offset == 0 && ggml_metal_dmoe_bank_upload(ctx, tensor, data, size)) {
+             return;
+         }
+ #endif
++        // a command buffer on this card must never write another card's buffer (the AMD driver
++        // asserts on it); name the tensor instead of uploading nothing
++        if ([bid_dst.metal device] != device) {
++            GGML_ABORT("%s: tensor '%s' lives on another device than this context\n", __func__, tensor->name);
++        }
+         if (ctx->is_prefetch) {
+             int stage = -1;
+             size_t offs_src = 0;
+             id<MTLBuffer> buf_src = ggml_metal_device_wrap_host(ctx->dev, data, size, &offs_src);
+ 
+             if (buf_src == nil) {
+                 stage = ctx->prefetch_stage_cur;
+                 ctx->prefetch_stage_cur = (ctx->prefetch_stage_cur + 1) % ctx->prefetch_stage_count;
+diff --git a/ggml/src/ggml-metal/ggml-metal-device.h b/ggml/src/ggml-metal/ggml-metal-device.h
+index 7508ef2e6..82df5ce87 100644
+--- a/ggml/src/ggml-metal/ggml-metal-device.h
++++ b/ggml/src/ggml-metal/ggml-metal-device.h
+@@ -357,16 +357,17 @@ void ggml_metal_event_encode_signal(ggml_metal_event_t ev, ggml_metal_cmd_buf_t
+ void ggml_metal_event_encode_wait  (ggml_metal_event_t ev, ggml_metal_cmd_buf_t cmd_buf);
+ 
+ ggml_metal_device_t ggml_metal_device_init(int device, int n_devices);
+ void ggml_metal_device_free(ggml_metal_device_t dev);
+ 
+ ggml_metal_device_t ggml_metal_device_get(int device, int n_devices);
+ 
+ void * ggml_metal_device_get_obj  (ggml_metal_device_t dev); // id<MTLDevice>
++int   ggml_metal_device_index(ggml_metal_device_t dev);       // the card's index in the backend's device order
+ void * ggml_metal_device_get_queue(ggml_metal_device_t dev); // id<MTLCommandQueue>
+ 
+ // per-context queue: the first context gets the shared device queue, later
+ // ones an owned queue so their uploads can overlap compute
+ void * ggml_metal_device_acquire_queue(ggml_metal_device_t dev, bool * owned); // id<MTLCommandQueue>
+ void   ggml_metal_device_release_queue(ggml_metal_device_t dev, void * queue_raw, bool owned);
+ 
+ // cached no-copy wrap of the host pages containing [data, data + size);
+diff --git a/ggml/src/ggml-metal/ggml-metal-device.m b/ggml/src/ggml-metal/ggml-metal-device.m
+index f89506981..8d479990c 100644
+--- a/ggml/src/ggml-metal/ggml-metal-device.m
++++ b/ggml/src/ggml-metal/ggml-metal-device.m
+@@ -2296,16 +2296,20 @@ void ggml_metal_device_free(ggml_metal_device_t dev) {
+ 
+     free(dev);
+ }
+ 
+ void * ggml_metal_device_get_obj(ggml_metal_device_t dev) {
+     return dev->mtl_device;
+ }
+ 
++int ggml_metal_device_index(ggml_metal_device_t dev) {
++    return dev->props.device;
++}
++
+ void * ggml_metal_device_get_queue(ggml_metal_device_t dev) {
+     return dev->mtl_queue;
+ }
+ 
+ // prefetch contexts get their own queue so their blits can overlap the
+ // primary context's compute; falls back to the shared queue on failure
+ void * ggml_metal_device_acquire_queue(ggml_metal_device_t dev, bool * owned) {
+     *owned = false;
+diff --git a/ggml/src/ggml-metal/ggml-metal-ops.cpp b/ggml/src/ggml-metal/ggml-metal-ops.cpp
+index 4c92a3995..a08576009 100644
+--- a/ggml/src/ggml-metal/ggml-metal-ops.cpp
++++ b/ggml/src/ggml-metal/ggml-metal-ops.cpp
+@@ -2239,16 +2239,23 @@ static const ggml_tensor * ggml_metal_gdn_fold_dst(ggml_metal_op_t ctx, int idx)
+             return c;
+         }
+     }
+     return nullptr;
+ }
+ 
+ static bool ggml_metal_gdn_state_fusion_on(ggml_metal_op_t ctx) {
+     static const bool disabled = TOSH_ENV("TOSH_GDN_STATE_FUSION_DISABLE") != nullptr;
++    // with expert layers on two cards the fused state gather/copy answers with NaN (found on the
++    // 35B with Dynamic MoE across both D700s, root cause open); the unfused path is correct there
++#ifdef TOSH_ENABLE_DYNAMIC_MOE
++    if (tosh_dmoe_enabled() && tosh_dmoe_moe_devices() > 1) {
++        return false;
++    }
++#endif
+     return ctx->use_fusion() && !ctx->use_concurrency && !disabled;
+ }
+ 
+ // true when node idx is a gather or a copy that a nearby gated_delta_net takes over
+ static bool ggml_metal_gdn_state_skip(ggml_metal_op_t ctx, int idx) {
+     const ggml_tensor * node = ctx->node(idx);
+     if (node->op == GGML_OP_GET_ROWS) {
+         for (int i = idx + 1; i < std::min(ctx->n_nodes(), idx + 32); ++i) {
+@@ -4420,17 +4427,17 @@ int ggml_metal_op_tosh_dmoe_join(ggml_metal_op_t ctx, int idx) {
+     return 1;
+ }
+ 
+ int ggml_metal_op_tosh_dmoe_observe(ggml_metal_op_t ctx, int idx) {
+     ggml_tensor * op = ctx->node(idx);
+     const ggml_tensor * ids = op->src[0];
+ 
+     ggml_metal_buffer_id bid_ring = ggml_metal_device_dmoe_obs_ring(ctx->dev);
+-    tosh_dmoe_obs_record * rec = tosh_dmoe_obs_reserve(ggml_get_op_params_i32(op, 0), (int) ids->ne[0], (int) ids->ne[1]);
++    tosh_dmoe_obs_record * rec = tosh_dmoe_obs_reserve_dev(ggml_metal_device_index(ctx->dev), ggml_get_op_params_i32(op, 0), (int) ids->ne[0], (int) ids->ne[1]);
+     if (bid_ring.metal == nullptr || rec == nullptr) {
+         return 1;
+     }
+     bid_ring.offs = rec->offset;
+ 
+     struct {
+         int32_t  n_used;
+         int32_t  n_tokens;
+diff --git a/src/llama-context.cpp b/src/llama-context.cpp
+index 5f9cf3d7e..7ce655617 100644
+--- a/src/llama-context.cpp
++++ b/src/llama-context.cpp
+@@ -2909,16 +2909,29 @@ llm_graph_cb llama_context::graph_get_cb() const {
+             ggml_set_name(cur, name);
+         }
+ 
+         // - norm may be automatically assigned to the backend of the previous layer, increasing data transfer between backends
+         // - force the last op of the layer on the specified backend to avoid running it on the backend of the next layer due to scheduling
+         // FIXME: fix in ggml_backend_sched
+         const bool full_offload = model.n_gpu_layers() > model.hparams.n_layer_all;
+ 
++        // on a layer split, a layer's expert ops run on the layer's card: an expert matmul with
++        // host weights would otherwise be offloaded to the first card, and a Dynamic MoE publish
++        // placed on the previous layer's card would reach its join as a copy without op params
++        if (il != -1 && model.n_devices() > 1 && strncmp(name, "ffn_moe_", 8) == 0) {
++            const auto & dev_layer = model.dev_layer(il);
++            for (const auto & backend : backends) {
++                if (ggml_backend_get_device(backend.get()) == dev_layer && ggml_backend_supports_op(backend.get(), cur)) {
++                    ggml_backend_sched_set_tensor_backend(sched.get(), cur, backend.get());
++                }
++            }
++            return;
++        }
++
+         if (ubatch.n_tokens < 32 || full_offload) {
+             if (il != -1 && (strcmp(name, "norm") == 0 || strcmp(name, "l_last") == 0)) {
+                 const auto & dev_layer = model.dev_layer(il);
+                 for (const auto & backend : backends) {
+                     if (ggml_backend_get_device(backend.get()) == dev_layer) {
+                         if (ggml_backend_supports_op(backend.get(), cur)) {
+                             ggml_backend_sched_set_tensor_backend(sched.get(), cur, backend.get());
+                         }
+diff --git a/src/llama-tosh-dmoe.cpp b/src/llama-tosh-dmoe.cpp
+index 262397e0a..8b89e6e27 100644
+--- a/src/llama-tosh-dmoe.cpp
++++ b/src/llama-tosh-dmoe.cpp
+@@ -366,24 +366,24 @@ struct executor {
+     void unpin_misses() {
+         if (!pinned.empty()) {
+             tosh_hostcache_release(pinned_il, pinned.data(), (int) pinned.size());
+             pinned.clear();
+         }
+     }
+ 
+     // a wide batch: the positions the GPU skipped, grouped by expert so its weights stay in cache
+-    bool job_wide(int il, const tosh_dmoe_job & jb) {
++    bool job_wide(int il, const tosh_dmoe_job & jb, int dev) {
+         const double t0 = tosh_dmoe_host_seconds();
+         if (il <= wide_first_il) {
+             wide_first_il = il;
+             tosh_dmoe_rare_chunk(t0, jb.n_tokens);
+         }
+         size_t bytes = 0;
+-        char * stage = (char *) tosh_dmoe_wide_stage(&bytes);
++        char * stage = (char *) tosh_dmoe_wide_stage_dev(dev, &bytes);
+         const int T = jb.n_tokens, nu = jb.n_used;
+         if (stage == nullptr || il >= (int) banks.size() || banks[il].gate == nullptr ||
+             jb.n_embd != n_embd || T > TOSH_DMOE_WIDE_MAX_TOKENS || nu <= 0 ||
+             tosh_dmoe_wide_off_out(T, n_embd, nu) + (size_t) TOSH_DMOE_WIDE_MAX_ROWS*n_embd*4 > bytes) {
+             tosh_dmoe_fail("a wide layer has no host bank or stage, or an unexpected shape");
+             return false;
+         }
+         bank   = &banks[il];
+@@ -437,17 +437,17 @@ struct executor {
+             unpin_misses();
+         }
+         n_wide++;
+         n_wide_miss    += misses.size();
+         n_wide_experts += n_exp;
+         const double t1 = tosh_dmoe_host_seconds();
+         us_wide += (uint64_t) ((t1 - t0)*1e6);
+         tosh_dmoe_timeline(1, il, t0, t1);
+-        tosh_dmoe_rare_host_done(il, t0, t1, tosh_dmoe_reach_get() >= jb.value);
++        tosh_dmoe_rare_host_done(il, t0, t1, tosh_dmoe_reach_get_dev(dev) >= jb.value);
+         return true;
+     }
+     std::vector<uint8_t> wide_seen;
+     int wide_first_il = 1 << 30;
+ 
+     // the next layer's input differs from this one's by this layer's update alone, so its router
+     // applied here picks most of the experts it will ask for: read the ones neither VRAM nor RAM holds
+     std::vector<float> ahead_score;
+@@ -481,24 +481,24 @@ struct executor {
+             if (vram[ahead_order[j]] < 0) {
+                 tosh_hostcache_prefetch(nl, ahead_order[j]);
+                 n_ahead++;
+             }
+         }
+     }
+ 
+     // one layer: find the non-resident experts, compute them, answer the GPU
+-    bool job(int il, const tosh_dmoe_job & jb) {
++    bool job(int il, const tosh_dmoe_job & jb, int dev) {
+         // timeline: host span of this job (kind 20)
+         static const bool tl_on = getenv("TOSH_DMOE_TIMELINE") != nullptr;
+         const double tl_t0 = tl_on ? tosh_dmoe_host_seconds() : 0.0;
+ 
+         const clk::time_point t0 = clk::now();
+ 
+-        char * stage = (char *) tosh_dmoe_stage_layer(il);
++        char * stage = (char *) tosh_dmoe_stage_layer_dev(dev, il);
+         if (stage == nullptr || il >= (int) banks.size() || banks[il].gate == nullptr) {
+             tosh_dmoe_fail("a mixed layer has no host bank or stage");
+             return false;
+         }
+         if (jb.n_embd != n_embd || jb.n_tokens > TOSH_DMOE_MAX_TOKENS || jb.n_used <= 0) {
+             tosh_dmoe_fail("a mixed layer published an unexpected shape");
+             return false;
+         }
+@@ -597,18 +597,31 @@ struct executor {
+             if (!tosh_dmoe_wait_active(1000000)) {
+                 was_active = false;
+                 continue;
+             }
+             if (!was_active) {
+                 was_active = true;
+                 last = clk::now();
+             }
+-            const uint64_t v = tosh_dmoe_event_get();
+-            if (v == answered || v % 2 == 0) {
++            // the value a card published that is still unanswered; the cards share one value
++            // sequence, so at most one is ever pending and it names the card the job runs on
++            uint64_t v = 0;
++            int dev = -1;
++            const int n_dev = tosh_dmoe_n_devices();
++            for (int d = 0; d < n_dev; ++d) {
++                const uint64_t ev = tosh_dmoe_event_get_dev(d);
++                if (ev % 2 == 1 && ev != answered) {
++                    if (v == 0 || ev < v) {
++                        v = ev;
++                        dev = d;
++                    }
++                }
++            }
++            if (dev < 0) {
+                 // a wide layer takes tens of milliseconds: past the decode cadence, poll gently
+                 if (us_since(last) > spin_us) {
+                     std::this_thread::sleep_for(std::chrono::microseconds(100));
+                 } else {
+                     DMOE_PAUSE();
+                 }
+                 continue;
+             }
+@@ -616,55 +629,60 @@ struct executor {
+             const tosh_dmoe_job * jb = tosh_dmoe_job_of(v);
+             obs_n = 0;
+             if (tosh_dmoe_failed() == nullptr) {
+                 if (__atomic_load_n(&jb->value, __ATOMIC_ACQUIRE) != v) {
+                     tosh_dmoe_fail("the published value does not match its job");
+                 } else {
+                     try {
+                         if (jb->n_tokens > TOSH_DMOE_MAX_TOKENS) {
+-                            job_wide(jb->il, *jb);
++                            job_wide(jb->il, *jb, dev);
+                         } else {
+                             tosh_dmoe_rare_interrupt();
+-                            job(jb->il, *jb);
++                            job(jb->il, *jb, dev);
+                         }
+                     } catch (...) {
+                         tosh_dmoe_fail("the host executor threw");
+                     }
+                 }
+             }
+             answered = v;
+-            tosh_dmoe_event_set(v + 1);
++            tosh_dmoe_event_set_dev(dev, v + 1);
+             last = clk::now();
+             if (obs_n > 0 && jb->n_tokens <= TOSH_DMOE_MAX_TOKENS) {
+                 observe(observe_ctx, jb->il, obs_ids, obs_slots, obs_n, jb->n_tokens > 1, jb->tick);
+             }
+         }
+     }
+ 
+     // answers a publish nobody answered, so the GPU cannot wait forever
+     void watchdog_main() {
+-        uint64_t last = 0;
+-        clk::time_point since = clk::now();
++        uint64_t last[TOSH_DMOE_MAX_DEVICES] = { 0 };
++        clk::time_point since[TOSH_DMOE_MAX_DEVICES];
++        for (int d = 0; d < TOSH_DMOE_MAX_DEVICES; ++d) {
++            since[d] = clk::now();
++        }
+         while (!stop.load()) {
+             std::this_thread::sleep_for(std::chrono::milliseconds(200));
+-            const uint64_t v = tosh_dmoe_event_get();
+-            const bool pending = tosh_dmoe_is_active() && (v % 2 == 1);
+-            if (!pending || v != last) {
+-                last  = v;
+-                since = clk::now();
+-                continue;
+-            }
+-            // a normal job takes under a millisecond; a starved one must still beat the driver
+-            if (us_since(since) > watchdog_us) {
+-                // the failure keeps the pointer, so the message must outlive this scope
+-                static const std::string why = format("the host executor did not answer within %.1f s", watchdog_us/1e6);
+-                tosh_dmoe_fail(why.c_str());
+-                tosh_dmoe_event_set(v + 1);
+-                since = clk::now();
++            for (int d = 0; d < tosh_dmoe_n_devices() && d < TOSH_DMOE_MAX_DEVICES; ++d) {
++                const uint64_t v = tosh_dmoe_event_get_dev(d);
++                const bool pending = tosh_dmoe_is_active() && (v % 2 == 1);
++                if (!pending || v != last[d]) {
++                    last[d] = v;
++                    since[d] = clk::now();
++                    continue;
++                }
++                // a normal job takes under a millisecond; a starved one must still beat the driver
++                if (us_since(since[d]) > watchdog_us) {
++                    // the failure keeps the pointer, so the message must outlive this scope
++                    static const std::string why = format("the host executor did not answer within %.1f s", watchdog_us/1e6);
++                    tosh_dmoe_fail(why.c_str());
++                    tosh_dmoe_event_set_dev(d, v + 1);
++                    since[d] = clk::now();
++                }
+             }
+         }
+     }
+ 
+     // the GPU waits on these threads mid-graph: under a busy desktop they must not queue behind it
+     static void raise_priority() {
+ #ifdef __APPLE__
+         pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0);
+@@ -728,16 +746,22 @@ struct executor {
+                     fprintf(stderr, "tosh_dmoe: layer %2zu hit %.1f%%\n", il, 100.0*(double) (r - miss_by_layer[il].load())/r);
+                 }
+             }
+         }
+     }
+ };
+ 
+ 
++// Layer -> device index mapping (Metal device order). Index is the device index (0..7).
++static std::vector<int> g_layer_dev;
++
++// List of distinct GPU device indices that have MoE layers, in order.
++static std::vector<int> g_moe_devices;
++
+ // Online residency: LFU with a lazy per-graph decay, promotion when the decayed count clears a
+ // cost threshold, the lowest-scoring resident of the layer as victim. Slots move
+ // FREE -> PENDING (upload in flight, not in any table) -> RESIDENT (published) -> RETIRING
+ // (dropped from the next table) -> FREE once no graph can still read the old table.
+ struct policy {
+     enum : uint8_t { FREE, PENDING, RESIDENT, RETIRING, PREFILL };
+ 
+     struct slot {
+@@ -791,17 +815,18 @@ struct policy {
+     uint64_t reserve_evictions = 0;
+     std::vector<float> tok_w;
+     long   verify_every = 0;
+     bool   defer_wide = true;
+     bool   vram_promote = true;
+ 
+     std::vector<const llama_tosh_dmoe_layer *> layers;
+     const std::vector<host_bank> * banks = nullptr;
+-    const tosh_dmoe_uploader * up = nullptr;
++    const tosh_dmoe_uploader * up = nullptr;           // the first card's uploader, legacy single-GPU view
++    std::vector<const tosh_dmoe_uploader *> up_dev;  // one uploader per card, in card order
+ 
+     std::vector<float>    score;
+     std::vector<uint32_t> last_tick;
+     std::vector<int32_t>  resident_slot;
+     std::vector<uint8_t>  pending;
+     std::vector<uint32_t> evicted_tick;
+     std::vector<slot>     slots;
+     std::vector<std::vector<int>> free_list;
+@@ -811,16 +836,17 @@ struct policy {
+ 
+     std::vector<std::vector<obs>> ring;
+     std::unique_ptr<std::atomic<uint32_t>[]> head, tail;
+ 
+     uint32_t budget_tick = 0;
+     int      issued_tick = 0;   // promotions issued for the current graph
+ 
+     uint64_t obs_next = 1;
++    std::vector<uint64_t> obs_next_dev;    // per card, the next wide observation to read
+     uint64_t obs_lost = 0, obs_prefill = 0;
+ 
+     int32_t * tables = nullptr;
+     int cur_version = 0;
+     uint64_t version_retired[TOSH_DMOE_VERSIONS] = {};
+     bool dirty = false;
+ 
+     std::thread th;
+@@ -867,28 +893,48 @@ struct policy {
+         if (admit_fixed > 0) return admit_fixed;
+         // expected reuse must pay the upload: T_upload / (T_cpu - T_gpu). This charges the stage
+         // copy as if it were serial, so it errs strict; the default is a fixed threshold.
+         if (upload_done < 16 || promotions == 0 || t_cpu_expert_us <= 10) return 1.8;
+         const double t_up = us_upload_gpu/upload_done + us_upload_call/promotions;
+         return std::max(1.0, t_up/(t_cpu_expert_us - 7.0));
+     }
+ 
++    // the uploader of the card that holds this layer's bank; a layer lives on one card, so the
++    // copies of its slots always cross the same card it just computed on
++    const tosh_dmoe_uploader * up_for(int il) const {
++        int dev = 0;
++        if (il >= 0 && il < (int) g_layer_dev.size() && g_layer_dev[il] >= 0) {
++            dev = g_layer_dev[il];
++        }
++        for (size_t di = 0; di < g_moe_devices.size(); ++di) {
++            if (g_moe_devices[di] == dev) {
++                if (di < up_dev.size() && up_dev[di] != nullptr) {
++                    return up_dev[di];
++                }
++                break;
++            }
++        }
++        // single card: every layer (and its uploader) lives on the first card
++        return up;
++    }
++
+     struct exchange { int il, s, e; };
+     std::vector<exchange> exchanges;      // evicted this cycle: their bytes are still in the slot
+     uint64_t exchanged = 0;
+     double   us_exchange = 0;
+ 
+     // bounded host cache: an expert leaving VRAM goes back to RAM, which holds what VRAM does not
+     void demote(int il, int s) {
+         const int e = slots[(size_t) il*Q + s].e;
+         if (!tosh_hostcache_on() || e < 0) {
+             return;
+         }
+         static const bool copy_back = getenv("TOSH_DMOE_HOST_EXCHANGE") == nullptr || atoi(getenv("TOSH_DMOE_HOST_EXCHANGE")) != 0;
++        const tosh_dmoe_uploader * up = up_for(il);
+         if (copy_back && up->download != nullptr) {
+             if (tosh_hostcache_store(il, e)) exchanges.push_back({ il, s, e });
+         } else {
+             tosh_hostcache_prefetch(il, e);
+         }
+     }
+ 
+     // the slots are not reused before a later cycle, so one copy per cycle takes them all
+@@ -903,16 +949,17 @@ struct policy {
+             const host_bank & b = (*banks)[x.il];
+             int part = -1;
+             for (auto [bank, arena] : { std::pair{ b.gate, dl->arena_gate }, { b.up, dl->arena_up }, { b.down, dl->arena_down } }) {
+                 part++;
+                 if (bank == nullptr) continue;
+                 copies.push_back({ tosh_hostcache_part(x.il, x.e, part), (size_t) x.s*arena->nb[2], arena, arena->nb[2] });
+             }
+         }
++        const tosh_dmoe_uploader * up = up_for(exchanges[0].il);
+         const bool ok = up->download(up->ctx, copies.data(), (int) copies.size());
+         for (const exchange & x : exchanges) tosh_hostcache_store_done(x.il, x.e, ok);
+         if (ok) exchanged += exchanges.size();
+         us_exchange += std::chrono::duration<double, std::micro>(clk::now() - t0).count();
+         exchanges.clear();
+     }
+ 
+     bool verify_slot(int il, int s) {
+@@ -981,77 +1028,84 @@ struct policy {
+                 } else if (resident_slot[key] < 0 && !pending[key]) {
+                     cands.push_back({ 0.0f, key });
+                 }
+             }
+             tail[il].store(t, std::memory_order_release);
+         }
+ 
+         // routing of wide batches, once the graph that wrote it has completed
+-        const int32_t * obs_ring = (const int32_t *) tosh_dmoe_obs_ring();
+-        const uint64_t obs_head = tosh_dmoe_obs_head();
+-        while (obs_ring != nullptr && obs_next <= obs_head) {
+-            const tosh_dmoe_obs_record * rec = tosh_dmoe_obs_record_at(obs_next);
+-            if (rec == nullptr || !tosh_dmoe_obs_intact(rec)) { obs_lost++; obs_next++; continue; }
+-            if (tosh_dmoe_completed_value() <= rec->sync) break;
+-            if (rec->il < 0 || rec->il >= n_layer || layers[rec->il] == nullptr) { obs_next++; continue; }
+-            // one graph of T tokens stands in for T decode steps: weight each use by the mean decay
+-            const int T = rec->n_tokens;
+-            const float w = (1.0f - powf(decay, (float) T))/((float) T*(1.0f - decay));
+-            const int32_t * ids = obs_ring + rec->offset/sizeof(int32_t);
+-            if ((int) chunk_freq.size() != n_layer*n_expert) chunk_freq.assign((size_t) n_layer*n_expert, 0.0f);
+-            for (int e = 0; e < n_expert; ++e) chunk_freq[(size_t) rec->il*n_expert + e] *= 0.5f;
+-            for (int i = 0; i < rec->n_used*T; ++i) {
+-                if (ids[i] >= 0 && ids[i] < n_expert) chunk_freq[(size_t) rec->il*n_expert + ids[i]] += 1.0f;
+-            }
+-            if (warm_prefill && tok_decay > 0.0f) {
+-                // decode follows the end of the prompt: age the layer by T tokens, then weight each
+-                // token by its distance to the chunk's end
+-                const float age = powf(tok_decay, (float) T);
+-                for (int e = 0; e < n_expert; ++e) {
+-                    const size_t key = (size_t) rec->il*n_expert + e;
+-                    score[key] = decayed(key, rec->tick)*age;
+-                    last_tick[key] = rec->tick;
++        // every card owns a ring of its own wide observations; a layer lives on one card, so the
++        // records of a card only ever name layers of that card
++        for (size_t di = 0; di < g_moe_devices.size(); ++di) {
++            const int dev = g_moe_devices[di];
++            const int32_t * obs_ring = (const int32_t *) tosh_dmoe_obs_ring_dev(dev);
++            const uint64_t obs_head = tosh_dmoe_obs_head_dev(dev);
++            uint64_t & obs_next_d = obs_next_dev[di];
++            while (obs_ring != nullptr && obs_next_d <= obs_head) {
++                const tosh_dmoe_obs_record * rec = tosh_dmoe_obs_record_at_dev(dev, obs_next_d);
++                if (rec == nullptr || !tosh_dmoe_obs_intact_dev(rec, dev)) { obs_lost++; obs_next_d++; continue; }
++                if (tosh_dmoe_completed_value() <= rec->sync) break;
++                if (rec->il < 0 || rec->il >= n_layer || layers[rec->il] == nullptr) { obs_next_d++; continue; }
++                // one graph of T tokens stands in for T decode steps: weight each use by the mean decay
++                const int T = rec->n_tokens;
++                const float w = (1.0f - powf(decay, (float) T))/((float) T*(1.0f - decay));
++                const int32_t * ids = obs_ring + rec->offset/sizeof(int32_t);
++                if ((int) chunk_freq.size() != n_layer*n_expert) chunk_freq.assign((size_t) n_layer*n_expert, 0.0f);
++                for (int e = 0; e < n_expert; ++e) chunk_freq[(size_t) rec->il*n_expert + e] *= 0.5f;
++                for (int i = 0; i < rec->n_used*T; ++i) {
++                    if (ids[i] >= 0 && ids[i] < n_expert) chunk_freq[(size_t) rec->il*n_expert + ids[i]] += 1.0f;
+                 }
+-                tok_w.resize(T);
+-                for (int t = 0; t < T; ++t) tok_w[t] = powf(tok_decay, (float) (T - 1 - t));
+-            }
+-            for (int i = 0; i < rec->n_used*T; ++i) {
+-                const int e = ids[i];
+-                if (e < 0 || e >= n_expert) continue;
+-                const size_t key = (size_t) rec->il*n_expert + e;
+                 if (warm_prefill && tok_decay > 0.0f) {
+-                    score[key] += tok_w[i/rec->n_used];
+-                } else if (warm_prefill) {
+-                    score[key] = decayed(key, rec->tick) + w;
+-                    last_tick[key] = rec->tick;
++                    // decode follows the end of the prompt: age the layer by T tokens, then weight each
++                    // token by its distance to the chunk's end
++                    const float age = powf(tok_decay, (float) T);
++                    for (int e = 0; e < n_expert; ++e) {
++                        const size_t key = (size_t) rec->il*n_expert + e;
++                        score[key] = decayed(key, rec->tick)*age;
++                        last_tick[key] = rec->tick;
++                    }
++                    tok_w.resize(T);
++                    for (int t = 0; t < T; ++t) tok_w[t] = powf(tok_decay, (float) (T - 1 - t));
++                }
++                for (int i = 0; i < rec->n_used*T; ++i) {
++                    const int e = ids[i];
++                    if (e < 0 || e >= n_expert) continue;
++                    const size_t key = (size_t) rec->il*n_expert + e;
++                    if (warm_prefill && tok_decay > 0.0f) {
++                        score[key] += tok_w[i/rec->n_used];
++                    } else if (warm_prefill) {
++                        score[key] = decayed(key, rec->tick) + w;
++                        last_tick[key] = rec->tick;
++                    }
++                    if (resident_slot[key] < 0 && !pending[key]) cands.push_back({ 0.0f, key });
+                 }
+-                if (resident_slot[key] < 0 && !pending[key]) cands.push_back({ 0.0f, key });
++                obs_prefill += (uint64_t) rec->n_used*T;
++                obs_next_d++;
+             }
+-            obs_prefill += (uint64_t) rec->n_used*T;
+-            obs_next++;
++            if (obs_ring == nullptr) continue;
+         }
+         const clk::time_point t1 = clk::now();
+ 
+         // 2. uploads that landed become resident; failed ones free their slot
+         for (size_t i = 0; i < pending_slots.size();) {
+             const int gs = pending_slots[i];
+             slot & sl = slots[gs];
+-            const int st = up->status(up->ctx, sl.ticket);
+-            if (st == 0) { ++i; continue; }
+             const int il = gs / Q, s = gs % Q;
++            const int st = up_for(il)->status(up_for(il)->ctx, sl.ticket);
++            if (st == 0) { ++i; continue; }
+             const size_t key = (size_t) il*n_expert + sl.e;
+             pending[key] = 0;
+             if (st == 1) {
+                 sl.state = RESIDENT; sl.since = now; sl.uses = 0;
+                 resident_slot[key] = s;
+                 if (tosh_hostcache_on()) tosh_hostcache_drop(il, sl.e);
+                 upload_done++;
+                 us_upload_wall += std::chrono::duration<double, std::micro>(clk::now() - sl.issued).count();
+-                us_upload_gpu  += up->gpu_us(up->ctx, sl.ticket);
++                us_upload_gpu  += up_for(il)->gpu_us(up_for(il)->ctx, sl.ticket);
+                 if (verify_every > 0 && upload_done % verify_every == 0) {
+                     verified++;
+                     if (!verify_slot(il, s)) verify_bad++;
+                 }
+                 dirty = true;
+             } else {
+                 failed++;
+                 sl.state = FREE; sl.e = -1;
+@@ -1221,17 +1275,17 @@ struct policy {
+                 for (auto [bank, arena] : { std::pair{ b.gate, dl->arena_gate }, { b.up, dl->arena_up }, { b.down, dl->arena_down } }) {
+                     part++;
+                     if (bank == nullptr) continue;
+                     const char * src = hc ? tosh_hostcache_part(il, e, part) : (const char *) bank->data + (size_t) e*bank->nb[2];
+                     copies[n_copies++] = { arena, (size_t) s*arena->nb[2], src, arena->nb[2] };
+                 }
+                 sl.e = e; sl.gen++; sl.issued = clk::now();
+                 const clk::time_point tu = clk::now();
+-                sl.ticket = up->upload(up->ctx, copies, n_copies);
++                sl.ticket = up_for(il)->upload(up_for(il)->ctx, copies, n_copies);
+                 if (hc) tosh_hostcache_release(il, &eid, 1);
+                 us_upload_call += std::chrono::duration<double, std::micro>(clk::now() - tu).count();
+                 if (sl.ticket == 0) {
+                     failed++;
+                     sl.state = FREE; sl.e = -1;
+                     std::lock_guard<std::mutex> lock(vp_mutex);
+                     free_list[il].push_back(s);
+                     continue;
+@@ -1387,22 +1441,16 @@ static policy * g_policy = nullptr;
+ static executor * g_exec = nullptr;
+ 
+ // Per-device arena buffers (one per GPU device). Single GPU uses g_arena_bufs[0].
+ static std::vector<ggml_backend_buffer_t> g_arena_bufs;
+ 
+ // Backward compatibility: pointer to first arena buffer (for single-GPU code paths)
+ static ggml_backend_buffer_t g_arena_buf = nullptr;
+ 
+-// Layer -> device index mapping (Metal device order). Index is the device index (0..7).
+-static std::vector<int> g_layer_dev;
+-
+-// List of distinct GPU device indices that have MoE layers, in order.
+-static std::vector<int> g_moe_devices;
+-
+ // bank data pointer -> (layer, tensor), for prefill uploads that read residents from the arena
+ struct bank_ref { int il; int which; const ggml_tensor * bank; };
+ static std::unordered_map<const void *, bank_ref> g_bank_refs;
+ static std::vector<const llama_tosh_dmoe_layer *> g_layer_by_il;
+ static std::vector<std::vector<int32_t>> g_fixed_slots;
+ static int g_n_expert = 0;
+ 
+ static bool dmoe_bank_plan(const void * host, size_t size, tosh_dmoe_bank_plan * plan) {
+@@ -1802,17 +1850,19 @@ bool llama_tosh_dmoe_rebudget_possible() {
+ // Drops the running policy, executor and arena once nothing can use them: no context is alive,
+ // and uploads still in flight into the arena are waited for.
+ static void dmoe_teardown() {
+     if (g_policy != nullptr) {
+         g_policy->stop = true;
+         if (g_policy->th.joinable()) g_policy->th.join();
+         for (const int gs : g_policy->pending_slots) {
+             const auto & sl = g_policy->slots[gs];
+-            for (int i = 0; i < 1000 && g_policy->up->status(g_policy->up->ctx, sl.ticket) == 0; ++i) {
++            const int il = gs / g_policy->Q;
++            const tosh_dmoe_uploader * up = g_policy->up_for(il);
++            for (int i = 0; i < 1000 && up->status(up->ctx, sl.ticket) == 0; ++i) {
+                 std::this_thread::sleep_for(std::chrono::milliseconds(1));
+             }
+         }
+     }
+     llama_tosh_dmoe_shutdown();
+     delete g_policy;
+     g_policy = nullptr;
+     delete g_exec;
+@@ -1998,26 +2048,29 @@ static void dmoe_init(std::vector<llama_layer> & layers, const llama_hparams & h
+     if (!layer_dev_copy.empty()) {
+         // Use provided layer_dev (device indices)
+         g_layer_dev = layer_dev_copy;
+         for (int dev : g_layer_dev) {
+             if (dev >= 0 && std::find(g_moe_devices.begin(), g_moe_devices.end(), dev) == g_moe_devices.end()) {
+                 g_moe_devices.push_back(dev);
+             }
+         }
++
+     } else {
+         // Single GPU fallback: all layers on device 0
+         for (int il = 0; il < n_layer; ++il) {
+             if (dmoe_has_bank(layers[il])) {
+                 g_layer_dev[il] = 0;
+             }
+         }
+         g_moe_devices.push_back(0);
+     }
+ 
++    tosh_dmoe_set_moe_devices((int) g_moe_devices.size());
++
+     // Multi-device mode: cache_mib=0 means compute per-device quota from VRAM
+     bool multi_device = (g_moe_devices.size() > 1) || (dynamic && cache_mib == 0.0);
+ 
+     // For multi-device, compute per-device quota from each device's free VRAM
+     std::vector<int> quota_per_dev(g_moe_devices.size(), 0);
+     if (multi_device && dynamic) {
+         // First pass: compute per_expert bytes per device
+         std::vector<size_t> per_expert_per_dev(g_moe_devices.size(), 0);
+@@ -2297,22 +2350,37 @@ static void dmoe_init(std::vector<llama_layer> & layers, const llama_hparams & h
+ 
+         auto * pol = new policy();
+         pol->n_layer  = n_layer;
+         pol->n_expert = n_expert;
+         pol->Q        = quota;
+         pol->tables   = (int32_t *) tb;
+         pol->banks    = &ex->banks;
+         pol->ex       = ex;
+-        // For multi-device, the policy needs per-device uploaders
+-        // For now, use the default uploader (device 0); Phase 5 will fix this
+-        pol->up       = tosh_dmoe_get_uploader();
++        // one uploader per card: a promotion for a layer uploads on the card that holds its bank
++        pol->up_dev   = std::vector<const tosh_dmoe_uploader *>(g_moe_devices.size(), nullptr);
++        for (size_t di = 0; di < g_moe_devices.size(); ++di) {
++            pol->up_dev[di] = tosh_dmoe_get_uploader_dev(g_moe_devices[di]);
++        }
++        {
++            const tosh_dmoe_uploader * up = tosh_dmoe_get_uploader();
++            if (up != nullptr) {
++                pol->up = up;   // the first card, legacy view for single-GPU sessions
++            }
++        }
+         if (pol->up == nullptr) {
+             throw std::runtime_error("TOSH_DMOE_CACHE_MIB: the GPU backend offers no uploader");
+         }
++        if (g_moe_devices.size() >= 2) {
++            for (size_t di = 0; di < pol->up_dev.size(); ++di) {
++                if (pol->up_dev[di] == nullptr) {
++                    throw std::runtime_error("TOSH_DMOE_CACHE_MIB: the GPU backend offers no uploader");
++                }
++            }
++        }
+         auto envf = [](const char * k, double d) { const char * v = getenv(k); return v ? atof(v) : d; };
+         pol->decay        = (float) envf("TOSH_DMOE_DECAY", 0.98);
+         // a promotion costs about one reuse of token time, so 1.8 keeps a margin against churn
+         pol->admit_fixed  = envf("TOSH_DMOE_ADMIT", 1.8);
+         pol->margin       = (float) envf("TOSH_DMOE_MARGIN", 0.0);
+         // 0: no per-graph cap; the stage ring still bounds the uploads in flight
+         pol->budget       = (int) envf("TOSH_DMOE_BUDGET", 0);
+         if (pol->budget <= 0) pol->budget = n_layer*n_expert;
+@@ -2324,16 +2392,17 @@ static void dmoe_init(std::vector<llama_layer> & layers, const llama_hparams & h
+         pol->reserve_tail = (int) envf("TOSH_DMOE_LEND_TAIL", 8);
+         pol->verify_every = (long) envf("TOSH_DMOE_VERIFY", 0);
+         pol->defer_wide   = envf("TOSH_DMOE_DEFER_WIDE", 0) != 0;
+         pol->vram_promote = envf("TOSH_DMOE_PREFILL_PROMOTE", 1) != 0;
+         pol->vplan.resize(n_layer);
+         pol->vmask.assign(n_layer, 0);
+         pol->vmask_sync.assign(n_layer, 0);
+         pol->full.assign(n_layer, 7);
++        pol->obs_next_dev.assign(g_moe_devices.size(), 1);
+         for (int il = 0; il < n_layer; ++il) {
+             if (layers[il].ffn_gate_exps == nullptr) pol->full[il] = 5;
+         }
+         pol->layers.assign(n_layer, nullptr);
+         pol->free_list.resize(n_layer);
+         for (auto & [il, dl] : made) {
+             pol->layers[il] = &g_layers[dmoe_gate(layers[il])];
+             for (int s = quota - 1; s >= 0; --s) pol->free_list[il].push_back(s);
+diff --git a/tosh-moe/tosh-dmoe.cpp b/tosh-moe/tosh-dmoe.cpp
+index 313900fa6..0846ac9ad 100644
+--- a/tosh-moe/tosh-dmoe.cpp
++++ b/tosh-moe/tosh-dmoe.cpp
+@@ -40,21 +40,22 @@ std::atomic<int>     g_version{0};
+ 
+ std::atomic<uint64_t> g_tick{0};
+ std::atomic<uint64_t> g_completed{0};
+ std::mutex              g_done_mutex;
+ std::condition_variable g_done_cv;
+ 
+ tosh_dmoe_uploader    g_uploader[MAX_DEVICES] = {};
+ std::atomic<bool>     g_has_uploader[MAX_DEVICES] = { false };
++static void (*g_uploader_factory)(void) = nullptr;
+ 
+ std::atomic<tosh_dmoe_bank_plan_fn> g_planner{nullptr};
+ 
+ void *                g_obs_ring[MAX_DEVICES] = { nullptr };
+-tosh_dmoe_obs_record  g_obs[TOSH_DMOE_OBS_RECORDS];
++tosh_dmoe_obs_record  g_obs[MAX_DEVICES][TOSH_DMOE_OBS_RECORDS];
+ std::atomic<uint64_t> g_obs_seq[MAX_DEVICES] = { 0 };
+ uint32_t              g_obs_off[MAX_DEVICES] = { 0 };
+ std::atomic<uint64_t> g_obs_pos[MAX_DEVICES] = { 0 };
+ std::mutex            g_obs_mutex;
+ 
+ static void * g_reach_ev[MAX_DEVICES] = { nullptr };
+ static uint64_t (*g_reach_get[MAX_DEVICES])(void *) = { nullptr };
+ 
+@@ -176,19 +177,30 @@ void tosh_dmoe_set_uploader_dev(int dev, const struct tosh_dmoe_uploader * u) {
+     if (dev < 0 || dev >= MAX_DEVICES) return;
+     g_uploader[dev] = *u;
+     g_has_uploader[dev].store(true);
+     if (dev > g_highest_dev) g_highest_dev = dev;
+ }
+ 
+ const struct tosh_dmoe_uploader * tosh_dmoe_get_uploader_dev(int dev) {
+     if (dev < 0 || dev >= MAX_DEVICES) return nullptr;
++    if (!g_has_uploader[dev].load() && g_uploader_factory != nullptr) {
++        static std::mutex m;
++        std::lock_guard<std::mutex> lock(m);
++        if (!g_has_uploader[dev].load() && g_uploader_factory != nullptr) {
++            g_uploader_factory();
++        }
++    }
+     return g_has_uploader[dev].load() ? &g_uploader[dev] : nullptr;
+ }
+ 
++static std::atomic<int> g_moe_devices_n{1};
++void tosh_dmoe_set_moe_devices(int n) { g_moe_devices_n.store(n < 1 ? 1 : n); }
++int  tosh_dmoe_moe_devices(void) { return g_moe_devices_n.load(); }
++
+ int tosh_dmoe_n_devices(void) {
+     return g_highest_dev + 1;
+ }
+ 
+ void tosh_dmoe_set_tables(int32_t * host, size_t bytes, int n_layers, int n_expert) {
+     g_tables_bytes   = bytes;
+     g_tables_layers  = n_layers;
+     g_tables_experts = n_expert;
+@@ -466,62 +478,83 @@ bool tosh_dmoe_wait_completed(uint64_t seen, int timeout_us) {
+ 
+ void tosh_dmoe_set_bank_planner(tosh_dmoe_bank_plan_fn fn) { g_planner.store(fn); }
+ 
+ bool tosh_dmoe_bank_planner(const void * host, size_t size, tosh_dmoe_bank_plan * plan) {
+     const tosh_dmoe_bank_plan_fn fn = g_planner.load();
+     return fn != nullptr && fn(host, size, plan);
+ }
+ 
+-void   tosh_dmoe_set_obs_ring(void * host) { g_obs_ring[0] = host; }
+-void * tosh_dmoe_obs_ring(void)            { return g_obs_ring[0]; }
+-uint64_t tosh_dmoe_obs_head(void)          { return g_obs_seq[0].load(); }
++void   tosh_dmoe_set_obs_ring(void * host) { tosh_dmoe_set_obs_ring_dev(0, host); }
++void * tosh_dmoe_obs_ring(void)            { return tosh_dmoe_obs_ring_dev(0); }
++uint64_t tosh_dmoe_obs_head(void)          { return tosh_dmoe_obs_head_dev(0); }
+ 
+ tosh_dmoe_obs_record * tosh_dmoe_obs_reserve(int il, int n_used, int n_tokens) {
++    return tosh_dmoe_obs_reserve_dev(0, il, n_used, n_tokens);
++}
++
++tosh_dmoe_obs_record * tosh_dmoe_obs_reserve_dev(int dev, int il, int n_used, int n_tokens) {
++    if (dev < 0 || dev >= MAX_DEVICES) return nullptr;
+     const uint32_t bytes = (uint32_t) n_used*n_tokens*sizeof(int32_t);
+     if (bytes == 0 || bytes > TOSH_DMOE_OBS_RING_BYTES/4) {
+         return nullptr;
+     }
+     std::lock_guard<std::mutex> lock(g_obs_mutex);
+-    if (g_obs_off[0] + bytes > TOSH_DMOE_OBS_RING_BYTES) {
+-        g_obs_pos[0].fetch_add(TOSH_DMOE_OBS_RING_BYTES - g_obs_off[0]);
+-        g_obs_off[0] = 0;
++    if (g_obs_off[dev] + bytes > TOSH_DMOE_OBS_RING_BYTES) {
++        g_obs_pos[dev].fetch_add(TOSH_DMOE_OBS_RING_BYTES - g_obs_off[dev]);
++        g_obs_off[dev] = 0;
+     }
+-    const uint64_t seq = g_obs_seq[0].load() + 1;
+-    tosh_dmoe_obs_record * r = &g_obs[seq % TOSH_DMOE_OBS_RECORDS];
++    const uint64_t seq = g_obs_seq[dev].load() + 1;
++    tosh_dmoe_obs_record * r = &g_obs[dev][seq % TOSH_DMOE_OBS_RECORDS];
+     r->sync     = tosh_dmoe_completed_value();
+-    r->offset   = g_obs_off[0];
+-    r->pos      = g_obs_pos[0].load();
++    r->offset   = g_obs_off[dev];
++    r->pos      = g_obs_pos[dev].load();
+     r->il       = il;
+     r->n_used   = n_used;
+     r->n_tokens = n_tokens;
+     r->tick     = (uint32_t) tosh_dmoe_tick();
+     __atomic_store_n(&r->seq, seq, __ATOMIC_RELEASE);
+-    g_obs_seq[0].store(seq);
+-    g_obs_off[0] += (bytes + 255) & ~255u;
+-    g_obs_pos[0].fetch_add((bytes + 255) & ~255u);
++    g_obs_seq[dev].store(seq);
++    g_obs_off[dev] += (bytes + 255) & ~255u;
++    g_obs_pos[dev].fetch_add((bytes + 255) & ~255u);
+     return r;
+ }
+ 
+ bool tosh_dmoe_obs_intact(const tosh_dmoe_obs_record * r) {
++    return tosh_dmoe_obs_intact_dev(r, 0);
++}
++
++bool tosh_dmoe_obs_intact_dev(const tosh_dmoe_obs_record * r, int dev) {
++    if (dev < 0 || dev >= MAX_DEVICES) {
++        return false;
++    }
+     const uint64_t bytes = (uint64_t) r->n_used*r->n_tokens*sizeof(int32_t);
+-    return g_obs_pos[0].load() - r->pos + bytes <= TOSH_DMOE_OBS_RING_BYTES;
++    return g_obs_pos[dev].load(std::memory_order_acquire) - r->pos + bytes <= TOSH_DMOE_OBS_RING_BYTES;
+ }
+ 
+ tosh_dmoe_obs_record * tosh_dmoe_obs_record_at(uint64_t seq) {
+-    tosh_dmoe_obs_record * r = &g_obs[seq % TOSH_DMOE_OBS_RECORDS];
++    return tosh_dmoe_obs_record_at_dev(0, seq);
++}
++
++tosh_dmoe_obs_record * tosh_dmoe_obs_record_at_dev(int dev, uint64_t seq) {
++    if (dev < 0 || dev >= MAX_DEVICES) return nullptr;
++    tosh_dmoe_obs_record * r = &g_obs[dev][seq % TOSH_DMOE_OBS_RECORDS];
+     return __atomic_load_n(&r->seq, __ATOMIC_ACQUIRE) == seq ? r : nullptr;
+ }
+ 
++uint64_t tosh_dmoe_obs_head_dev(int dev) {
++    if (dev < 0 || dev >= MAX_DEVICES) return 0;
++    return g_obs_seq[dev].load(std::memory_order_acquire);
++}
++
+ void tosh_dmoe_set_uploader(const tosh_dmoe_uploader * u) {
+     g_uploader[0] = *u;
+     g_has_uploader[0].store(true);
+ }
+ 
+-static void (*g_uploader_factory)(void) = nullptr;
+ void tosh_dmoe_set_uploader_factory(void (*make)(void)) { g_uploader_factory = make; }
+ 
+ const tosh_dmoe_uploader * tosh_dmoe_get_uploader(void) {
+     static std::mutex m;
+     if (!g_has_uploader[0].load() && g_uploader_factory != nullptr) {
+         std::lock_guard<std::mutex> lock(m);
+         if (!g_has_uploader[0].load()) g_uploader_factory();
+     }
+diff --git a/tosh-moe/tosh-dmoe.h b/tosh-moe/tosh-dmoe.h
+index c0a6b225c..5ec495783 100644
+--- a/tosh-moe/tosh-dmoe.h
++++ b/tosh-moe/tosh-dmoe.h
+@@ -40,16 +40,17 @@ static inline size_t tosh_dmoe_layer_stride(int n_embd, int n_used) {
+     const size_t o = tosh_dmoe_off_out(n_embd, n_used) + (size_t) n_embd*n_used*TOSH_DMOE_MAX_TOKENS*4;
+     return (o + 4095) & ~(size_t) 4095;
+ }
+ 
+ // Wide batches (prefill): experts routed to few rows of the chunk run on the host while the rest
+ // is uploaded. One stage serves every layer, since a layer's join precedes the next publish.
+ #define TOSH_DMOE_WIDE_MAX_TOKENS 2048
+ #define TOSH_DMOE_WIDE_MAX_ROWS   1024
++#define TOSH_DMOE_MAX_DEVICES     8
+ static inline size_t tosh_dmoe_wide_off_ids(int n_tok, int n_embd, int n_used) { (void) n_used; return (size_t) n_tok*n_embd*4; }
+ static inline size_t tosh_dmoe_wide_off_rmp(int n_tok, int n_embd, int n_used) { return tosh_dmoe_wide_off_ids(n_tok, n_embd, n_used) + (size_t) n_tok*n_used*4; }
+ static inline size_t tosh_dmoe_wide_off_map(int n_tok, int n_embd, int n_used) { return tosh_dmoe_wide_off_rmp(n_tok, n_embd, n_used) + (size_t) n_tok*n_used*4; }
+ static inline size_t tosh_dmoe_wide_off_out(int n_tok, int n_embd, int n_used) {
+     return (tosh_dmoe_wide_off_map(n_tok, n_embd, n_used) + (size_t) n_tok*n_used*4 + 255) & ~(size_t) 255;
+ }
+ static inline size_t tosh_dmoe_wide_bytes(int n_embd, int n_used) {
+     return tosh_dmoe_wide_off_out(TOSH_DMOE_WIDE_MAX_TOKENS, n_embd, n_used) + (size_t) TOSH_DMOE_WIDE_MAX_ROWS*n_embd*4;
+@@ -112,16 +113,19 @@ void     tosh_dmoe_set_reach_event_dev(int dev, void * ev, uint64_t (*get)(void
+ uint64_t tosh_dmoe_reach_get_dev(int dev);
+ void     tosh_dmoe_set_wide_stage_dev(int dev, void * host, size_t bytes);
+ void *   tosh_dmoe_wide_stage_dev(int dev, size_t * bytes);
+ void     tosh_dmoe_set_obs_ring_dev(int dev, void * host);
+ void *   tosh_dmoe_obs_ring_dev(int dev);
+ void     tosh_dmoe_set_uploader_dev(int dev, const struct tosh_dmoe_uploader * u);
+ const struct tosh_dmoe_uploader * tosh_dmoe_get_uploader_dev(int dev);
+ int      tosh_dmoe_n_devices(void);
++// the cards holding expert layers, fixed at init; a GPU-side fusion that is unsafe across them reads it
++void     tosh_dmoe_set_moe_devices(int n);
++int      tosh_dmoe_moe_devices(void);
+ 
+ // Publish values are odd and grow in GPU order; the answer is value + 1. They are handed out
+ // when a graph is submitted, so a publish and its join agree however the graph is split.
+ uint64_t tosh_dmoe_next_value(void);
+ 
+ struct tosh_dmoe_job * tosh_dmoe_job_of(uint64_t value);
+ 
+ // The host executor only spins while a graph with mixed layers is in flight.
+@@ -205,16 +209,21 @@ struct tosh_dmoe_obs_record {
+     uint32_t tick;
+ };
+ void                          tosh_dmoe_set_obs_ring(void * host);
+ void *                        tosh_dmoe_obs_ring(void);
+ struct tosh_dmoe_obs_record * tosh_dmoe_obs_reserve(int il, int n_used, int n_tokens);   // null if too big
+ struct tosh_dmoe_obs_record * tosh_dmoe_obs_record_at(uint64_t seq);
+ uint64_t                      tosh_dmoe_obs_head(void);
+ bool                          tosh_dmoe_obs_intact(const struct tosh_dmoe_obs_record * r);
++// per device (the card a layer's observations were written by); legacy API maps to device 0
++struct tosh_dmoe_obs_record * tosh_dmoe_obs_reserve_dev(int dev, int il, int n_used, int n_tokens);   // null if too big
++struct tosh_dmoe_obs_record * tosh_dmoe_obs_record_at_dev(int dev, uint64_t seq);
++uint64_t                      tosh_dmoe_obs_head_dev(int dev);
++bool                          tosh_dmoe_obs_intact_dev(const struct tosh_dmoe_obs_record * r, int dev);
+ 
+ // A failure latches until cleared: every later publish is answered at once so the GPU never
+ // waits forever, and the caller aborts the batch.
+ void         tosh_dmoe_fail(const char * why);
+ const char * tosh_dmoe_failed(void);
+ void         tosh_dmoe_clear_failure(void);
+ 
+ // Compact prefill: a wide batch uploads only the experts its chunk routes to. The scheduler reads
