@@ -1,0 +1,147 @@
+diff --git a/common/speculative.cpp b/common/speculative.cpp
+index 1785afe6d..49dac72ab 100644
+--- a/common/speculative.cpp
++++ b/common/speculative.cpp
+@@ -1051,16 +1051,18 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
+         {
+             char buf[32] = {};
+             if (llama_model_meta_val_str(model_dft, "dflash.block_size", buf, sizeof(buf)) >= 0) {
+                 block_size = std::atoi(buf);
+             }
+             if (llama_model_meta_val_str(model_dft, "dflash.sample_from_anchor", buf, sizeof(buf)) >= 0) {
+                 sample_from_anchor = std::strcmp(buf, "true") == 0;
+             }
++            // a per-layer array reads as "[...]" and leaves the context non-causal; the model's
++            // non_causal_type then keeps the SWA layers causal
+             if (llama_model_meta_val_str(model_dft, "dflash.attention.causal", buf, sizeof(buf)) >= 0) {
+                 causal_attn = std::strcmp(buf, "true") == 0;
+             }
+         }
+ 
+         selector_top_k = llama_model_dflash_selector_top_k(model_dft);
+         is_dflash2     = selector_top_k > 0;
+         mask_token_id = llama_vocab_mask(llama_model_get_vocab(model_dft));
+diff --git a/src/llama-hparams.h b/src/llama-hparams.h
+index 6c504c5dd..7df239117 100644
+--- a/src/llama-hparams.h
++++ b/src/llama-hparams.h
+@@ -29,16 +29,17 @@ enum llama_swa_type {
+ };
+ 
+ // how the non-causal mask should be constructed with llama_set_causal_attn(ctx, false)
+ // (e.g. mtmd decoding image tokens)
+ enum llama_non_causal_type {
+     LLAMA_NON_CAUSAL_TYPE_ALL      = 0, // all layers non-causal, SWA still applied (gemma 3, qwen-vl, ...)
+     LLAMA_NON_CAUSAL_TYPE_SWA_ONLY = 1, // SWA layers non-causal, dense layers stay causal (gemma 4)
+     LLAMA_NON_CAUSAL_TYPE_SWA_FULL = 2, // all layers non-causal, SWA not applied between tokens of the current ubatch (deepseek 4)
++    LLAMA_NON_CAUSAL_TYPE_DENSE_ONLY = 3, // dense layers non-causal, SWA layers stay causal (per-layer DFlash drafts)
+ };
+ 
+ // forward declaration; full definition in llama-graph.h
+ enum llm_ffn_op_type : int;
+ 
+ struct llama_hparams_posnet {
+     uint32_t n_embd;
+     uint32_t n_layer;
+diff --git a/src/llama-kv-cache.cpp b/src/llama-kv-cache.cpp
+index e65093e46..a0f6e0bc6 100644
+--- a/src/llama-kv-cache.cpp
++++ b/src/llama-kv-cache.cpp
+@@ -1824,16 +1824,20 @@ void llama_kv_cache::set_input_kq_mask(ggml_tensor * dst, const llama_ubatch * u
+     // n_tps == n_tokens_per_stream
+     const int64_t n_tps = n_tokens/n_stream;
+ 
+     // see llama_non_causal_type
+     // only the SWA cache (or the SWA layers of a single cache) become non-causal
+     if (!causal_attn && hparams.non_causal_type == LLAMA_NON_CAUSAL_TYPE_SWA_ONLY) {
+         causal_attn = swa_type == LLAMA_SWA_TYPE_NONE;
+     }
++    // the mirror image: only the dense cache becomes non-causal
++    if (!causal_attn && hparams.non_causal_type == LLAMA_NON_CAUSAL_TYPE_DENSE_ONLY) {
++        causal_attn = swa_type != LLAMA_SWA_TYPE_NONE;
++    }
+ 
+     //const int64_t t_start = ggml_time_us();
+ 
+     const args_set_input_kq_mask args = {
+         /*.hparams          =*/ hparams,
+         /*.ubatch           =*/ ubatch,
+         /*.v_cells          =*/ v_cells,
+         /*.seq_to_stream    =*/ seq_to_stream,
+diff --git a/src/llama-model.cpp b/src/llama-model.cpp
+index 7753807ed..2358e917c 100644
+--- a/src/llama-model.cpp
++++ b/src/llama-model.cpp
+@@ -1326,17 +1326,20 @@ void llama_model_base::load_hparams(llama_model_loader & ml) {
+     // for CLIP models, we only need to load tensors, no hparams
+     if (hparams.vocab_only || ml.get_arch() == LLM_ARCH_CLIP) {
+         return;
+     }
+ 
+     ml.get_key(LLM_KV_CONTEXT_LENGTH,          hparams.n_ctx_train);
+     ml.get_key(LLM_KV_EMBEDDING_LENGTH,        hparams.n_embd);
+     ml.get_key(LLM_KV_EMBEDDING_LENGTH_OUT,    hparams.n_embd_out_impl, false);
+-    ml.get_key(LLM_KV_ATTENTION_CAUSAL,        hparams.causal_attn,     false);
++    // DFlash drafts may declare causality per layer; their loader reads the key itself
++    if (ml.get_arch() != LLM_ARCH_DFLASH) {
++        ml.get_key(LLM_KV_ATTENTION_CAUSAL,    hparams.causal_attn,     false);
++    }
+     ml.get_key(LLM_KV_POOLING_TYPE,            hparams.pooling_type,    false);
+     ml.get_key(LLM_KV_CLASSIFIER_POOLING_TYPE, hparams.pooling_type_cls, false);
+     ml.get_key(LLM_KV_BLOCK_COUNT,             hparams.n_layer_all);
+     GGML_ASSERT(hparams.n_layer_all > 0 && hparams.n_layer_all <= LLAMA_MAX_LAYERS);
+     ml.get_key(LLM_KV_NEXTN_PREDICT_LAYERS,    hparams.n_layer_nextn,   false);
+     GGML_ASSERT(hparams.n_layer_nextn <= hparams.n_layer_all);
+     ml.get_key(LLM_KV_EXPERT_COUNT,            hparams.n_expert,        false);
+     std::fill(hparams.n_expert_used_arr.begin(), hparams.n_expert_used_arr.end(), 0);
+diff --git a/src/models/dflash.cpp b/src/models/dflash.cpp
+index 58e62f46d..b8be25bbc 100644
+--- a/src/models/dflash.cpp
++++ b/src/models/dflash.cpp
+@@ -97,16 +97,46 @@ void llama_model_dflash::load_arch_hparams(llama_model_loader & ml) {
+     // DFlash has a single rope, so the SWA rope == main rope.
+     if (ml.get_key(LLM_KV_ATTENTION_SLIDING_WINDOW, hparams.n_swa, false) && hparams.n_swa > 0) {
+         hparams.swa_type = LLAMA_SWA_TYPE_STANDARD;
+         ml.get_arr(LLM_KV_ATTENTION_SLIDING_WINDOW_PATTERN, hparams.is_swa_impl);
+         hparams.rope_freq_base_train_swa  = hparams.rope_freq_base_train;
+         hparams.rope_freq_scale_train_swa = hparams.rope_freq_scale_train;
+     }
+ 
++    // attention.causal is one bool, or one bool per layer. A mixed pattern is only expressible
++    // through the two caches' masks, so it must coincide with the SWA pattern: SWA layers causal,
++    // dense layers non-causal (the draft context itself stays non-causal)
++    std::array<uint32_t, LLAMA_MAX_LAYERS> causal_layers{};
++    if (ml.get_arr(LLM_KV_ATTENTION_CAUSAL, causal_layers, false)) {
++        uint32_t n_causal = 0;
++        ml.get_arr_n(LLM_KV_ATTENTION_CAUSAL, n_causal);
++        if (n_causal != hparams.n_layer_all) {
++            throw std::runtime_error(format("DFlash attention.causal has %u entries for %u layers", n_causal, hparams.n_layer_all));
++        }
++        bool mixed = false;
++        for (uint32_t il = 1; il < hparams.n_layer_all; ++il) {
++            mixed |= causal_layers[il] != causal_layers[0];
++        }
++        std::string pattern;
++        for (uint32_t il = 0; il < hparams.n_layer_all; ++il) {
++            pattern += causal_layers[il] ? 'C' : 'N';
++            if (mixed && (causal_layers[il] != 0) != hparams.is_swa(il)) {
++                throw std::runtime_error("DFlash mixed attention.causal must match the sliding-window pattern (SWA layers causal, dense layers non-causal)");
++            }
++        }
++        hparams.causal_attn = !mixed && causal_layers[0];
++        if (mixed) {
++            hparams.non_causal_type = LLAMA_NON_CAUSAL_TYPE_DENSE_ONLY;
++        }
++        LLAMA_LOG_INFO("%s: DFlash per-layer causality = %s, non_causal_type = %d\n", __func__, pattern.c_str(), hparams.non_causal_type);
++    } else {
++        ml.get_key(LLM_KV_ATTENTION_CAUSAL, hparams.causal_attn, false);
++    }
++
+     type = LLM_TYPE_UNKNOWN;
+ }
+ 
+ void llama_model_dflash::load_arch_tensors(llama_model_loader &) {
+     LLAMA_LOAD_LOCALS;
+ 
+     const int64_t n_embd_inp = hparams.n_embd_inp_enc();
+ 
