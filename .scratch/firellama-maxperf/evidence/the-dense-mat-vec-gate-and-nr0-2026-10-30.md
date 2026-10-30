@@ -117,18 +117,84 @@ Not run here:
   the 4B's other types stayed on the shipped kernels in these cells;
 - card 0 and the two-card modes.
 
-## Next: task 0b
+## Task 0b: patch 0056, eight rows chosen by row count
 
-Make `nr0` depend on the row count for q6_K and q4_K at n = 1 on wave64, in
-`ggml-metal-device.cpp`:
-- use `r8_w64` on the large shapes;
-- keep `r4` on the few-row shapes, where it measured lower above.
+The orchestrator wrote this one inline. It is 10 lines of engine code and 3 eval cases.
 
-The gate for 0b is this file's tables:
-- the per-shape cells re-run in one session;
-- eval 0 FAIL;
-- identical text on both models;
-- llama-bench decode against the shipped figures above, with the cells alternated.
+The rule (`ggml-metal-device.cpp`, 64-lane cards only):
+- q6_K, on the 64-lane twin: `r8` from 2048 rows up, otherwise the shipped `r4`;
+- q4_K, on the existing large-matrix path (both dimensions above 2048): `L16r8` from 8192 rows
+  up and plain `r8` below. Smaller matrices keep their `r4` path;
+- `TOSH_MV_ROWS8_DISABLE=1` restores the shipped kernels. That is the control below. Its
+  pipeline log names the shipped kernels and the default's names the new ones, so the control
+  takes effect.
+- The thresholds sit at measured points. No row count between 512 and 2048 (q6_K) or between
+  4096 and 8192 (q4_K) was measured.
 
-The implementer's other ranked items (aligned-dword reads, staging x in threadgroup memory,
-the epilogue) wait until 0b has landed.
+Per-shape gate. Same method as above: one session, N = 5 per cell, card 1. The engine is
+d81235049 plus 0001–0056.
+
+| type | k × rows | control | default | kernel picked |
+|---|---|---|---|---|
+| q6_K | 2048 × 248320 | 42.84 (0.01) | 53.09 (0.03) | `r8_w64` |
+| q6_K | 2048 × 8192 | 41.17 (0.01) | 50.07 (0.01) | `r8_w64` |
+| q6_K | 4096 × 2048 | 39.83 (0.02) | 46.53 (0.40) | `r8_w64` |
+| q6_K | 2048 × 4096 | 39.64 (0.05) | 43.45 (0.22) | `r8_w64` |
+| q6_K | 512 × 2048 | 13.59 (0.15) | 14.71 (0.13) | `r8_w64` |
+| q6_K | 2048 × 512 | 15.06 (0.22) | 15.07 (0.22) | `r4_w64` |
+| q6_K | 2048 × 32 | 1.17 (0.01) | 1.18 (0.01) | `r4_w64` |
+| q4_K | 4096 × 151936 | 39.41 (0.01) | 66.55 (0.02) | `L16r8_w64` |
+| q4_K | 4096 × 12288 | 38.35 (0.00) | 57.27 (0.15) | `L16r8_w64` |
+| q4_K | 12288 × 4096 | 38.27 (0.01) | 53.56 (0.01) | `r8_w64` |
+| q4_K | 4096 × 4096 | 36.55 (0.01) | 50.41 (0.01) | `r8_w64` |
+| q4_K | 4096 × 1024 | 28.29 (0.22) | 28.31 (0.17) | `r4` |
+
+No shape measured lower than its control.
+
+Correctness, card 1:
+- full `test-backend-ops -o MUL_MAT` and `-o MUL_MAT_ID`: 3/3 backends passed, 0 FAIL, both for
+  the control and for the default;
+- the shipped eval set has no n = 1 shape above the thresholds, so the default ran none of the
+  new kernels in it. Patch 0056 therefore adds 3 eval cases, one per new kernel, each with a row
+  count that is not a multiple of 8, to cover the tail:
+  - q6_K 2051 × 2048 → `r8_w64`: OK;
+  - q4_K 4099 × 4096 → `r8_w64`: OK;
+  - q4_K 8197 × 4096 → `L16r8_w64`: OK;
+  - under the control the same three cases run the shipped kernels: OK.
+
+End to end. llama-bench is `-p 0 -n 128 -fa 1`, with the cells alternated, 10 s apart. The
+text uses the server method above (N = 1 per prompt, greedy, 256 tokens).
+
+| model, placement | llama-bench N | control tg128 t/s | default tg128 t/s | text, both prompts |
+|---|---|---|---|---|
+| Qwen3-8B Q4_K_M, card 1 | 5, twice | 8.26 (0.00), 8.26 (0.00) | 10.21 (0.00), 10.21 (0.00) | identical |
+| Qwen3-4B Q6_K, card 1 | 5, twice | 12.08 (0.00), 12.08 (0.00) | 13.85 (0.00), 13.86 (0.00) | identical |
+| Qwen3-14B Q4_K_M, layer split on both cards | 3, twice | 5.07 (0.00), 5.07 (0.00) | 6.59 (0.01), 6.59 (0.01) | identical |
+
+Notes on the table:
+- The 8B row includes its q6_K tensors, which the 0a cells did not change. That is why 10.21 is
+  above 0a's 9.99 with q4_K alone.
+- The 14B cells ran with `GGML_METAL_DEVICES=2 -sm layer`. The model buffers were MTL0
+  3953.81 MiB and MTL1 4207.94 MiB, so both cards ran the rule. The control matches the
+  reference table's 5.10.
+
+Not run:
+- the 35B. It runs on the host under the 67 placement rule. The DFlash drafter on card 1 is
+  Q8_0, which this rule does not touch;
+- tensor split;
+- 32-lane cards. The rule is gated on `simd_width == 64`, so they are unchanged by construction,
+  not by measurement.
+
+Build: `cmake --build build-static --target llama-server llama-cli llama-bench
+test-backend-ops -j 12`. The AVX2 objdump check on llama-server gives 0. The patch series
+applies 61 of 61.
+
+## Next
+
+The implementer's other ranked items: aligned-dword reads, staging x in threadgroup memory,
+and folding the four epilogue reductions. Each can now be measured against the 0056 default
+with the same gate.
+
+The rule's thresholds could also be tuned per device at init, the magnitude-style search.
+These shapes favour that only if a third shape class shows a different winner, and none has
+yet.
