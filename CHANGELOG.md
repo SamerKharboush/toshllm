@@ -1,6 +1,37 @@
 # Changelog
 
 
+## [0.87.31-beta.4] - 2026-10-30
+
+This beta closes the four items 0.87.31-beta.3 left uncovered. The llama.cpp series is 82
+patches on the pin `d81235049`; the new one is `metal/0072`. Evidence:
+`.scratch/firellama-maxperf/evidence/the-four-gaps-of-0056-2026-10-30.md`.
+
+### Changed
+
+- **The eight-row mat-vec thresholds sit where the measurements put them.** A sweep of the row
+  counts between the old thresholds found the q4_K one too low: below 12288 rows the plain
+  eight-row kernel beats the sixteen-lane one (4096 x 8192: 51.80 against 47.95 GB/s, 4096 x
+  10240: 52.36 against 48.63, sd <= 0.01, N = 5, card 1). q4_K now takes sixteen lanes from
+  12288 rows (was 8192), and q6_K takes eight rows from 1792 (was 2048; 2048 x 1792: 38.39
+  against 27.90). No decode shape of Qwen3-4B, 8B or 14B lies in either range, so their
+  single-card and layer-split speeds are unchanged; the shapes matter under tensor split and
+  for other models.
+
+### Measured
+
+- **Tensor split** (`-sm tensor`, both cards) with and without `TOSH_MV_ROWS8_DISABLE=1`,
+  llama-bench `-p 0 -n 128 -r 5 -fa 1`, warmup discarded by llama-bench, on the engine this
+  release ships: Qwen3-4B Q6_K 16.72 -> 19.10 tok/s, Qwen3-8B Q4_K_M 13.81 -> 16.39. Text is
+  byte-identical with and without the control. These compare tensor split with itself only.
+- **32-lane cards**: unchanged by construction. Both reads of the switch sit inside
+  `simd_width == 64` blocks; no 32-lane card was available to measure.
+- **The 35B's DFlash drafter**: its Q8_0 kernels run the four-column mat-vec path and add up
+  to about 22 ms of a ~64 ms draft (isolated kernel timings, N = 5); drafting is ~1.85 s of an
+  ~11.75 s request (server statistics, N = 3). Below the gate for a kernel change, so none was
+  made. Most of the rest is the target's output head, which the drafter borrows and which runs
+  on the host.
+
 ## [0.87.31-beta.3] - 2026-10-30
 
 This beta carries upstream ToshLLM 0.87.31 (the original no-AVX2 line) with this fork's
