@@ -1,0 +1,10 @@
+<think>
+Okay, I need to write a Python function that inserts a key into a binary search tree. Let me think about how to approach this. 
+
+First, I remember that a binary search tree (BST) has the property that for each node, all elements in the left subtree are less than the node, and all elements in the right subtree are greater. So when inserting a new key, we have to follow the BST rules.
+
+The function should take the root of the BST and the key to insert. The function should return the new root after insertion. 
+
+Let me think about the steps. The insertion process starts at the root. If the tree is empty, the new node becomes the root. Otherwise, compare the key with the current node's value. If the key is less than the current node's value, we go to the left child. If it's greater, we go to the right child. We repeat this until we find a node that is either a leaf (no children) or has a child in the direction where the key should go. Then we add the new node there.
+
+So, the function needs to handle the case where the tree is empty first. Then, for each node, we traverse down the tree until we find the correct spot

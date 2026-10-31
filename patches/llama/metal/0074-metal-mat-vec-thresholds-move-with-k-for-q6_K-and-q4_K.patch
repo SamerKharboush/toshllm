@@ -1,0 +1,114 @@
+diff --git a/ggml/src/ggml-metal/ggml-metal-device.cpp b/ggml/src/ggml-metal/ggml-metal-device.cpp
+index 6baea915c..e7bf010a7 100644
+--- a/ggml/src/ggml-metal/ggml-metal-device.cpp
++++ b/ggml/src/ggml-metal/ggml-metal-device.cpp
+@@ -1751,20 +1751,22 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mv(ggml_meta
+                 // Sixteen lanes with four rows each: +5.8% over eight lanes. Sixteen lanes
+                 // with the inherited rows loses, so the win lives in the crossing of the two.
+                 if (simd_width == 64 && !q4k_small && TOSH_ENV("TOSH_MV_Q4K_W64_DISABLE") == nullptr) {
+                     nsg    = 1;
+                     nr0    = 4;
+                     suffix = "_L16r4";
+                     w64    = true;
+                     // eight rows share each x load; sixteen lanes win from 12288 rows up, plain
+-                    // below (plain measured ahead at 8192 and 10240)
++                    // below (plain measured ahead at 8192 and 10240); at k 2560 sixteen lanes
++                    // measured ahead from 6144 rows. Other k move it both ways, so not fitted.
+                     if (TOSH_ENV("TOSH_MV_ROWS8_DISABLE") == nullptr) {
+                         nr0    = 8;
+-                        suffix = ne01 >= 12288 ? "_L16r8" : "_r8";
++                        const bool l16 = ne01 >= 12288 || (ne00 <= 2560 && ne01 >= 6144);
++                        suffix = l16 ? "_L16r8" : "_r8";
+                     }
+                     break;
+                 }
+                 if (q4k_small) {
+                     nsg = 1;
+                     nr0 = 4;
+                     suffix = "_r4";
+                 } else {
+@@ -1805,18 +1807,23 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mv(ggml_meta
+                     suffix = "_r4";
+                 } else {
+                     nsg = N_SG_Q6_K;
+                     nr0 = N_R0_Q6_K;
+                 }
+                 // the 64-lane twin of this kernel lives in mul_mv_w64.metal
+                 if (simd_width == 64 && TOSH_ENV("TOSH_MV_W64_DISABLE") == nullptr) {
+                     w64 = true;
+-                    // eight rows from 1792 rows up; fewer rows starve the grid and measured lower
+-                    if (ne01 >= 1792 && TOSH_ENV("TOSH_MV_ROWS8_DISABLE") == nullptr) {
++                    // eight rows from 1792 rows up, from 1536 at k >= 4096, 1280 at k >= 8192 and
++                    // 1024 at k >= 12288 (the crossover measured at k 1024, 4096, 8192, 12288)
++                    const bool rows8 = ne01 >= 1792 ||
++                                       (ne01 >= 1536 && ne00 >= 4096) ||
++                                       (ne01 >= 1280 && ne00 >= 8192) ||
++                                       (ne01 >= 1024 && ne00 >= 12288);
++                    if (rows8 && TOSH_ENV("TOSH_MV_ROWS8_DISABLE") == nullptr) {
+                         nr0    = 8;
+                         suffix = "_r8";
+                     }
+                 }
+             } break;
+         case GGML_TYPE_IQ2_XXS:
+             {
+                 nsg = N_SG_IQ2_XXS;
+diff --git a/tests/test-backend-ops.cpp b/tests/test-backend-ops.cpp
+index ee4bd296e..832904c23 100644
+--- a/tests/test-backend-ops.cpp
++++ b/tests/test-backend-ops.cpp
+@@ -10448,16 +10448,21 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
+     }
+ 
+     // Metal on 64 lanes takes eight rows per group above a row count; odd counts cover the tail
+     test_cases.emplace_back(new test_mul_mat(GGML_TYPE_Q6_K, GGML_TYPE_F32, 2051, 1, 2048, { 1, 1 }, { 1, 1 }));
+     test_cases.emplace_back(new test_mul_mat(GGML_TYPE_Q4_K, GGML_TYPE_F32, 4099, 1, 4096, { 1, 1 }, { 1, 1 }));
+     test_cases.emplace_back(new test_mul_mat(GGML_TYPE_Q4_K, GGML_TYPE_F32, 8197, 1, 4096, { 1, 1 }, { 1, 1 }));
+     test_cases.emplace_back(new test_mul_mat(GGML_TYPE_Q6_K, GGML_TYPE_F32, 1795, 1, 2048, { 1, 1 }, { 1, 1 }));
+     test_cases.emplace_back(new test_mul_mat(GGML_TYPE_Q4_K, GGML_TYPE_F32, 12291, 1, 4096, { 1, 1 }, { 1, 1 }));
++    // and past the k-dependent ones: q6_K r8 from 1536@4096, 1280@8192, 1024@12288; q4_K L16r8 from 6144@2560
++    test_cases.emplace_back(new test_mul_mat(GGML_TYPE_Q6_K, GGML_TYPE_F32, 1539, 1, 4096, { 1, 1 }, { 1, 1 }));
++    test_cases.emplace_back(new test_mul_mat(GGML_TYPE_Q6_K, GGML_TYPE_F32, 1283, 1, 8192, { 1, 1 }, { 1, 1 }));
++    test_cases.emplace_back(new test_mul_mat(GGML_TYPE_Q6_K, GGML_TYPE_F32, 1027, 1, 12288, { 1, 1 }, { 1, 1 }));
++    test_cases.emplace_back(new test_mul_mat(GGML_TYPE_Q4_K, GGML_TYPE_F32, 6147, 1, 2560, { 1, 1 }, { 1, 1 }));
+ 
+     test_cases.emplace_back(new test_mul_mat(GGML_TYPE_Q4_0, GGML_TYPE_F32, 2880, 32, 2880, {1, 1}, {1, 1}));
+     test_cases.emplace_back(new test_mul_mat(GGML_TYPE_Q8_0, GGML_TYPE_F32, 2880, 32, 2880, {1, 1}, {1, 1}));
+     // q8_0 with three and four columns: few rows, a short row, and a large matrix
+     for (int64_t n : {3, 4}) {
+         for (auto mk : std::vector<std::array<int64_t, 2>>{{320, 2560}, {2560, 640}, {4096, 2560}, {8192, 512}}) {
+             test_cases.emplace_back(new test_mul_mat(GGML_TYPE_Q8_0, GGML_TYPE_F32, mk[0], n, mk[1], {1, 1}, {1, 1}));
+         }
+@@ -12006,16 +12011,32 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_perf() {
+     test_cases.emplace_back(new test_mul_mat_mv_perf(GGML_TYPE_Q6_K, GGML_TYPE_F32, 2560, 1, 4096, {1, 1}, {1, 1}));
+     test_cases.emplace_back(new test_mul_mat_mv_perf(GGML_TYPE_Q6_K, GGML_TYPE_F32, 2560, 1, 9728, {1, 1}, {1, 1}));
+     test_cases.emplace_back(new test_mul_mat_mv_perf(GGML_TYPE_Q6_K, GGML_TYPE_F32, 9728, 1, 2560, {1, 1}, {1, 1}));
+     test_cases.emplace_back(new test_mul_mat_mv_perf(GGML_TYPE_Q6_K, GGML_TYPE_F32, 4096, 1, 12288, {1, 1}, {1, 1}));
+     test_cases.emplace_back(new test_mul_mat_mv_perf(GGML_TYPE_Q6_K, GGML_TYPE_F32, 5120, 1, 17408, {1, 1}, {1, 1}));
+     test_cases.emplace_back(new test_mul_mat_mv_perf(GGML_TYPE_Q4_K, GGML_TYPE_F32, 5120, 1, 5120, {1, 1}, {1, 1}));
+     test_cases.emplace_back(new test_mul_mat_mv_perf(GGML_TYPE_Q4_K, GGML_TYPE_F32, 5120, 1, 17408, {1, 1}, {1, 1}));
+     test_cases.emplace_back(new test_mul_mat_mv_perf(GGML_TYPE_Q4_K, GGML_TYPE_F32, 17408, 1, 5120, {1, 1}, {1, 1}));
++    // row-count crossover as a function of k: q6_K forced r4/r8 and q4_K forced r8/L16r8
++    for (int64_t k : {1024, 4096, 8192, 12288}) {
++        for (int64_t m : {1024, 1280, 1536, 1792, 2048}) {
++            if ((k == 4096 && m == 1024) || (k == 4096 && m == 2048)) {
++                continue;
++            }
++            test_cases.emplace_back(new test_mul_mat_mv_perf(GGML_TYPE_Q6_K, GGML_TYPE_F32, m, 1, k, {1, 1}, {1, 1}));
++        }
++    }
++    for (int64_t k : {2560, 8192, 14336}) {
++        for (int64_t m : {6144, 8192, 10240, 12288, 14336}) {
++            test_cases.emplace_back(new test_mul_mat_mv_perf(GGML_TYPE_Q4_K, GGML_TYPE_F32, m, 1, k, {1, 1}, {1, 1}));
++        }
++    }
++    // the qwen3-4b ffn_gate/up shape, between the k 2560 rows above
++    test_cases.emplace_back(new test_mul_mat_mv_perf(GGML_TYPE_Q4_K, GGML_TYPE_F32, 9728, 1, 2560, {1, 1}, {1, 1}));
+ 
+     // qwen3-30b-a3b
+     for (int bs : {1, 4, 8, 32, 64, 128, 256, 512}) {
+         for (ggml_type type_a : {GGML_TYPE_F32, GGML_TYPE_F16, GGML_TYPE_Q4_0, GGML_TYPE_Q8_0, GGML_TYPE_Q4_K, GGML_TYPE_Q6_K, GGML_TYPE_IQ2_XS, GGML_TYPE_IQ4_XS}) {
+             for (ggml_type type_b : {GGML_TYPE_F32}) {
+                 test_cases.emplace_back(new test_mul_mat_id(type_a, type_b, 128, 8, false, 768, bs, 2048));
+                 test_cases.emplace_back(new test_mul_mat_id_fusion(type_a, type_b, 128, 8, false, 768, bs, 2048, 1));
+             }

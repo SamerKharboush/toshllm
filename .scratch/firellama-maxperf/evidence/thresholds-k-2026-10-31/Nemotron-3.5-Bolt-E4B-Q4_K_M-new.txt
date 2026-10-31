@@ -1,0 +1,35 @@
+Here is a Python implementation of a Binary Search Tree (BST) insertion function, followed by a detailed explanation of how it works.
+
+### Python Implementation
+
+```python
+class Node:
+    """Represents a node in the BST."""
+    def __init__(self, key):
+        self.key = key
+        self.left = None
+        self.right = None
+
+class BinarySearchTree:
+    """Represents the Binary Search Tree structure."""
+    def __init__(self):
+        self.root = None
+
+    def insert(self, key):
+        """
+        Inserts a new key into the BST.
+        Returns True if insertion was successful, False if the key already exists.
+        """
+        if self.root is None:
+            self.root = Node(key)
+            return True
+        else:
+            # Start the recursive insertion from the root
+            return self._insert_recursive(self.root, key)
+
+    def _insert_recursive(self, current_node, key):
+        """
+        Helper function to recursively find the correct insertion point.
+        """
+        # 1. Check if the key already exists
+        if key ==
