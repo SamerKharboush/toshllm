@@ -1,6 +1,6 @@
 # 73: the 0.87.31-beta.5 release and the XeonLLM rename
 
-Status: in progress
+Status: resolved
 Type: task
 
 ## Problem
@@ -36,4 +36,26 @@ measured, and main fast-forwarded to this branch.
 
 ## Answer
 
-Pending publication.
+**Published at <https://github.com/SamerKharboush/xeonllm/releases/tag/v0.87.31-beta.5>, a
+prerelease with the DMG, `checksums.txt` and `beta31b5-notes.md`.** The repository was renamed
+from SamerKharboush/toshllm to SamerKharboush/xeonllm (GitHub redirects the old URL), and main
+was fast-forwarded to `phase1-metal-d700-optimization`.
+
+- The series: 84 of 84 apply to the pin `d81235049`.
+- The engine: AVX1, llama-server sha256
+  `4bde27f80fb0a340564c82cf4b17ff48795a254578e41c2f392fc83ad5af97e8`; the bundle's signed copy
+  `ed4841fc419a1b31e8f386b679cc0d675241c0f30bd3d3c68990801ac50ecbb5` has the same four code
+  and data sections. 0 AVX2/FMA mnemonics.
+- The gates: MUL_MAT 1760/1760, MUL_MAT_ID 873/873, FLASH_ATTN_EXT 1993/1993 (also with
+  `TOSH_FA_AMD=1`) on card 1; the preflight served on `-ngl 0` and `-ngl 99` and its
+  forced-drop control reads 1; `assert_artifact` passes; `swift test`: 504 tests, 16 skipped,
+  3 failures, all in the pre-existing `MCPStdioTransportTests` race.
+- The DMG: `XeonLLM-v0.87.31-beta.5-noavx2.dmg`, sha256
+  `da7bcaf1ad34a241544017f33e60f6a1c53a1b2d7e6ef418d52383b4eeb07367`; mounted, bundle id
+  `dev.xeonllm.app`, version 0.87.31-beta.5, `TOSHNoAVX2` and `TOSHUpdatesDisabled` true,
+  codesign verifies.
+- The tag `v0.87.31-beta.5` is annotated, not signed.
+
+Not covered: a 32-lane GPU, the drafter and threshold numbers on the bundled engine (both were
+measured on the dev tree build of the same source), an eye check of the DMG window, and the
+other-engines survey.
