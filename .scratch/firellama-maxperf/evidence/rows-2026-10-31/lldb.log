@@ -1,0 +1,44 @@
+(lldb) target create "./build-static/bin/llama-server"
+Current executable set to '/Users/sam/firellama/vendor/llama.cpp/build-static/bin/llama-server' (x86_64).
+(lldb) settings set -- target.run-args  "-m" "/Users/sam/models/deepreinforce-ai/Ornith-1.0-35B-GGUF/ornith-1.0-35b-Q6_K.gguf" "--port" "8091" "-ngl" "0" "-c" "16384" "-t" "12" "-fa" "auto" "--load-mode" "none" "--parallel" "1" "--cache-ram" "0" "-md" "/Users/sam/models/Qwen3.6-35B-A3B-DFlash-Q8_0.gguf" "--spec-type" "draft-dflash" "-ngld" "all" "-devd" "MTL0" "--spec-draft-n-max" "3"
+(lldb) run
+ggml_metal: device 0: AMD Radeon HD - FirePro D700 (peer group 0, not bridged) probed SIMD-group width = 64 (32 = Apple/AMD RDNA, 64 = AMD GCN/Vega)
+ggml_metal: wave64 mode (SIMD width 64): GPU prefill matmul, CPU decode/reductions for correct output
+ggml_metal: aligned mat-vec reads ON by amdgpu_gfx600 (override with TOSH_MV_ALIGN=1 or =0)
+ggml_metal: wave64 decode ON: quantized/f16/bf16 mat-vec on GPU (see the allowlist in ggml_metal_library_get_pipeline_mul_mv)
+[34m0.00.214.384[0m [32mI [0msrv  llama_server: initializing ...
+[34m0.00.214.411[0m [32mI [0mcmn  common_param: common_params_print_info: ToshLLM engine 0.87.31-beta.3 (app standalone)
+[34m0.00.214.412[0m [32mI [0mcmn  common_param: common_params_print_info: verbosity = 3 (adjust with the `-lv N` CLI arg)
+[34m0.00.214.925[0m [35mW srv  llama_server: security: no API key is set and CORS allows all origins (see https://github.com/ggml-org/llama.cpp/pull/25655)[0m
+[34m0.00.216.835[0m [32mI [0msrv    load_model: loading model '/Users/sam/models/deepreinforce-ai/Ornith-1.0-35B-GGUF/ornith-1.0-35b-Q6_K.gguf'
+[34m0.00.216.866[0m [32mI [0mTosh MoE: standard
+[34m0.01.851.106[0m [31mE llama_init_from_model: failed to initialize the context: dflash requires ctx_other to be set (this warning is normal during memory fitting)[0m
+[34m0.01.899.957[0m [35mW operator(): failed to measure the memory of the extra model, fitting without it: failed to create llama_context from model[0m
+[34m0.34.979.052[0m [32mI [0mcmn          init: llama threadpool init, n_threads = 12
+[34m0.38.138.195[0m [32mI [0mcommon_speculative_init_result: loading draft model '/Users/sam/models/Qwen3.6-35B-A3B-DFlash-Q8_0.gguf'
+Process 27139 launched: '/Users/sam/firellama/vendor/llama.cpp/build-static/bin/llama-server' (x86_64)
+Process 27139 stopped
+* thread #1, queue = 'com.apple.main-thread', stop reason = EXC_BAD_ACCESS (code=1, address=0x180)
+    frame #0: 0x00007ff80ab39e92 libsystem_platform.dylib`_platform_strlen + 18
+libsystem_platform.dylib`_platform_strlen:
+->  0x7ff80ab39e92 <+18>: pcmpeqb (%rdi), %xmm0
+    0x7ff80ab39e96 <+22>: pmovmskb %xmm0, %esi
+    0x7ff80ab39e9a <+26>: andq   $0xf, %rcx
+    0x7ff80ab39e9e <+30>: orq    $-0x1, %rax
+Target 0: (llama-server) stopped.
+(lldb) bt 15
+* thread #1, queue = 'com.apple.main-thread', stop reason = EXC_BAD_ACCESS (code=1, address=0x180)
+  * frame #0: 0x00007ff80ab39e92 libsystem_platform.dylib`_platform_strlen + 18
+    frame #1: 0x00007ff80a9a4926 libsystem_c.dylib`__vfprintf + 4654
+    frame #2: 0x00007ff80a9d39c3 libsystem_c.dylib`_vsnprintf + 242
+    frame #3: 0x00007ff80a9a8055 libsystem_c.dylib`vsnprintf + 68
+    frame #4: 0x00000001005ce2be llama-server`llama_log_internal(ggml_log_level, char const*, ...) + 222
+    frame #5: 0x0000000100595999 llama-server`llama_context::llama_context(llama_model const&, llama_context_params) + 7865
+    frame #6: 0x00000001005a443c llama-server`llama_init_from_model + 1084
+    frame #7: 0x0000000100321f91 llama-server`common_speculative_init_result::common_speculative_init_result(common_params&, llama_model*, llama_context*) + 481
+    frame #8: 0x00000001003222e8 llama-server`common_speculative_init_from_params(common_params&, llama_model*, llama_context*) + 56
+    frame #9: 0x00000001000ecbfa llama-server`server_context_impl::load_model(common_params&) + 3402
+    frame #10: 0x000000010000a4f1 llama-server`llama_server(common_params&, int, char**, server_child&) + 26625
+    frame #11: 0x0000000100003c5d llama-server`llama_server(int, char**) + 237
+    frame #12: 0x00007ff80a75e530 dyld`start + 3056
+(lldb) quit

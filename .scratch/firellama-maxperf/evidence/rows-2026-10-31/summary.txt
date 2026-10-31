@@ -1,0 +1,56 @@
+cell  i  tok/s   tok/s(diff draft)  acc/gen    draft_ms
+H1    0   7.341                              
+H1    1  11.734                       73/87    1747.0
+H1    2  11.691                       73/87    1781.2
+H1    3  11.789                       73/87    1732.3
+D1    0   7.679                              
+D1    1  12.348                       73/87    1081.2
+D1    2  12.383                       73/87    1090.6
+D1    3  12.620                       73/87    1074.2
+H2    0   7.525                              
+H2    1  11.713                       73/87    1747.2
+H2    2  11.848                       73/87    1754.2
+H2    3  11.805                       73/87    1722.3
+D2    0   7.730                              
+D2    1  12.506                       73/87    1086.3
+D2    2  12.667                       73/87    1085.1
+D2    3  12.635                       73/87    1084.6
+P     0   7.581                              
+P     1  10.928                              
+P     2  11.094                              
+P     3  10.970                              
+
+=== per cell (drop i=0) ===
+cell   n  mean_tok/s  sd_tok/s  mean_draft_ms  sd_draft_ms  acc/gen(total)
+H1     3     11.738     0.049        1753.5         25.1  219/261
+D1     3     12.450     0.148        1082.0          8.2  219/261
+H2     3     11.789     0.069        1741.2         16.7  219/261
+D2     3     12.603     0.085        1085.3          0.9  219/261
+P      3     10.997     0.086           nan          0.0  -
+
+=== head lines ===
+H1: 0.36.902.494 I llama_context: Tosh: TOSH_DFLASH_HEAD_HOST set, keeping borrowed lm head on host
+D1: 0.36.995.966 I llama_context: Tosh: dflash lm head copied to MTL0_Private (397.9 MiB, q6_K)
+H2: 0.36.303.112 I llama_context: Tosh: TOSH_DFLASH_HEAD_HOST set, keeping borrowed lm head on host
+D2: 0.36.758.621 I llama_context: Tosh: dflash lm head copied to MTL0_Private (397.9 MiB, q6_K)
+P: (no lm head line)
+
+=== cmp vs P-1.txt ===
+ref P-1.txt: 541 bytes
+cmp H1-0.txt vs P-1.txt: identical (541 bytes)
+cmp H1-1.txt vs P-1.txt: identical (541 bytes)
+cmp H1-2.txt vs P-1.txt: identical (541 bytes)
+cmp H1-3.txt vs P-1.txt: identical (541 bytes)
+cmp D1-0.txt vs P-1.txt: identical (541 bytes)
+cmp D1-1.txt vs P-1.txt: identical (541 bytes)
+cmp D1-2.txt vs P-1.txt: identical (541 bytes)
+cmp D1-3.txt vs P-1.txt: identical (541 bytes)
+cmp H2-0.txt vs P-1.txt: identical (541 bytes)
+cmp H2-1.txt vs P-1.txt: identical (541 bytes)
+cmp H2-2.txt vs P-1.txt: identical (541 bytes)
+cmp H2-3.txt vs P-1.txt: identical (541 bytes)
+cmp D2-0.txt vs P-1.txt: identical (541 bytes)
+cmp D2-1.txt vs P-1.txt: identical (541 bytes)
+cmp D2-2.txt vs P-1.txt: identical (541 bytes)
+cmp D2-3.txt vs P-1.txt: identical (541 bytes)
+mismatches: 0

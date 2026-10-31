@@ -1,0 +1,154 @@
+diff --git a/src/llama-context.cpp b/src/llama-context.cpp
+index 7ce655617..6a73991d0 100644
+--- a/src/llama-context.cpp
++++ b/src/llama-context.cpp
+@@ -2,16 +2,17 @@
+ #include "llama-tosh-dmoe.h"
+ #ifdef TOSH_ENABLE_DYNAMIC_MOE
+ #include "tosh-dmoe.h"
+ #else
+ static inline size_t tosh_dmoe_private_bytes(void) { return 0; }
+ #endif
+ 
+ #include "ggml.h"
++#include "ggml-alloc.h"
+ #include "llama-arch.h"
+ #include "llama-graph.h"
+ #include "llama-impl.h"
+ #include "llama-batch.h"
+ #include "llama-io.h"
+ #include "llama-memory.h"
+ #include "llama-mmap.h"
+ #include "llama-model.h"
+@@ -203,16 +204,17 @@ llama_context::llama_context(
+     cparams.n_ctx_orig_yarn  = params.yarn_orig_ctx    != 0 ? params.yarn_orig_ctx    :
+                                hparams.n_ctx_orig_yarn != 0 ? hparams.n_ctx_orig_yarn :
+                                                               hparams.n_ctx_train;
+ 
+     cparams.cb_eval           = params.cb_eval;
+     cparams.cb_eval_user_data = params.cb_eval_user_data;
+ 
+     cparams.ctx_other = nullptr;
++    cparams.output_other_dev = nullptr;
+ 
+     // TODO: more generic
+     if (model.arch == LLM_ARCH_GEMMA4_ASSISTANT) {
+         if (params.ctx_other == nullptr) {
+             // TODO: change from runtime_error to llama_exception to avoid printing error message
+             throw std::runtime_error("Gemma4Assistant requires ctx_other to be set (this warning is normal during memory fitting)");
+         }
+ 
+@@ -224,16 +226,48 @@ llama_context::llama_context(
+         if (model.tok_embd == nullptr || model.output == nullptr) {
+             if (params.ctx_other == nullptr) {
+                 throw std::runtime_error(model.arch_name() + " requires ctx_other to be set (this warning is normal during memory fitting)");
+             }
+             cparams.ctx_other = params.ctx_other;
+         }
+     }
+ 
++    // tosh: a dflash draft on a card that borrows a host lm head gets one copy of it on its
++    // own device at load, so each draft's 4-column head product runs there (TOSH_DFLASH_HEAD_HOST=1 keeps the host path)
++    if (model.arch == LLM_ARCH_DFLASH && model.output == nullptr && cparams.ctx_other != nullptr) {
++        ggml_tensor * src = llama_get_model(cparams.ctx_other)->output;
++        ggml_tensor * w   = !model.layers.empty() && model.layers[0].attn_norm ? model.layers[0].attn_norm : model.output_norm;
++        if (src && src->buffer && ggml_backend_buffer_is_host(src->buffer) && w && w->buffer &&
++            !ggml_backend_buft_is_host(ggml_backend_buffer_get_type(w->buffer))) {
++            ggml_backend_buffer_type_t buft = ggml_backend_buffer_get_type(w->buffer);
++            const double mib = ggml_nbytes(src)/1048576.0;
++            if (getenv("TOSH_DFLASH_HEAD_HOST")) {
++                LLAMA_LOG_INFO("%s: dflash lm head kept on the host (TOSH_DFLASH_HEAD_HOST, %.1f MiB)\n", __func__, mib);
++            } else {
++                ggml_init_params ip = { ggml_tensor_overhead(), nullptr, true };
++                ctx_head_dev.reset(ggml_init(ip));
++                ggml_tensor * dst = ggml_dup_tensor(ctx_head_dev.get(), src);
++                ggml_set_name(dst, "output_other_dev");
++                buf_head_dev.reset(ggml_backend_alloc_ctx_tensors_from_buft(ctx_head_dev.get(), buft));
++                if (!buf_head_dev) {
++                    LLAMA_LOG_WARN("%s: no room on %s for the %.1f MiB dflash lm head, keeping it on the host\n",
++                            __func__, ggml_backend_buft_name(buft), mib);
++                    ctx_head_dev.reset();
++                } else {
++                    ggml_backend_buffer_set_usage(buf_head_dev.get(), GGML_BACKEND_BUFFER_USAGE_WEIGHTS);
++                    ggml_backend_tensor_set(dst, src->data, 0, ggml_nbytes(src));
++                    cparams.output_other_dev = dst;
++                    LLAMA_LOG_INFO("%s: dflash lm head copied to %s (%.1f MiB, %s)\n", __func__,
++                            ggml_backend_buft_name(buft), mib, ggml_type_name(src->type));
++                }
++            }
++        }
++    }
++
+     if (cparams.rope_scaling_type == LLAMA_ROPE_SCALING_TYPE_UNSPECIFIED) {
+         cparams.rope_scaling_type = hparams.rope_scaling_type_train;
+     }
+ 
+     if (cparams.rope_scaling_type == LLAMA_ROPE_SCALING_TYPE_NONE) {
+         cparams.rope_freq_scale = 1.0f; // never scale if scaling type is none
+     }
+ 
+diff --git a/src/llama-context.h b/src/llama-context.h
+index eb57695ab..bf0f61d11 100644
+--- a/src/llama-context.h
++++ b/src/llama-context.h
+@@ -397,16 +397,19 @@ private:
+     // Drop the second prepared shape and go back to a single scheduler.
+     void shape_cache_disable();
+     // Both prepared shapes are stale: rebuild them on next use.
+     void shape_cache_invalidate();
+ 
+     // host buffer for the model output (logits and embeddings)
+     ggml_backend_buffer_ptr buf_output;
+ 
++
++    ggml_context_ptr        ctx_head_dev; // tosh: owns output_other_dev
++    ggml_backend_buffer_ptr buf_head_dev;
+     // keep copies of the per-sequence memory on the device
+     std::map<llama_seq_id, llama_memory_buffers> mem_storage;
+ 
+     bool has_evaluated_once = false;
+ 
+     // env: LLAMA_GRAPH_REUSE_DISABLE
+     bool graph_reuse_disable = false;
+ 
+diff --git a/src/llama-cparams.h b/src/llama-cparams.h
+index 004fec5a6..a0b4eec5f 100644
+--- a/src/llama-cparams.h
++++ b/src/llama-cparams.h
+@@ -60,9 +60,11 @@ struct llama_cparams {
+     enum llama_context_type ctx_type;
+     enum llama_rope_scaling_type rope_scaling_type;
+     enum llama_pooling_type pooling_type;
+ 
+     ggml_backend_sched_eval_callback cb_eval;
+     void * cb_eval_user_data;
+ 
+     llama_context * ctx_other;
++
++    ggml_tensor * output_other_dev; // tosh: device copy of a borrowed host lm head, or null
+ };
+diff --git a/src/models/dflash.cpp b/src/models/dflash.cpp
+index b8be25bbc..80351a82a 100644
+--- a/src/models/dflash.cpp
++++ b/src/models/dflash.cpp
+@@ -839,16 +839,20 @@ llama_model_dflash::graph<false>::graph(const llama_model & model, const llm_gra
+     auto * output_s = model.output_s;
+     if (output == nullptr) {
+         GGML_ASSERT(cparams.ctx_other != nullptr);
+         const auto * model_other = llama_get_model(cparams.ctx_other);
+         GGML_ASSERT(model_other->output != nullptr && "DFlash decoder requires the target model's output projection");
+         output   = model_other->output;
+         output_s = model_other->output_s;
+         cur = build_hadamard_input(output, cur, &model_other->hadamard_rotations);
++        // tosh: the rotation is keyed on the target's tensor; the product reads the card copy
++        if (cparams.output_other_dev) {
++            output = cparams.output_other_dev;
++        }
+     }
+ 
+     cur = build_lora_mm(output, cur, output_s);
+ 
+     // DFlash2 feeds these logits to the selector, so they need the target's output
+     // transforms; DFlash1 and DSpark read them through the sampler instead
+     if (model.dflash_selector_hidden) {
+         if (hparams.f_logit_scale != 0.0f) {
