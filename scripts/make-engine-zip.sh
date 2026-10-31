@@ -4,14 +4,14 @@
 # and a start script. The DMGs are not affected: this builds in its own directory.
 #
 # Run after ./scripts/build-engines.sh, which leaves vendor/llama.cpp patched.
-#   ./scripts/make-engine-zip.sh [version]     -> dist/toshllm-engine-<version>-macos12-x86_64.zip
+#   ./scripts/make-engine-zip.sh [version]     -> dist/xeonllm-engine-<version>-macos12-x86_64.zip
 set -e
 cd "$(dirname "$0")/.."
 ROOT="$PWD"
 
 VERSION="${1:-$(tr -d '[:space:]' < VERSION)}"
 VERSION="${VERSION#v}"
-NAME="toshllm-engine-$VERSION-macos12-x86_64"
+NAME="xeonllm-engine-$VERSION-macos12-x86_64"
 LLAMA="vendor/llama.cpp"
 BUILD="build-macos12"
 
@@ -72,7 +72,7 @@ cp LICENSE "$STAGE/"
 
 cat > "$STAGE/start.sh" <<'EOF'
 #!/bin/sh
-# Starts the ToshLLM engine with the settings the app applies on AMD GPUs.
+# Starts the XeonLLM engine with the settings the app applies on AMD GPUs.
 # Usage: ./start.sh /path/to/model.gguf [extra llama-server arguments]
 # Optional: CTX (context, default 8192), PORT (default 8080), NCMOE (MoE layers kept on the CPU).
 set -e
@@ -101,12 +101,12 @@ EOF
 chmod +x "$STAGE/start.sh"
 
 cat > "$STAGE/README.txt" <<EOF
-ToshLLM engine $VERSION for macOS 12 (Monterey)
+XeonLLM engine $VERSION for macOS 12 (Monterey)
 ===============================================
 
-This is the inference engine of ToshLLM without the app: the same llama.cpp engine with the AMD
-Metal patches that ships in ToshLLM $VERSION, built to run on macOS 12 and on CPUs without AVX
-(SSE4.2 only). It serves a chat page in your browser instead of the ToshLLM window. On macOS 13
+This is the inference engine of XeonLLM without the app: the same llama.cpp engine with the AMD
+Metal patches that ships in XeonLLM $VERSION, built to run on macOS 12 and on CPUs without AVX
+(SSE4.2 only). It serves a chat page in your browser instead of the XeonLLM window. On macOS 13
 or newer, use the app instead.
 
 Requirements: an Intel Mac on macOS 12 or newer with a Metal GPU.

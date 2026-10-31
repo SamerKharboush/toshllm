@@ -1,4 +1,4 @@
-// Generates the ToshLLM app icon (macOS 26 style: gradient squircle with a chip glyph).
+// Generates the XeonLLM app icon (macOS 26 style: gradient squircle with a chip glyph).
 // Usage: swift icon-gen.swift <output.png>
 import AppKit
 
@@ -91,7 +91,7 @@ let attrs: [NSAttributedString.Key: Any] = [
     .foregroundColor: white,
     .kern: 4,
 ]
-let text = NSAttributedString(string: "LLM", attributes: attrs)
+let text = NSAttributedString(string: "X", attributes: attrs)
 let tsize = text.size()
 text.draw(at: NSPoint(x: (size - tsize.width) / 2, y: (size - tsize.height) / 2 - 8))
 

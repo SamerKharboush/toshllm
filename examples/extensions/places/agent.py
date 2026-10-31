@@ -1,4 +1,4 @@
-# ToshLLM - run LLMs locally on Intel Macs with AMD GPUs
+# XeonLLM - run LLMs locally on Intel Macs with AMD GPUs (fork of ToshLLM)
 # Copyright (C) 2026 Engelbert Delgado <engeldlgado@gmail.com>
 # SPDX-License-Identifier: GPL-3.0-or-later
 """The agent of the places example: answers questions about places with its tools, streams its passes, hands

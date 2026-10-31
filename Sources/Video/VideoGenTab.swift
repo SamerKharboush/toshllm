@@ -1,4 +1,4 @@
-// ToshLLM - run LLMs locally on Intel Macs with AMD GPUs
+// XeonLLM - run LLMs (fork of ToshLLM) locally on Intel Macs with AMD GPUs
 // Copyright (C) 2026 Engelbert Delgado <engeldlgado@gmail.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -817,7 +817,7 @@ private func reveal(_ result: GeneratedVideo) {
 }
 
 private func exportMP4(_ result: GeneratedVideo) {
-    let panel = NSSavePanel(); panel.allowedContentTypes = [.mpeg4Movie]; panel.nameFieldStringValue = "toshllm-video.mp4"
+    let panel = NSSavePanel(); panel.allowedContentTypes = [.mpeg4Movie]; panel.nameFieldStringValue = "xeonllm-video.mp4"
     guard panel.runModal() == .OK, let destination = panel.url else { return }
     let urls = result.frameURLs; let fps = result.fps
     Task.detached {

@@ -1,4 +1,4 @@
-// ToshLLM - run LLMs locally on Intel Macs with AMD GPUs
+// XeonLLM - run LLMs (fork of ToshLLM) locally on Intel Macs with AMD GPUs
 // Copyright (C) 2026 Engelbert Delgado <engeldlgado@gmail.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -1147,8 +1147,8 @@ struct BenchmarksView: View {
                                     Text("v\(v)")
                                         .font(.system(size: 10, design: .monospaced))
                                         .foregroundStyle(.tertiary)
-                                        .help(loc.t("Versión de ToshLLM que hizo esta medición",
-                                                    "ToshLLM version that produced this run"))
+                                        .help(loc.t("Versión de XeonLLM que hizo esta medición",
+                                                    "XeonLLM version that produced this run"))
                                 }
                                 Spacer(minLength: 0)
                             }
@@ -1744,8 +1744,8 @@ private struct BenchHistoryRow: View, Equatable {
                         Text("v\(version)")
                             .font(.system(size: 10, design: .monospaced))
                             .foregroundStyle(.tertiary)
-                            .help(loc.t("Versión de ToshLLM que hizo esta medición",
-                                        "ToshLLM version that produced this run"))
+                            .help(loc.t("Versión de XeonLLM que hizo esta medición",
+                                        "XeonLLM version that produced this run"))
                     }
                     Text(r.date, format: .dateTime.day().month().hour().minute())
                         .font(.caption2).foregroundStyle(.tertiary)

@@ -1,4 +1,4 @@
-// ToshLLM - run LLMs locally on Intel Macs with AMD GPUs
+// XeonLLM - run LLMs (fork of ToshLLM) locally on Intel Macs with AMD GPUs
 // Copyright (C) 2026 Engelbert Delgado <engeldlgado@gmail.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -184,7 +184,7 @@ final class BenchmarkController: ObservableObject {
     private func header(for settings: ServerSettings) -> String {
         let model = URL(fileURLWithPath: settings.modelPath).lastPathComponent
         return """
-        === ToshLLM benchmark · \(Date().formatted(.iso8601)) ===
+        === XeonLLM benchmark · \(Date().formatted(.iso8601)) ===
         model:  \(model)
         GPU:    \(settings.gpuLabel)
         engine: \(settings.engineTag)\(engineMemoryLabel(settings)) · K:\(settings.benchmarkPlan?.kv ?? settings.cacheTypeK) V:\(settings.benchmarkPlan?.kv ?? settings.cacheTypeV)
@@ -475,7 +475,7 @@ final class BenchmarkController: ObservableObject {
         }
         p.environment = environment
         let outputURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("toshllm-sweep-\(UUID().uuidString).log")
+            .appendingPathComponent("xeonllm-sweep-\(UUID().uuidString).log")
         guard FileManager.default.createFile(atPath: outputURL.path, contents: nil),
               let outputHandle = try? FileHandle(forWritingTo: outputURL) else { return nil }
         p.standardOutput = outputHandle

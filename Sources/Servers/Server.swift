@@ -1,4 +1,4 @@
-// ToshLLM - run LLMs locally on Intel Macs with AMD GPUs
+// XeonLLM - run LLMs (fork of ToshLLM) locally on Intel Macs with AMD GPUs
 // Copyright (C) 2026 Engelbert Delgado <engeldlgado@gmail.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -2065,7 +2065,7 @@ final class ServerController: ObservableObject {
         let problem = runtime.flatMap(AutoMemoryText.runtimeProblem)
         autoPlanNote = problem
         guard !settings.planWithoutDMoE else { return }
-        consume("\n[ToshLLM] \(problem ?? "Dynamic MoE did not start") — replanning without it\n")
+        consume("\n[XeonLLM] \(problem ?? "Dynamic MoE did not start") — replanning without it\n")
         var retry = settings
         retry.planWithoutDMoE = true
         stop()
@@ -2147,7 +2147,7 @@ final class ServerController: ObservableObject {
         }
         return """
         ========================================================
-         ToshLLM \(AppInfo.version) — server start (\(ServerSettings.isAppleSilicon ? "arm64" : "x86_64")\(AppInfo.isNoAVX2 ? " · no-AVX2 build" : ""))
+         XeonLLM \(AppInfo.version) — server start (\(ServerSettings.isAppleSilicon ? "arm64" : "x86_64")\(AppInfo.isNoAVX2 ? " · no-AVX2 build" : ""))
          engine : \(engine) · kernels \(kernelFingerprint(binary: settings.serverBinary))
          model  : \(settings.routerMode ? "router (autoload, max \(settings.routerModelsMax) loaded)" : (settings.modelPath as NSString).lastPathComponent)
          GPUs detected:
@@ -2238,7 +2238,7 @@ final class ServerController: ObservableObject {
                         }
                         self.retryWithoutMmproj = true
                         EngineLock.remove(pid: proc.processIdentifier)
-                        self.consume("\n[ToshLLM] the projector (mmproj) failed to load — retrying text-only, vision disabled\n")
+                        self.consume("\n[XeonLLM] the projector (mmproj) failed to load — retrying text-only, vision disabled\n")
                         self.state = .starting
                         self.launch(settings)
                         return
@@ -2247,7 +2247,7 @@ final class ServerController: ObservableObject {
                     // layers once and say so, instead of failing the server.
                     if proc.terminationStatus == 86, !self.retryLayerSplit {
                         self.retryLayerSplit = true
-                        self.consume("\n[ToshLLM] este modelo no admite reparto por tensores — reintentando por capas / this model has no tensor split — retrying by layers\n")
+                        self.consume("\n[XeonLLM] este modelo no admite reparto por tensores — reintentando por capas / this model has no tensor split — retrying by layers\n")
                         AppLog.server.error("no tensor split for this model; retrying with --split-mode layer")
                         self.state = .starting
                         self.launch(settings)
@@ -2261,7 +2261,7 @@ final class ServerController: ObservableObject {
                         self.lastCrashRelaunch = Date()
                         // the log is the engine's, in English; the diagnosis carries both languages
                         let reason = why.range(of: " / ").map { String(why[$0.upperBound...]) } ?? why
-                        self.consume("\n[ToshLLM] the engine stopped (\(reason)) — restarting\n")
+                        self.consume("\n[XeonLLM] the engine stopped (\(reason)) — restarting\n")
                         self.state = .starting
                         self.launch(settings)
                         return
@@ -2274,7 +2274,7 @@ final class ServerController: ObservableObject {
         fileLog.startSession()   // new timestamped per-session file, prunes old ones
         consume(Self.startupBanner(settings: settings, args: args))
         if let plan = autoPlan {
-            consume("[ToshLLM] memory plan: \(AutoMemoryText.summary(plan, runtime: nil)) | \(AutoMemoryText.reason(plan))\n")
+            consume("[XeonLLM] memory plan: \(AutoMemoryText.summary(plan, runtime: nil)) | \(AutoMemoryText.reason(plan))\n")
         }
         do {
             try p.run()
@@ -2569,7 +2569,7 @@ final class ServerController: ObservableObject {
             }
             guard let self, let peak else { return }
             if peak.fraction >= 0.90 {
-                consume("\n[ToshLLM] DFlash runtime VRAM peak: \(Int(peak.fraction * 100))% (\(Int(peak.usedMB)) / \(Int(peak.totalMB)) MiB)\n")
+                consume("\n[XeonLLM] DFlash runtime VRAM peak: \(Int(peak.fraction * 100))% (\(Int(peak.usedMB)) / \(Int(peak.totalMB)) MiB)\n")
             }
             guard DflashPolicy.shouldWarn(fractions: fractions) else { return }
             let signature = dflashWarningSignature(settings: settings)

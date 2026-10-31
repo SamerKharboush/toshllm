@@ -1,4 +1,4 @@
-// ToshLLM - run LLMs locally on Intel Macs with AMD GPUs
+// XeonLLM - run LLMs (fork of ToshLLM) locally on Intel Macs with AMD GPUs
 // Copyright (C) 2026 Engelbert Delgado <engeldlgado@gmail.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -77,8 +77,8 @@ struct AudioControls: View {
                         .frame(maxWidth: .infinity)
                 }
                 .disabled(studio.isBusy)
-                .help(loc.t("Admite audio y vídeo; ToshLLM extrae el audio localmente sin modificar el original.",
-                            "Accepts audio and video; ToshLLM extracts audio locally without changing the original."))
+                .help(loc.t("Admite audio y vídeo; XeonLLM extrae el audio localmente sin modificar el original.",
+                            "Accepts audio and video; XeonLLM extracts audio locally without changing the original."))
 
                 if let source = studio.sourceURL {
                     Text(source.lastPathComponent)
@@ -127,7 +127,7 @@ struct AudioControls: View {
                 if operation == .translateLocal {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(loc.t("Idioma de destino", "Target language")).font(.caption).foregroundStyle(.secondary)
-                        ToshDropdown(selection: targetLanguageSelection,
+                        XeonDropdown(selection: targetLanguageSelection,
                                      options: targetLanguageOptions,
                                      placeholder: loc.t("Elegir idioma", "Choose language"),
                                      width: 172,
@@ -585,7 +585,7 @@ struct AudioControls: View {
         }
     }
 
-    private var targetLanguageOptions: [ToshDropdown<String>.Option] {
+    private var targetLanguageOptions: [XeonDropdown<String>.Option] {
         [
             .init(value: TranslationLanguageOption.customValue,
                   title: loc.t("Otro…", "Other…"),
@@ -673,7 +673,7 @@ private struct TranslationLanguageOption: Identifiable {
         all.first(where: { $0.id == "es" })?.value ?? "Spanish"
     }
 
-    static let customValue = "__toshllm_custom_language__"
+    static let customValue = "__xeonllm_custom_language__"
 
     static func matching(_ value: String) -> TranslationLanguageOption? {
         all.first {

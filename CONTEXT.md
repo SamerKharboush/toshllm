@@ -152,7 +152,7 @@ last row wrote past the end of `dst`. Fix is the same predicate as
 `half_ * 2 < args.dim`. Diffusion/image path only; the LLM text path was
 never affected.
 
-**Menu-bar LAN toggle dropped the setting** (fixed, `ToshLLMApp.swift`).
+**Menu-bar LAN toggle dropped the setting** (fixed, `XeonLLMApp.swift`).
 An added server always has a pinned list, so `effectiveSettings()` reads
 only pinned fields; the toggle wrote the profile value without pinning it,
 and the engine bound `127.0.0.1` while the switch read on.

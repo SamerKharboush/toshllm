@@ -1,4 +1,4 @@
-// ToshLLM - run LLMs locally on Intel Macs with AMD GPUs
+// XeonLLM - run LLMs (fork of ToshLLM) locally on Intel Macs with AMD GPUs
 // Copyright (C) 2026 Engelbert Delgado <engeldlgado@gmail.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -136,11 +136,11 @@ enum LogPresentationParser {
     private static func inferredSource(_ line: String, fallback: String) -> String {
         let lower = line.lowercased().trimmingCharacters(in: .whitespaces)
         // the app's start banner, ahead of the engine's own lines
-        if lower.hasPrefix("[toshllm]") || lower.hasPrefix("====") || lower.hasPrefix("toshllm ")
+        if lower.hasPrefix("[xeonllm]") || lower.hasPrefix("====") || lower.hasPrefix("xeonllm ")
             || lower.hasPrefix("engine ") || lower.hasPrefix("model ") || lower.hasPrefix("gpus detected")
             || lower.hasPrefix("gpu select") || lower.hasPrefix("settings:") || lower.hasPrefix("dflash")
             || lower.hasPrefix("env:") || lower.hasPrefix("args:")
-            || (lower.hasPrefix("[") && lower.dropFirst().first?.isNumber == true) { return "ToshLLM" }
+            || (lower.hasPrefix("[") && lower.dropFirst().first?.isNumber == true) { return "XeonLLM" }
         if lower.contains("ggml_metal") || lower.contains("metal") || lower.contains("kioaccel") { return "Metal" }
         if lower.contains("llama_server") { return "Server" }
         return fallback
@@ -154,7 +154,7 @@ enum LogPresentationParser {
         case "slot": "Slot"
         case "sampler": "Sampler"
         case "spec": "Speculative"
-        case "tosh": "ToshLLM"
+        case "tosh": "XeonLLM"
         default: source
         }
     }

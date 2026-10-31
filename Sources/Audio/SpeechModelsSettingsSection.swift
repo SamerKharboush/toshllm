@@ -1,4 +1,4 @@
-// ToshLLM - run LLMs locally on Intel Macs with AMD GPUs
+// XeonLLM - run LLMs (fork of ToshLLM) locally on Intel Macs with AMD GPUs
 // Copyright (C) 2026 Engelbert Delgado <engeldlgado@gmail.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -17,7 +17,7 @@ struct SpeechModelsSettingsSection: View {
         // The panel header above already names this category.
         Section {
             LabeledContent(loc.t("Método del micrófono", "Microphone method")) {
-                ToshDropdown(selection: $methodRaw, options: [
+                XeonDropdown(selection: $methodRaw, options: [
                     .init(value: "", title: loc.t("Elegir…", "Choose…")),
                     .init(value: SpeechInputMethod.apple.rawValue, title: loc.t("Dictado de Apple", "Apple Dictation")),
                     .init(value: SpeechInputMethod.whisper.rawValue, title: "Whisper.cpp · GPU"),
@@ -36,7 +36,7 @@ struct SpeechModelsSettingsSection: View {
 
             if methodRaw != SpeechInputMethod.apple.rawValue {
                 LabeledContent(loc.t("Carga de Whisper", "Whisper loading")) {
-                    ToshDropdown(selection: $loadPolicyRaw, options: [
+                    XeonDropdown(selection: $loadPolicyRaw, options: [
                         .init(value: WhisperLoadPolicy.onDemand.rawValue, title: loc.t("Bajo demanda", "On demand")),
                         .init(value: WhisperLoadPolicy.alwaysLoaded.rawValue, title: loc.t("Siempre cargado", "Always loaded")),
                     ])
@@ -54,7 +54,7 @@ struct SpeechModelsSettingsSection: View {
                     .foregroundStyle(.secondary)
 
             LabeledContent(loc.t("Modelo Whisper", "Whisper model")) {
-                ToshDropdown(selection: $selectedID, options: WhisperModel.catalog.map {
+                XeonDropdown(selection: $selectedID, options: WhisperModel.catalog.map {
                     .init(value: $0.id, title: label(for: $0))
                 }, width: 320)
             }

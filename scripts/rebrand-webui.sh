@@ -1,5 +1,5 @@
 #!/bin/zsh
-# Builds the llama.cpp web UI (MIT) from vendor, with ToshLLM's patches (patches/llama/ui),
+# Builds the llama.cpp web UI (MIT) from vendor, with XeonLLM's patches (patches/llama/ui),
 # and rebrands it into Assets/web-ui, served with --path. A built dist can be given instead.
 # Only user-visible strings change; wire identifiers and storage keys are left alone.
 # A substitution that stops matching is a hard error, not a silent pass-through.
@@ -32,9 +32,9 @@ bundle, manifest, index = sys.argv[1], sys.argv[2], sys.argv[3]
 # `llama-ui` is the app name the document title interpolates; the other is the one
 # hardcoded title in the bundle.
 subs = [
-    ('VITE_PUBLIC_APP_NAME||"llama-ui"', 'VITE_PUBLIC_APP_NAME||"ToshLLM"'),
-    ('"Search · llama.cpp"',             '"Search · ToshLLM"'),
-    ('`llama_settings_${',               '`toshllm_settings_${'),
+    ('VITE_PUBLIC_APP_NAME||"llama-ui"', 'VITE_PUBLIC_APP_NAME||"XeonLLM"'),
+    ('"Search · llama.cpp"',             '"Search · XeonLLM"'),
+    ('`llama_settings_${',               '`xeonllm_settings_${'),
 ]
 src = open(bundle, encoding="utf-8").read()
 for old, new in subs:
@@ -44,23 +44,23 @@ for old, new in subs:
 open(bundle, "w", encoding="utf-8").write(src)
 
 m = json.load(open(manifest, encoding="utf-8"))
-m["name"] = m["short_name"] = "ToshLLM"
-m["description"] = "Local AI chat interface. llama.cpp web UI, rebranded for ToshLLM."
+m["name"] = m["short_name"] = "XeonLLM"
+m["description"] = "Local AI chat interface. llama.cpp web UI, rebranded for XeonLLM."
 json.dump(m, open(manifest, "w", encoding="utf-8"), ensure_ascii=False, separators=(",", ":"))
 
 # The UI is upstream's work, so credit it where a user can see it.
 badge = """<style>
-#tosh-upstream-credit{position:fixed;right:8px;bottom:6px;z-index:2147483647;
+#xeon-upstream-credit{position:fixed;right:8px;bottom:6px;z-index:2147483647;
  font:11px/1.4 -apple-system,BlinkMacSystemFont,sans-serif;opacity:.45;
  color:currentColor;text-decoration:none;pointer-events:auto}
-#tosh-upstream-credit:hover{opacity:.9}
-@media (max-width:640px){#tosh-upstream-credit{display:none}}
+#xeon-upstream-credit:hover{opacity:.9}
+@media (max-width:640px){#xeon-upstream-credit{display:none}}
 </style>
-<a id="tosh-upstream-credit" href="https://github.com/ggml-org/llama.cpp" target="_blank"
-   rel="noopener">llama.cpp web UI (MIT), rebranded for ToshLLM</a>
+<a id="xeon-upstream-credit" href="https://github.com/ggml-org/llama.cpp" target="_blank"
+   rel="noopener">llama.cpp web UI (MIT), rebranded for XeonLLM</a>
 """
 html = open(index, encoding="utf-8").read()
-if "tosh-upstream-credit" not in html:
+if "xeon-upstream-credit" not in html:
     if "</body>" not in html:
         raise SystemExit("rebrand: no </body> in index.html")
     html = html.replace("</body>", badge + "</body>", 1)

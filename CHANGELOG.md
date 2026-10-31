@@ -1,5 +1,35 @@
 # Changelog
 
+## [0.87.31-beta.5] - 2026-10-31
+
+**ToshLLM is now XeonLLM**, a fork of [ToshLLM](https://github.com/engeldlgado/toshllm) by
+Engelbert Delgado, at <https://github.com/SamerKharboush/xeonllm>. Every entry below this one
+is historical and describes ToshLLM; none is rewritten. The llama.cpp series is 84 patches on
+the pin `d81235049`; the new ones are `spec/0073` and `metal/0074`. Evidence:
+`.scratch/firellama-maxperf/evidence/the-drafter-head-on-the-card-2026-10-31.md` and
+`thresholds-at-other-k-2026-10-31.md`.
+
+### Changed
+
+- **The name, the bundle id and the icon.** The app is XeonLLM, bundle id `dev.xeonllm.app`,
+  DMG `XeonLLM-v<version>-noavx2.dmg`, with an X on the icon. Engine switches keep their
+  `TOSH_*` names; the memory-archive webhook headers (`X-ToshLLM-*`) and the settings archive
+  importer (`toshllm-settings` and `xeonllm-settings`) keep working with what other tools send.
+- **A first launch copies a ToshLLM install.** Settings from the `dev.engel.toshllm` domain
+  (except `NS*` and `Apple*` window and system keys), the `ToshLLM` Application Support folder
+  and the Keychain items are copied into XeonLLM's own, once, without overwriting anything
+  XeonLLM already has. Nothing of ToshLLM's is moved or deleted (`IdentityMigration.swift`, 7
+  tests).
+- **The 35B's DFlash drafter keeps a copy of the borrowed output head on its own card.** The
+  drafter borrows the target's Q6_K head (397.9 MiB), which sits on the host under `-ngl 0`;
+  the copy is made once at load and drafting per request went from about 1.72-1.85 s to
+  1.07-1.11 s (35B Q6_K on the host, drafter on card 1, N = 3 per server, two sets).
+  `TOSH_DFLASH_HEAD_HOST=1` keeps the host path.
+- **The mat-vec thresholds move with k.** q6_K takes eight rows from fewer rows as k grows
+  (1536 at k >= 4096, 1280 at k >= 8192, 1024 at k >= 12288), and q4_K's large path takes
+  sixteen lanes from 6144 rows at k <= 2560. Qwen3-4B Q4_K_M went from 16.145-16.160 to
+  16.598-16.608 tok/s and Nemotron-3.5-Bolt-E4B Q4_K_M from 13.011-13.014 to 13.522-13.531
+  (llama-bench tg128, card 1, 4 processes per cell), with byte-identical text.
 
 ## [0.87.31-beta.4] - 2026-10-30
 

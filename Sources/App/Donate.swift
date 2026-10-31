@@ -1,4 +1,4 @@
-// ToshLLM - run LLMs locally on Intel Macs with AMD GPUs
+// XeonLLM - run LLMs (fork of ToshLLM) locally on Intel Macs with AMD GPUs
 // Copyright (C) 2026 Engelbert Delgado <engeldlgado@gmail.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -28,8 +28,8 @@ struct DonateView: View {
                     VStack(alignment: .leading, spacing: 1) {
                         Text(loc.t("Conviértete en patrocinador", "Become a sponsor"))
                             .fontWeight(.semibold)
-                        Text(loc.t("Apoya el desarrollo de ToshLLM",
-                                   "Support ToshLLM development"))
+                        Text(loc.t("Apoya el desarrollo de XeonLLM",
+                                   "Support XeonLLM development"))
                             .font(.caption2).opacity(0.85)
                     }
                     Spacer(minLength: 4)

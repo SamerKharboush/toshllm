@@ -1,4 +1,4 @@
-// ToshLLM - run LLMs locally on Intel Macs with AMD GPUs
+// XeonLLM - run LLMs (fork of ToshLLM) locally on Intel Macs with AMD GPUs
 // Copyright (C) 2026 Engelbert Delgado <engeldlgado@gmail.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -249,8 +249,8 @@ struct ChatMainView: View {
                     Label(loc.t("Actualización", "Update"), systemImage: "arrow.down.app.fill")
                         .foregroundStyle(Color.appAccent)
                 }
-                .help(loc.t("ToshLLM %@ disponible... instálala desde Configuración → Inicio.",
-                            "ToshLLM %@ available... install it from Configuration → Home.", version))
+                .help(loc.t("XeonLLM %@ disponible... instálala desde Configuración → Inicio.",
+                            "XeonLLM %@ available... install it from Configuration → Home.", version))
             }
             ServerWebUIButton(server: server, presentation: .icon)
                 .buttonStyle(GlassIconButtonStyle())

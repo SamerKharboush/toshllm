@@ -1,4 +1,4 @@
-// ToshLLM - run LLMs locally on Intel Macs with AMD GPUs
+// XeonLLM - run LLMs (fork of ToshLLM) locally on Intel Macs with AMD GPUs
 // Copyright (C) 2026 Engelbert Delgado <engeldlgado@gmail.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -36,7 +36,7 @@ struct MediaAttachmentPreview: View {
     private func prepare() {
         guard let payload = attachment.base64Payload, let data = Data(base64Encoded: payload) else { return }
         let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("ToshLLM-preview-\(UUID().uuidString).\(attachment.fenceHint)")
+            .appendingPathComponent("XeonLLM-preview-\(UUID().uuidString).\(attachment.fenceHint)")
         guard (try? data.write(to: url, options: .atomic)) != nil else { return }
         temporaryURL = url
         player = AVPlayer(url: url)

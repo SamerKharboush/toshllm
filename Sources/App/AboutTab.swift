@@ -1,4 +1,4 @@
-// ToshLLM - run LLMs locally on Intel Macs with AMD GPUs
+// XeonLLM - run LLMs locally (fork of ToshLLM) on Intel Macs with AMD GPUs
 // Copyright (C) 2026 Engelbert Delgado <engeldlgado@gmail.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -7,7 +7,7 @@ import SwiftUI
 // MARK: - About
 
 enum AppInfo {
-    static let version = "0.87.31-beta.4"
+    static let version = "0.87.31-beta.5"
     /// True for the pre-AVX2 legacy build (Info.plist TOSHNoAVX2). Kept on its own
     /// update channel so it never pulls an AVX2 DMG that would SIGILL on those CPUs.
     static let isNoAVX2 = Bundle.main.object(forInfoDictionaryKey: "TOSHNoAVX2") as? Bool ?? false
@@ -21,22 +21,22 @@ enum AppInfo {
     static let sponsorURL = "https://youpay.me/engeldlgado/bio"
     static let binancePayID = "engeldlgado"
     static let usdtTRC20 = "TFUG271bbbQEmFu4wkFHyvNNkYRZC5JDUf"
-    static let donateNoteES = "Si ToshLLM te resulta útil, puedes apoyar el desarrollo con una donación."
-    static let donateNoteEN = "If ToshLLM is useful to you, you can support development with a donation."
+    static let donateNoteES = "Si XeonLLM te resulta útil, puedes apoyar el desarrollo con una donación."
+    static let donateNoteEN = "If XeonLLM is useful to you, you can support development with a donation."
 
     // A build packaged under another identity (TOSH_APP_NAME in make-app.sh) carries these keys;
-    // a plain build has none of them and keeps ToshLLM's.
-    static let name = infoString("TOSHProductName") ?? "ToshLLM"
-    static let identifier = infoString("TOSHIdentifier") ?? "dev.engel.toshllm"
-    static let dataFolder = infoString("TOSHDataFolder") ?? "ToshLLM"
-    /// The build's own version; `version` stays the ToshLLM it is built on.
+    // a plain build has none of them and keeps XeonLLM's.
+    static let name = infoString("TOSHProductName") ?? "XeonLLM"
+    static let identifier = infoString("TOSHIdentifier") ?? "dev.xeonllm.app"
+    static let dataFolder = infoString("TOSHDataFolder") ?? "XeonLLM"
+    /// The build's own version; `version` stays the XeonLLM it is built on.
     static let productVersion = infoString("TOSHProductVersion") ?? version
     static let updatesEnabled = !(Bundle.main.object(forInfoDictionaryKey: "TOSHUpdatesDisabled") as? Bool ?? false)
-    static var isRebranded: Bool { name != "ToshLLM" }
+    static var isRebranded: Bool { name != "XeonLLM" }
 
     /// Interface text that names the app, with this build's name in it.
     static func branded(_ text: String) -> String {
-        isRebranded ? text.replacingOccurrences(of: "ToshLLM", with: name) : text
+        isRebranded ? text.replacingOccurrences(of: "XeonLLM", with: name) : text
     }
 
     private static func infoString(_ key: String) -> String? {
@@ -74,7 +74,7 @@ struct AboutView: View {
                            startPoint: .leading, endPoint: .trailing)
                 .allowsHitTesting(false)
             HStack(spacing: 20) {
-                ToshLLMLogo(size: 92)
+                XeonLLMLogo(size: 92)
                 VStack(alignment: .leading, spacing: 10) {
                     Text(AppInfo.name)
                         .font(.system(size: 32, weight: .bold))
@@ -88,8 +88,8 @@ struct AboutView: View {
                                "Local language models with Metal acceleration on Intel Macs with AMD GPUs."))
                         .font(.system(size: 15, weight: .medium))
                         .lineLimit(2)
-                    Text(loc.t("Privado. Rápido. Potente. ToshLLM lleva la IA de código abierto a tu equipo con una experiencia nativa y limpia para macOS.",
-                               "Private. Fast. Powerful. ToshLLM brings open-source AI to your machine with a clean, native macOS experience."))
+                    Text(loc.t("Privado. Rápido. Potente. XeonLLM lleva la IA de código abierto a tu equipo con una experiencia nativa y limpia para macOS.",
+                               "Private. Fast. Powerful. XeonLLM brings open-source AI to your machine with a clean, native macOS experience."))
                         .font(.system(size: 13))
                         .foregroundStyle(.secondary)
                         .lineLimit(3)
@@ -120,7 +120,7 @@ struct AboutView: View {
     private var versionLine: String {
         let line = loc.t("Versión", "Version") + " " + AppInfo.productVersion
         guard AppInfo.isRebranded else { return line }
-        return line + " · " + loc.t("basado en %@ %@", "based on %@ %@", "ToshLLM", AppInfo.version)
+        return line + " · " + loc.t("basado en %@ %@", "based on %@ %@", "XeonLLM", AppInfo.version)
     }
 
     @ViewBuilder private var updateBadge: some View {
@@ -235,6 +235,11 @@ struct AboutView: View {
     private var creditsCard: some View {
         AboutCard(icon: "hands.clap", title: loc.t("Créditos", "Credits")) {
             VStack(spacing: 0) {
+                AboutLinkRow(icon: nil, title: "ToshLLM (engeldlgado)",
+                             detail: loc.t("XeonLLM es un fork de ToshLLM", "XeonLLM is a fork of ToshLLM")) {
+                    open("https://github.com/engeldlgado/toshllm")
+                }
+                Divider()
                 AboutLinkRow(icon: nil, title: "llama.cpp", detail: "ggml-org · " + loc.t("motor de inferencia", "inference engine")) {
                     open("https://github.com/ggml-org/llama.cpp")
                 }
@@ -303,7 +308,7 @@ struct AboutView: View {
             ? "—"
             : hardware.gpus.map { "\($0.name) (\($0.vramGB) GB)" }.joined(separator: ", ")
         let value = """
-        \(AppInfo.name) \(AppInfo.productVersion)\(AppInfo.isRebranded ? " (ToshLLM \(AppInfo.version))" : "")\(AppInfo.isNoAVX2 ? " (no-AVX2)" : "")
+        \(AppInfo.name) \(AppInfo.productVersion)\(AppInfo.isRebranded ? " (XeonLLM \(AppInfo.version))" : "")\(AppInfo.isNoAVX2 ? " (no-AVX2)" : "")
         \(hardware.osVersion)
         Model: \(hardware.model)
         CPU: \(hardware.cpuBrand) · \(hardware.physicalCores) cores / \(hardware.logicalCores) threads

@@ -1,4 +1,4 @@
-// ToshLLM - run LLMs locally on Intel Macs with AMD GPUs
+// XeonLLM - run LLMs (fork of ToshLLM) locally on Intel Macs with AMD GPUs
 // Copyright (C) 2026 Engelbert Delgado <engeldlgado@gmail.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -2646,7 +2646,7 @@ final class ChatStore: ObservableObject {
 
     // Serial queue: keeps writes ordered while encoding off the main thread,
     // since the full history JSON grows with use and would cause hitches.
-    private static let saveQueue = DispatchQueue(label: "dev.engel.toshllm.chat-save", qos: .utility)
+    private static let saveQueue = DispatchQueue(label: "dev.xeonllm.app.chat-save", qos: .utility)
 
     func save() {
         for i in conversations.indices {

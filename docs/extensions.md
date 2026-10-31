@@ -1,21 +1,21 @@
 # Extensions
 
-An extension adds tools to ToshLLM's engine, and optionally its own agent, with a settings page in
+An extension adds tools to XeonLLM's engine, and optionally its own agent, with a settings page in
 the app. It is a folder with an `extension.json` and whatever programs that file starts. The servers
 it declares are ordinary [MCP](https://modelcontextprotocol.io) servers, so anything that speaks MCP
-can write one, and they also run without ToshLLM. [`examples/extensions/clock`](../examples/extensions/clock)
+can write one, and they also run without XeonLLM. [`examples/extensions/clock`](../examples/extensions/clock)
 is a complete one in about seventy lines of standard-library Python, and
 [`examples/extensions/places`](../examples/extensions/places) uses every kind of setting and brings an agent
 that streams its answer, hands the turns outside its field back to the chat and offers a map.
 
-## Where ToshLLM looks
+## Where XeonLLM looks
 
 - **Settings → Extensions → Extensions folder**: a folder of your choice, by default
-  `~/Library/Application Support/ToshLLM/Extensions`. Every subfolder with an `extension.json` is
+  `~/Library/Application Support/XeonLLM/Extensions`. Every subfolder with an `extension.json` is
   one extension; a chosen folder that has an `extension.json` itself is a single extension.
 - **Inside the app** (`Contents/Resources/extensions`), for builds that bring their own
   (`TOSH_APP_EXTENSIONS=<folder>` in `make-app.sh`). Such a build can also set its own defaults for
-  ToshLLM's settings with `TOSH_APP_DEFAULTS=<plist>`, keyed like `SettingsKeys`; what a user changes still wins.
+  XeonLLM's settings with `TOSH_APP_DEFAULTS=<plist>`, keyed like `SettingsKeys`; what a user changes still wins.
 
 An extension found in the folder starts switched off. Switching it on shows the programs it will run;
 they run with your user's permissions, so only approve extensions you trust. The approval belongs to
@@ -65,9 +65,9 @@ Extensions inside the app start on. Changes apply when the server restarts.
 | `id` | Lowercase letters, digits and `-`; unique among the extensions in use. |
 | `version`, `author` | Shown in Settings. |
 | `name`, `description` | Text in Spanish and English (`{"es", "en"}`), like every text in the file. |
-| `servers` | MCP servers the engine starts, by name (lowercase letters, digits, `-` and `_`; not `sympy`, `scientific` or `agent`, which ToshLLM uses). Their tools reach the model as `<name>_<tool>`. |
+| `servers` | MCP servers the engine starts, by name (lowercase letters, digits, `-` and `_`; not `sympy`, `scientific` or `agent`, which XeonLLM uses). Their tools reach the model as `<name>_<tool>`. |
 | `agent` | Optional. A local server that replaces the engine's agent; see below. |
-| `math_tools` | Optional, `true` to start ToshLLM's symbolic and scientific math servers (`sympy`, `scientific`) with it even when they are switched off, for an agent that relies on them. |
+| `math_tools` | Optional, `true` to start XeonLLM's symbolic and scientific math servers (`sympy`, `scientific`) with it even when they are switched off, for an agent that relies on them. |
 | `settings` | Optional. Sections of the settings page. |
 
 ### Servers
@@ -82,7 +82,7 @@ A **local** server is a program the engine starts and talks to over stdio:
 | `enabled_by` | A `toggle` setting that switches the server; without one it always runs. |
 | `agent_only` | Its tools are left out of the engine's `/tools`, so API clients and the chat's own tool loop never see them; the agent still does. |
 
-The engine's agent, ToshLLM's own or the one an extension brings, offers every server's tools to the
+The engine's agent, XeonLLM's own or the one an extension brings, offers every server's tools to the
 model, so they work in the chat without further setup.
 
 A **remote** server has a `url` instead of `command` and is reached over Streamable HTTP, or the
@@ -95,8 +95,8 @@ In `command`, `args`, `env` and `url`:
 | Placeholder | Becomes |
 |---|---|
 | `{extension}` | This extension's folder. |
-| `{python}` | The Python that ships with ToshLLM (3.13, with the standard library, SymPy, NumPy and SciPy). |
-| `{runtime}` | The folder of that Python and ToshLLM's own helpers. |
+| `{python}` | The Python that ships with XeonLLM (3.13, with the standard library, SymPy, NumPy and SciPy). |
+| `{runtime}` | The folder of that Python and XeonLLM's own helpers. |
 | `{trust_key}` | A key, new on every start, that only the app and the servers it starts know. |
 
 A server is free to bring its own runtime (`node`, a binary in `{extension}`, a Python of its own).
@@ -131,9 +131,9 @@ agent has to send back, including how it hands a turn back to the chat's own too
 offers a map of an answer, in [its next section](../helpers/tosh-sympy/README.md#another-agent). Only one extension with an agent
 can be on at a time.
 
-## Without ToshLLM
+## Without XeonLLM
 
 The servers are standard MCP servers over stdio or HTTP, so any MCP client can start them with the
 same `command` and `args` once the placeholders are filled in and the settings are set as
-environment variables. ToshLLM's engine takes them with
+environment variables. XeonLLM's engine takes them with
 `llama-server --mcp-servers-json '{"mcpServers": {...}}'`, and the agent with `--mcp-agent <name>`.

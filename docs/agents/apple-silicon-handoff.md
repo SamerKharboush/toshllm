@@ -52,7 +52,7 @@ with 1 skipped and 0 failures against a real model.
 
 ## 1. What this repo is
 
-ToshLLM is a SwiftUI macOS app that wraps a patched `llama.cpp` to run local LLMs. Upstream is
+XeonLLM is a SwiftUI macOS app that wraps a patched `llama.cpp` to run local LLMs. Upstream is
 `engeldlgado/toshllm`; this fork is `SamerKharboush/toshllm`.
 
 Upstream's premise: stock `llama.cpp` produces **corrupted output** on AMD discrete GPUs under
@@ -128,13 +128,13 @@ restores the abort.
   `4000 → 80`. And `test_adjacent_streams`, which reproduces the shape DSV4 uses: one tensor
   holding eight 512-byte streams, cleared one at a time at `n*stream_size`. On the pre-0036 engine
   clearing stream 1 overfills into stream 2, and the test reports `1 damaged`.
-- App unit tests in `Tests/ToshLLMTests/`.
+- App unit tests in `Tests/XeonLLMTests/`.
 
 ### 3.3 App fixes
 
 | defect | fix |
 |---|---|
-| LAN host toggle did nothing | `ToshLLMApp.swift` wrote `localNetworkDiscovery` without pinning `Profile.Pin.discovery`, and `Server.swift` had `pinned == ["model"]` hardcoded. Added `isPinnedDiscovery` / `pinDiscovery()`. |
+| LAN host toggle did nothing | `XeonLLMApp.swift` wrote `localNetworkDiscovery` without pinning `Profile.Pin.discovery`, and `Server.swift` had `pinned == ["model"]` hardcoded. Added `isPinnedDiscovery` / `pinDiscovery()`. |
 | Fit abort was silent | Engine keeps going after `--fit` gives up; now surfaces as a `fitNote` on the server card. |
 | Multi-GPU off by default | `ServerSettings.defaultMultiGPU = HardwareInfo.detect().gpus.count >= 2`, applied only while the key is unset. Wired at 4 sites: `Server.swift:883`, `SettingsTab`, `DashboardTab`, `Hardware.swift` estimate. |
 | `ChatTab.swift` / `DesignSystem/Views.swift` used macOS 26 SDK symbols | `sharedBackgroundVisibility` and `ToolbarSpacer` behind `#if compiler(>=6.2)`, matching the existing `glassEffect` pattern. |
@@ -210,7 +210,7 @@ Two consequences for you specifically:
 
 ```sh
 git clone https://github.com/SamerKharboush/toshllm
-cd toshllm
+cd xeonllm
 git checkout v0.87.14-beta.2        # or main
 
 # Engines. On arm64 the host arch is the right default.
@@ -238,7 +238,7 @@ seconds and is what the timestep defect was found with.
 Release a DMG:
 
 ```sh
-./scripts/make-dmg.sh v0.87.15-beta.1     # -> dist/ToshLLM-v0.87.15-beta.1.dmg
+./scripts/make-dmg.sh v0.87.15-beta.1     # -> dist/XeonLLM-v0.87.15-beta.1.dmg
 cd dist && shasum -a 256 *.dmg > checksums.txt
 gh release create v0.87.15-beta.1 --repo SamerKharboush/toshllm \
   --title "..." --notes-file notes.md --draft --prerelease

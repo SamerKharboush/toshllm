@@ -1,4 +1,4 @@
-// ToshLLM - run LLMs locally on Intel Macs with AMD GPUs
+// XeonLLM - run LLMs (fork of ToshLLM) locally on Intel Macs with AMD GPUs
 // Copyright (C) 2026 Engelbert Delgado <engeldlgado@gmail.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -27,7 +27,7 @@ struct DflashControl: View {
     }
 
     private var detailRow: some View {
-        ToshDropdown(selection: $mode, options: [
+        XeonDropdown(selection: $mode, options: [
             .init(value: .off, title: loc.t("Apagado", "Off"), systemImage: "bolt.slash"),
             .init(value: .auto, title: "Auto", subtitle: loc.t("Respeta la reserva de VRAM", "Respects the VRAM reserve"), systemImage: "wand.and.stars"),
             .init(value: .forced, title: loc.t("Forzado", "Forced"), subtitle: loc.t("Ignora la reserva de seguridad", "Ignores the safety reserve"), systemImage: "bolt.fill")

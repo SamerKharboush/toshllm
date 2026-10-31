@@ -1,4 +1,4 @@
-// ToshLLM - run LLMs locally on Intel Macs with AMD GPUs
+// XeonLLM - run LLMs locally (fork of ToshLLM) on Intel Macs with AMD GPUs
 // Copyright (C) 2026 Engelbert Delgado <engeldlgado@gmail.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 //
@@ -177,7 +177,7 @@ func draw(_ string: String, size: CGFloat, weight: NSFont.Weight, alpha: CGFloat
     text.draw(at: NSPoint(x: (W - text.size().width) / 2, y: y))
 }
 
-draw("ToshLLM", size: 36, weight: .semibold, alpha: 0.99,
+draw("XeonLLM", size: 36, weight: .semibold, alpha: 0.99,
      y: H - 78, tracking: 0.2, shadow: true)
 draw("PRIVATE AI. NATIVE SPEED.", size: 9.5, weight: .semibold, alpha: 0.66,
      y: H - 97, tracking: 2.1)

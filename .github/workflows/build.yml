@@ -193,7 +193,7 @@ jobs:
 
           # Sign inside out: --deep is deprecated and does not apply the hardened
           # runtime to the engine binaries, which notarization rejects.
-          APP=dist/ToshLLM.app
+          APP=dist/XeonLLM.app
           # the math runtime is CPython plus the extension modules and libraries of NumPy and SciPy:
           # every one of them is a Mach-O the notary service checks
           find "$APP/Contents/Resources/tosh-sympy" -type f \( -name '*.so' -o -name '*.dylib' \) -print0 2>/dev/null |
@@ -205,13 +205,13 @@ jobs:
             codesign --force --timestamp --options runtime -s "$IDENTITY" "$exe"
           done
           # under the hardened runtime macOS never asks for the microphone without this entitlement
-          codesign --force --timestamp --options runtime --entitlements ToshLLM.entitlements -s "$IDENTITY" "$APP"
+          codesign --force --timestamp --options runtime --entitlements XeonLLM.entitlements -s "$IDENTITY" "$APP"
           codesign --verify --deep --strict --verbose=2 "$APP"
           codesign -d --entitlements - "$APP" 2>/dev/null | grep -q 'com.apple.security.device.audio-input' ||
             { echo "::error::the signed app lost its microphone entitlement"; exit 1; }
 
           # Name it per variant: the notary history lists submissions by filename.
-          ZIP=/tmp/ToshLLM-${{ matrix.variant }}.zip
+          ZIP=/tmp/XeonLLM-${{ matrix.variant }}.zip
           ditto -c -k --keepParent "$APP" "$ZIP"
           xcrun notarytool submit "$ZIP" \
             --apple-id "$NOTARY_APPLE_ID" --team-id "$NOTARY_TEAM_ID" \
@@ -264,7 +264,7 @@ jobs:
           [ -z "$SIGN_IDENTITY" ] || security unlock-keychain -p ci tosh.keychain
           ./scripts/make-engine-zip.sh "$VERSION"
           if [ -n "$SIGN_IDENTITY" ]; then
-            xcrun notarytool submit dist/toshllm-engine-*-macos12-x86_64.zip \
+            xcrun notarytool submit dist/xeonllm-engine-*-macos12-x86_64.zip \
               --apple-id "$NOTARY_APPLE_ID" --team-id "$NOTARY_TEAM_ID" \
               --password "$NOTARY_PASSWORD" --wait
           fi
@@ -276,7 +276,7 @@ jobs:
           name: dmg-${{ matrix.variant }}
           path: |
             dist/*.dmg
-            dist/toshllm-engine-*.zip
+            dist/xeonllm-engine-*.zip
 
   # Collect both variants' DMGs and publish one release with both assets, so the
   # updater can pick the matching one per install (AppInfo.isNoAVX2).
@@ -321,7 +321,7 @@ jobs:
         with:
           files: |
             dist/*.dmg
-            dist/toshllm-engine-*.zip
+            dist/xeonllm-engine-*.zip
             dist/checksums.txt
           body_path: release-notes.md
           generate_release_notes: true

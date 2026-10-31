@@ -1,4 +1,4 @@
-# Contributing to ToshLLM
+# Contributing to XeonLLM
 
 Thanks for your interest! Contributions are welcome under the project's
 [GPL-3.0 license](LICENSE) — by submitting a pull request you agree that your
@@ -8,11 +8,11 @@ contribution is licensed under the same terms.
 
 ```bash
 git clone https://github.com/engeldlgado/toshllm
-cd toshllm
+cd xeonllm
 ./scripts/build-engines.sh   # one-time: builds the patched llama.cpp engines
 ./scripts/build-sympy.sh     # one-time: pinned CPython, SymPy, NumPy and SciPy for the math tools
-./make-app.sh                # builds and packages dist/ToshLLM.app
-open dist/ToshLLM.app
+./make-app.sh                # builds and packages dist/XeonLLM.app
+open dist/XeonLLM.app
 swift test                   # unit tests (needs full Xcode, see below)
 ```
 

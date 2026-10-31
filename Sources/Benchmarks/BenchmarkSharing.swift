@@ -1,4 +1,4 @@
-// ToshLLM - run LLMs locally on Intel Macs with AMD GPUs
+// XeonLLM - run LLMs (fork of ToshLLM) locally on Intel Macs with AMD GPUs
 // Copyright (C) 2026 Engelbert Delgado <engeldlgado@gmail.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -437,7 +437,7 @@ final class BenchmarkSharing: ObservableObject {
             "app": [
                 "bundleIdentifier": Self.bundleID, "version": AppInfo.version,
                 "build": Self.buildNumber,
-                "engineVersion": "ToshLLM \(AppInfo.version)",
+                "engineVersion": "XeonLLM \(AppInfo.version)",
             ],
             "model": modelObj,
             "hardware": [
@@ -534,7 +534,7 @@ final class BenchmarkSharing: ObservableObject {
     // MARK: Process + parsing
 
     private func runProcess(_ path: String, _ args: [String], env: [String: String]) async throws -> String {
-        let outputURL = URL.temporaryDirectory.appending(path: "toshllm-benchmark-\(UUID().uuidString).log")
+        let outputURL = URL.temporaryDirectory.appending(path: "xeonllm-benchmark-\(UUID().uuidString).log")
         guard FileManager.default.createFile(atPath: outputURL.path, contents: nil) else {
             throw ShareError.workloadFailed("could not create temporary benchmark log")
         }

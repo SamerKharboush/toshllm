@@ -1,4 +1,4 @@
-// ToshLLM - run LLMs locally on Intel Macs with AMD GPUs
+// XeonLLM - run LLMs (fork of ToshLLM) locally on Intel Macs with AMD GPUs
 // Copyright (C) 2026 Engelbert Delgado <engeldlgado@gmail.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -81,7 +81,7 @@ struct LocalModelDetailsSheet: View {
         detailCard(title: loc.t("Procedencia", "Provenance"), icon: "arrow.down.circle") {
             if let source {
                 detailRow(loc.t("Registro", "Record"), source.isRecorded
-                          ? loc.t("Descargado con ToshLLM", "Downloaded with ToshLLM")
+                          ? loc.t("Descargado con XeonLLM", "Downloaded with XeonLLM")
                           : loc.t("Coincidencia del catálogo", "Catalog match"))
                 if let repository = source.repository {
                     detailRow(loc.t("Repositorio", "Repository"), repository)

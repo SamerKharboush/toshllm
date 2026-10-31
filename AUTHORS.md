@@ -1,7 +1,10 @@
 # Authors
 
-ToshLLM is written by Engelbert Delgado (<engeldlgado@gmail.com>), except where noted.
-Contact that address for licence questions.
+XeonLLM is a fork of [ToshLLM](https://github.com/engeldlgado/toshllm), which is written by
+Engelbert Delgado (<engeldlgado@gmail.com>), except where noted; contact that address for
+licence questions about upstream's code. The fork's changes (the AVX1 engine variant, the D700
+patches and measurements, the XeonLLM rename) are by
+[SamerKharboush](https://github.com/SamerKharboush).
 
 The app under `Sources/` and the engine patches under `patches/` are original work,
 licensed GPL-3.0-or-later. They include, among others:

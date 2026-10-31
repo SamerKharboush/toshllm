@@ -1,4 +1,4 @@
-// ToshLLM - run LLMs locally on Intel Macs with AMD GPUs
+// XeonLLM - run LLMs (fork of ToshLLM) locally on Intel Macs with AMD GPUs
 // Copyright (C) 2026 Engelbert Delgado <engeldlgado@gmail.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -177,7 +177,7 @@ final class AudioStudioController: ObservableObject {
         startTicker()
 
         let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("ToshLLM-audio-\(id.uuidString)", isDirectory: true)
+            .appendingPathComponent("XeonLLM-audio-\(id.uuidString)", isDirectory: true)
         do {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         } catch {
@@ -231,7 +231,7 @@ final class AudioStudioController: ObservableObject {
         progress = 0.05
         vadPreviewState = .running
         let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("ToshLLM-vad-preview-\(id.uuidString)", isDirectory: true)
+            .appendingPathComponent("XeonLLM-vad-preview-\(id.uuidString)", isDirectory: true)
         do {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         } catch {

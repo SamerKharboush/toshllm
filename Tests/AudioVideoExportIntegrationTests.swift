@@ -1,9 +1,9 @@
-// ToshLLM - run LLMs locally on Intel Macs with AMD GPUs
+// XeonLLM - run LLMs locally on Intel Macs with AMD GPUs
 // Copyright (C) 2026 Engelbert Delgado <engeldlgado@gmail.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 import XCTest
-@testable import ToshLLM
+@testable import XeonLLM
 
 final class AudioVideoExportIntegrationTests: XCTestCase {
     @MainActor
@@ -18,7 +18,7 @@ final class AudioVideoExportIntegrationTests: XCTestCase {
         let exporter = SubtitleVideoExporter()
         exporter.export(
             sourceURL: source,
-            cues: [SubtitleCue(id: 1, start: 0.2, end: 1.8, text: "ToshLLM subtitle test")],
+            cues: [SubtitleCue(id: 1, start: 0.2, end: 1.8, text: "XeonLLM subtitle test")],
             outputURL: output
         )
         while exporter.isExporting {

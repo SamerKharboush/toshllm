@@ -1,9 +1,9 @@
-// ToshLLM - run LLMs locally on Intel Macs with AMD GPUs
+// XeonLLM - run LLMs locally on Intel Macs with AMD GPUs
 // Copyright (C) 2026 Engelbert Delgado <engeldlgado@gmail.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 import XCTest
-@testable import ToshLLM
+@testable import XeonLLM
 
 final class LogPresentationTests: XCTestCase {
     func testParsesRealLlamaCppPrefix() {
@@ -36,14 +36,14 @@ final class LogPresentationTests: XCTestCase {
         let log = """
         /src/ggml/src/ggml-backend-meta.cpp:741: unsupported mul_mat split states
         2   llama-server                        0x000000010efb3ea1 ggml_backend_meta_get_split_state + 1473
-        [ToshLLM] the engine stopped (engine exited with code 6 — see the log in Settings) — restarting
+        [XeonLLM] the engine stopped (engine exited with code 6 — see the log in Settings) — restarting
         """
         let parsed = LogPresentationParser.parse(log, fallbackSource: "Engine")
 
         XCTAssertEqual(parsed.map(\.level), [.error, .error, .error])
         XCTAssertEqual(parsed[1].source, "Backtrace")
         XCTAssertEqual(parsed[1].message, "2 llama-server 0x000000010efb3ea1 ggml_backend_meta_get_split_state + 1473")
-        XCTAssertEqual(parsed[2].source, "ToshLLM")
+        XCTAssertEqual(parsed[2].source, "XeonLLM")
     }
 
     func testKeepsTheBannerIndentation() {

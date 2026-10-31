@@ -1,4 +1,4 @@
-// ToshLLM - run LLMs locally on Intel Macs with AMD GPUs
+// XeonLLM - run LLMs (fork of ToshLLM) locally on Intel Macs with AMD GPUs
 // Copyright (C) 2026 Engelbert Delgado <engeldlgado@gmail.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -438,7 +438,7 @@ private struct ServerConfigurationWorkspace: View {
                 }
             }
             ServerSettingRow(icon: "doc.plaintext", title: loc.t("Longitud de contexto", "Context length")) {
-                ToshDropdown(selection: contextChoice(settings), options: contextOptions(settings, facts), width: 180)
+                XeonDropdown(selection: contextChoice(settings), options: contextOptions(settings, facts), width: 180)
             }
             ServerSettingRow(icon: "wifi", title: loc.t("Descubrible en red local", "Discoverable on local network")) {
                 Toggle(loc.t("Descubrible en red local", "Discoverable on local network"),
@@ -559,7 +559,7 @@ private struct ServerConfigurationWorkspace: View {
             } else if showAdvanced {
                 ServerSettingRow(icon: "square.stack.3d.down.right", title: loc.t("Micro-lote", "Micro-batch"),
                                  detail: loc.t("Equilibra velocidad y memoria", "Balances throughput and memory")) {
-                    ToshDropdown(selection: ubatch(settings), options: ubatchOptions, width: 184, listWidth: 250)
+                    XeonDropdown(selection: ubatch(settings), options: ubatchOptions, width: 184, listWidth: 250)
                 }
             }
             if facts.isMoE && !settings.usesAutoPlan {
@@ -592,7 +592,7 @@ private struct ServerConfigurationWorkspace: View {
                 if facts.supportsVision { Divider() }
                 ServerSettingRow(icon: "bolt.horizontal.fill", title: "Flash Attention",
                                  detail: loc.t("Configuración del motor externo", "External engine configuration")) {
-                    ToshDropdown(selection: flashAttention(settings), options: flashAttentionOptions, width: 150)
+                    XeonDropdown(selection: flashAttention(settings), options: flashAttentionOptions, width: 150)
                 }
             }
             // Under Dynamic MoE the engine's plan sets the KV type, so the choice goes to it.
@@ -600,7 +600,7 @@ private struct ServerConfigurationWorkspace: View {
                 Divider()
                 ServerSettingRow(icon: "key", title: loc.t("Caché KV", "KV cache"),
                                  detail: loc.t("Para el plan de Dynamic MoE", "For the Dynamic MoE plan")) {
-                    ToshDropdown(selection: autoKV(settings), options: autoKVOptions(settings, facts), width: 200)
+                    XeonDropdown(selection: autoKV(settings), options: autoKVOptions(settings, facts), width: 200)
                         .help(loc.t("Auto usa F16 y pasa a Q8 solo cuando libera memoria que de verdad importa. Turbo4 ahorra más memoria a cambio de algo de velocidad y calidad; nunca se elige solo.",
                                     "Auto uses F16 and moves to Q8 only when that frees memory that really matters. Turbo4 saves more memory at some speed and quality cost; it is never chosen automatically."))
                 }
@@ -610,13 +610,13 @@ private struct ServerConfigurationWorkspace: View {
                 Divider()
                 ServerSettingRow(icon: "key", title: loc.t("Caché KV: claves", "KV cache: keys"),
                                  detail: loc.t("q8_0 la reduce a la mitad casi sin coste", "q8_0 halves it at almost no cost")) {
-                    ToshDropdown(selection: cacheTypeK(settings), options: kvTypes.map { .init(value: $0, title: $0) }, width: 120)
+                    XeonDropdown(selection: cacheTypeK(settings), options: kvTypes.map { .init(value: $0, title: $0) }, width: 120)
                         .help(loc.t("Tipo de las claves del KV cache (-ctk). Cuantizarlas deja más contexto en la misma memoria.",
                                     "Type of the KV cache keys (-ctk). Quantizing them fits more context in the same memory."))
                 }
                 ServerSettingRow(icon: "number.square", title: loc.t("Caché KV: valores", "KV cache: values"),
                                  detail: loc.t("Cuantizarlos ahorra más memoria", "Quantizing them saves more memory")) {
-                    ToshDropdown(selection: cacheTypeV(settings), options: kvTypes.map { .init(value: $0, title: $0) }, width: 120)
+                    XeonDropdown(selection: cacheTypeV(settings), options: kvTypes.map { .init(value: $0, title: $0) }, width: 120)
                         .help(loc.t("Tipo de los valores del KV cache (-ctv). Sin el kernel Flash Attention AMD, cuantizarlos lleva la atención a la CPU y la generación baja mucho.",
                                     "Type of the KV cache values (-ctv). Without the AMD Flash Attention kernel, quantizing them moves attention to the CPU and generation slows a lot."))
                 }
@@ -644,8 +644,8 @@ private struct ServerConfigurationWorkspace: View {
         }
     }
 
-    private func autoKVOptions(_ settings: ServerSettings, _ facts: ServerModelFacts) -> [ToshDropdown<String>.Option] {
-        var options: [ToshDropdown<String>.Option] = [
+    private func autoKVOptions(_ settings: ServerSettings, _ facts: ServerModelFacts) -> [XeonDropdown<String>.Option] {
+        var options: [XeonDropdown<String>.Option] = [
             .init(value: "auto", title: loc.t("Auto", "Auto")),
             .init(value: "f16", title: "F16"),
             .init(value: "q8_0", title: "Q8")
@@ -657,7 +657,7 @@ private struct ServerConfigurationWorkspace: View {
     }
 
     private var profileMenu: some View {
-        ToshDropdown(selection: $profileSelection, options: profileOptions)
+        XeonDropdown(selection: $profileSelection, options: profileOptions)
         .onChange(of: profileSelection) { _, value in
             guard value != "current",
                   let profile = profileStore.profiles.first(where: { $0.id.uuidString == value }) else { return }
@@ -666,19 +666,19 @@ private struct ServerConfigurationWorkspace: View {
     }
 
     private func requestLimitMenu(_ settings: ServerSettings) -> some View {
-        ToshDropdown(selection: parallel(settings), options: requestLimitOptions)
+        XeonDropdown(selection: parallel(settings), options: requestLimitOptions)
     }
 
 
-    private var profileOptions: [ToshDropdown<String>.Option] {
+    private var profileOptions: [XeonDropdown<String>.Option] {
         [.init(value: "current", title: loc.t("Ajustes actuales", "Current settings"), systemImage: "slider.horizontal.3")] +
         profileStore.profiles.map { .init(value: $0.id.uuidString, title: $0.name, systemImage: "person.crop.circle") }
     }
 
-    private func contextOptions(_ settings: ServerSettings, _ facts: ServerModelFacts) -> [ToshDropdown<String>.Option] {
+    private func contextOptions(_ settings: ServerSettings, _ facts: ServerModelFacts) -> [XeonDropdown<String>.Option] {
         let choices = facts.contextChoices
         let trained = facts.trainedContext
-        var options: [ToshDropdown<String>.Option] = [.init(value: "automatic", title: loc.t("Automático", "Automatic"),
+        var options: [XeonDropdown<String>.Option] = [.init(value: "automatic", title: loc.t("Automático", "Automatic"),
                subtitle: loc.t("Recomendado · 16k", "Recommended · 16k"), systemImage: "wand.and.stars")]
         options += choices.map {
             .init(value: String($0), title: ServerSettings.contextLabel($0),
@@ -691,7 +691,7 @@ private struct ServerConfigurationWorkspace: View {
         return options
     }
 
-    private var flashAttentionOptions: [ToshDropdown<String>.Option] {
+    private var flashAttentionOptions: [XeonDropdown<String>.Option] {
         [
             .init(value: "auto", title: loc.t("Automático", "Automatic")),
             .init(value: "on", title: loc.t("Activado", "On")),
@@ -699,13 +699,13 @@ private struct ServerConfigurationWorkspace: View {
         ]
     }
 
-    private var requestLimitOptions: [ToshDropdown<Int>.Option] {
+    private var requestLimitOptions: [XeonDropdown<Int>.Option] {
         [.init(value: 0, title: loc.t("Sin límite", "Unlimited"))] + (1...8).map { value in
             .init(value: value, title: value == 1 ? loc.t("1 petición", "1 request") : loc.t("%@ peticiones", "%@ requests", "\(value)"))
         }
     }
 
-    private var ubatchOptions: [ToshDropdown<Int>.Option] {
+    private var ubatchOptions: [XeonDropdown<Int>.Option] {
         ServerSettings.ubatchOptions.map { .init(value: $0, title: ServerSettings.ubatchLabel($0, loc: loc)) }
     }
 

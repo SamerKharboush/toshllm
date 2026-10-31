@@ -1,4 +1,4 @@
-// ToshLLM - run LLMs locally on Intel Macs with AMD GPUs
+// XeonLLM - run LLMs (fork of ToshLLM) locally on Intel Macs with AMD GPUs
 // Copyright (C) 2026 Engelbert Delgado <engeldlgado@gmail.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -388,7 +388,8 @@ final class ModelStore: ObservableObject {
     nonisolated static var customDirectoryPath: String {
         let own = UserDefaults.standard.string(forKey: SettingsKeys.modelsDir) ?? ""
         guard own.isEmpty, AppInfo.isRebranded else { return own }
-        return UserDefaults(suiteName: "dev.engel.toshllm")?.string(forKey: SettingsKeys.modelsDir) ?? ""
+        return UserDefaults(suiteName: IdentityMigration.oldIdentifier)?
+            .string(forKey: SettingsKeys.modelsDir) ?? ""
     }
 
     /// Preferred destination for image and video components and generated media.

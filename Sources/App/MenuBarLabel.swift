@@ -1,4 +1,4 @@
-// ToshLLM - run LLMs locally on Intel Macs with AMD GPUs
+// XeonLLM - run LLMs (fork of ToshLLM) locally on Intel Macs with AMD GPUs
 // Copyright (C) 2026 Engelbert Delgado <engeldlgado@gmail.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -25,10 +25,10 @@ struct MenuBarLabel: View {
 
     private var stateLabel: String {
         switch server.state {
-        case .running:  return loc.t("ToshLLM: servidor activo", "ToshLLM: server running")
-        case .starting: return loc.t("ToshLLM: iniciando", "ToshLLM: starting")
-        case .failed:   return loc.t("ToshLLM: el motor falló", "ToshLLM: the engine failed")
-        case .stopped:  return loc.t("ToshLLM: servidor parado", "ToshLLM: server stopped")
+        case .running:  return loc.t("XeonLLM: servidor activo", "XeonLLM: server running")
+        case .starting: return loc.t("XeonLLM: iniciando", "XeonLLM: starting")
+        case .failed:   return loc.t("XeonLLM: el motor falló", "XeonLLM: the engine failed")
+        case .stopped:  return loc.t("XeonLLM: servidor parado", "XeonLLM: server stopped")
         }
     }
 

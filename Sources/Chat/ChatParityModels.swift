@@ -1,4 +1,4 @@
-// ToshLLM - run LLMs locally on Intel Macs with AMD GPUs
+// XeonLLM - run LLMs (fork of ToshLLM) locally on Intel Macs with AMD GPUs
 // Copyright (C) 2026 Engelbert Delgado <engeldlgado@gmail.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -139,6 +139,6 @@ enum ChatArchiveError: LocalizedError {
     case unsupported
 
     var errorDescription: String? {
-        "The selected file is not a compatible ToshLLM conversation archive."
+        "The selected file is not a compatible XeonLLM conversation archive."
     }
 }

@@ -347,7 +347,7 @@ final class VideoGenerator: ObservableObject {
         let fmt = DateFormatter()
         fmt.dateFormat = "yyyy-MM-dd_HH.mm.ss"
         let token = String(UUID().uuidString.prefix(4)).lowercased()
-        let runDir = dir.appendingPathComponent("video/toshllm_\(fmt.string(from: Date()))_\(token)",
+        let runDir = dir.appendingPathComponent("video/xeonllm_\(fmt.string(from: Date()))_\(token)",
                                                 isDirectory: true)
         try? FileManager.default.createDirectory(at: runDir, withIntermediateDirectories: true)
 

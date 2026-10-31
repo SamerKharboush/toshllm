@@ -1,6 +1,7 @@
 # Third-party notices
 
-ToshLLM is GPL-3.0 (see [LICENSE](LICENSE)). The components below are redistributed inside
+XeonLLM is a fork of [ToshLLM](https://github.com/engeldlgado/toshllm) by Engelbert Delgado and,
+like it, GPL-3.0 (see [LICENSE](LICENSE)). The components below are redistributed inside
 the app under their own licenses.
 
 ## Math runtime (`Contents/Resources/tosh-sympy`)

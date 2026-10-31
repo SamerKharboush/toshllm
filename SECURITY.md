@@ -6,7 +6,7 @@ Only the latest release receives security fixes.
 
 ## Scope
 
-ToshLLM runs entirely on-device. The built-in server (`llama-server`) binds to
+XeonLLM runs entirely on-device. The built-in server (`llama-server`) binds to
 `127.0.0.1` only and is never exposed to the network by default. The app makes
 outbound connections exclusively to:
 

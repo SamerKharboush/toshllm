@@ -1,4 +1,4 @@
-// ToshLLM - run LLMs locally on Intel Macs with AMD GPUs
+// XeonLLM - run LLMs (fork of ToshLLM) locally on Intel Macs with AMD GPUs
 // Copyright (C) 2026 Engelbert Delgado <engeldlgado@gmail.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -130,7 +130,7 @@ struct ControlPanelView: View {
         case .benchmarks: return loc.t("Mide el rendimiento de tu equipo.", "Measure performance on your hardware.")
         case .settings, .chatSettings: return loc.t("Control completo sobre tu experiencia local.", "Fine-tune your local AI experience.")
         case .logs: return loc.t("Actividad y diagnóstico de los motores.", "Engine activity and diagnostics.")
-        case .docs: return loc.t("Guías y referencia de ToshLLM.", "ToshLLM guides and reference.")
+        case .docs: return loc.t("Guías y referencia de XeonLLM.", "XeonLLM guides and reference.")
         case .about: return loc.t("IA local, hecha para tu Mac.", "Local AI, built for your Mac.")
         }
     }
@@ -146,9 +146,9 @@ struct OnboardingSheet: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 16) {
-                ToshLLMLogo(size: 58)
+                XeonLLMLogo(size: 58)
                 VStack(alignment: .leading, spacing: 5) {
-                    Text(loc.t("Bienvenido a ToshLLM", "Welcome to ToshLLM"))
+                    Text(loc.t("Bienvenido a XeonLLM", "Welcome to XeonLLM"))
                         .font(.system(size: 22, weight: .bold))
                     Text(loc.t("Modelos de lenguaje en tu GPU, sin nube ni cuentas.",
                                "Language models on your GPU, with no cloud or accounts."))
@@ -165,8 +165,8 @@ struct OnboardingSheet: View {
 
             VStack(alignment: .leading, spacing: 10) {
                 step("1", icon: "arrow.down.circle",
-                     loc.t("Descarga un modelo del catálogo. ToshLLM indica cuáles caben en tu equipo.",
-                           "Download a model from the catalog. ToshLLM shows which ones fit your machine."))
+                     loc.t("Descarga un modelo del catálogo. XeonLLM indica cuáles caben en tu equipo.",
+                           "Download a model from the catalog. XeonLLM shows which ones fit your machine."))
                 step("2", icon: "slider.horizontal.3",
                      loc.t("Pulsa «Usar» para configurar automáticamente sus parámetros.",
                            "Press “Use” to configure its parameters automatically."))

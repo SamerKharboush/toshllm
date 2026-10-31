@@ -7,7 +7,7 @@
     "es": "Ejemplo completo: capitales, montañas, monumentos y lugares propios, distancias entre ellos y un mapa, respondidos por un agente propio.",
     "en": "Complete example: capitals, mountains, landmarks and places of your own, distances between them and a map, answered by an agent of its own."
   },
-  "author": "ToshLLM",
+  "author": "XeonLLM",
   "servers": {
     "places": {
       "command": "{python}",

@@ -1,4 +1,4 @@
-// ToshLLM - run LLMs locally on Intel Macs with AMD GPUs
+// XeonLLM - run LLMs (fork of ToshLLM) locally on Intel Macs with AMD GPUs
 // Copyright (C) 2026 Engelbert Delgado <engeldlgado@gmail.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -43,8 +43,8 @@ enum DocsContent {
     static func sections(spanish: Bool) -> [DocSection] { spanish ? es : en }
 
     static let es: [DocSection] = [
-        DocSection(title: "Qué es ToshLLM", icon: "sparkles", body: """
-ToshLLM ejecuta modelos de lenguaje (LLM) **localmente** en Macs Intel con GPU AMD, usando aceleración Metal. Nada sale de tu equipo: sin nube, sin cuentas, sin costos por token.
+        DocSection(title: "Qué es XeonLLM", icon: "sparkles", body: """
+XeonLLM ejecuta modelos de lenguaje (LLM) **localmente** en Macs Intel con GPU AMD, usando aceleración Metal. Nada sale de tu equipo: sin nube, sin cuentas, sin costos por token.
 
 Por dentro usa **llama.cpp** con parches específicos para GPUs AMD discretas en macOS, empaquetado dentro de la propia app — no necesitas instalar nada más.
 
@@ -156,12 +156,12 @@ Cada modelo conserva su propia configuración de expertos MoE y visión. MTP se 
 
 Última medición en este equipo: **+34% de velocidad de generación** (19.3 → 25.7 t/s en Qwen3.6-35B) con 82% de aceptación. Esa cifra es previa al fix de staging persistente, que ya subió el "sin MTP" de ~19 a ~25 t/s por sí solo. Falta remedir la ganancia real de MTP sobre el motor actual.
 
-MTP se activa automáticamente cuando el GGUF trae el cabezal, tanto en modelos densos como MoE. Si el cabezal viene en un fichero aparte, junto al modelo o en su carpeta `MTP/`, ToshLLM lo busca, comprueba que corresponda al modelo y lo carga solo. `llama-bench` no puede medirlo: compara siempre con generación real desde el chat o el servidor.
+MTP se activa automáticamente cuando el GGUF trae el cabezal, tanto en modelos densos como MoE. Si el cabezal viene en un fichero aparte, junto al modelo o en su carpeta `MTP/`, XeonLLM lo busca, comprueba que corresponda al modelo y lo carga solo. `llama-bench` no puede medirlo: compara siempre con generación real desde el chat o el servidor.
 """),
         DocSection(title: "API para desarrolladores", icon: "terminal", body: """
 Con el servidor activo, tienes una **API compatible con OpenAI** en `http://127.0.0.1:8080` (puerto configurable). Funciona con cualquier librería o app que hable ese protocolo.
 
-Por defecto solo responde en esta Mac. Para exponer la API local en la red, activa **Descubrible en red local** en Ajustes y reinicia el servidor. ToshLLM escuchará en todas las interfaces y anunciará `ToshLLM API` mediante Bonjour. Conecta usando `http://<IP-de-la-Mac>:8080/v1` y activa **Proteger la API con clave** antes de exponerla, especialmente fuera de una red confiable.
+Por defecto solo responde en esta Mac. Para exponer la API local en la red, activa **Descubrible en red local** en Ajustes y reinicia el servidor. XeonLLM escuchará en todas las interfaces y anunciará `XeonLLM API` mediante Bonjour. Conecta usando `http://<IP-de-la-Mac>:8080/v1` y activa **Proteger la API con clave** antes de exponerla, especialmente fuera de una red confiable.
 
 Ejemplo con curl:
 
@@ -201,7 +201,7 @@ Endpoints útiles:
 - `GET /health` — estado del servidor
 - `GET /props` — metadatos del modelo (tamaño de contexto, plantilla de chat, etc.)
 
-**Imágenes / visión:** carga un modelo con su `mmproj` y envía contenido OpenAI `image_url` (URL remota o `data:image/...;base64,...`). Los clientes configurables, como Raycast, también deben anunciar que el modelo admite visión. Usa como nombre de modelo el `id` devuelto por `/v1/models`. Cuando hay un `mmproj`, ToshLLM desactiva cache-reuse y la caché persistente de conversaciones porque `llama.cpp` no admite guardar/restaurar slots multimodales; la caché normal en memoria permanece activa.
+**Imágenes / visión:** carga un modelo con su `mmproj` y envía contenido OpenAI `image_url` (URL remota o `data:image/...;base64,...`). Los clientes configurables, como Raycast, también deben anunciar que el modelo admite visión. Usa como nombre de modelo el `id` devuelto por `/v1/models`. Cuando hay un `mmproj`, XeonLLM desactiva cache-reuse y la caché persistente de conversaciones porque `llama.cpp` no admite guardar/restaurar slots multimodales; la caché normal en memoria permanece activa.
 
 También hay un chat web minimalista en la raíz (`http://127.0.0.1:8080`) para usar desde el navegador.
 
@@ -229,7 +229,7 @@ Cualquier cliente OpenAI-compatible (VS Code + Continue/Cline/Copilot con modelo
 ##### Cursor
 - Ajustes (⌘,) → pestaña Models → sección OpenAI → activa **Override Base URL** y pega `http://127.0.0.1:8080/v1`.
 - El campo de clave API no puede quedar vacío (pon cualquier texto si no protegiste la API).
-- **Limitación real de Cursor, no de ToshLLM**: exige HTTPS para esa URL. Un endpoint local por HTTP simple no conecta directo, hace falta un proxy con TLS delante (p. ej. Caddy o un túnel tipo ngrok) apuntando a `127.0.0.1:8080`.
+- **Limitación real de Cursor, no de XeonLLM**: exige HTTPS para esa URL. Un endpoint local por HTTP simple no conecta directo, hace falta un proxy con TLS delante (p. ej. Caddy o un túnel tipo ngrok) apuntando a `127.0.0.1:8080`.
 
 ##### Raycast
 - Ajustes → AI → Custom Providers.
@@ -299,7 +299,7 @@ La generación de modelos MoE híbridos está limitada por el ancho de banda de 
 **Desde VS Code u otro cliente se queda "pensando"** — El modelo está razonando o procesando un prompt enorme; el cliente no muestra esa fase. Ver la sección "API para desarrolladores".
 """),
         DocSection(title: "Créditos y licencias", icon: "heart", body: """
-ToshLLM es desarrollado por **Engelbert Delgado** ([@engeldlgado](https://github.com/engeldlgado)).
+XeonLLM es desarrollado por **Engelbert Delgado** ([@engeldlgado](https://github.com/engeldlgado)).
 
 Construido sobre el trabajo de:
 - **llama.cpp** (ggml-org) — el motor de inferencia
@@ -310,8 +310,8 @@ Si la app te resulta útil, puedes apoyar el desarrollo desde **Acerca de → Do
     ]
 
     static let en: [DocSection] = [
-        DocSection(title: "What is ToshLLM", icon: "sparkles", body: """
-ToshLLM runs large language models (LLMs) **locally** on Intel Macs with AMD GPUs, using Metal acceleration. Nothing leaves your machine: no cloud, no accounts, no per-token costs.
+        DocSection(title: "What is XeonLLM", icon: "sparkles", body: """
+XeonLLM runs large language models (LLMs) **locally** on Intel Macs with AMD GPUs, using Metal acceleration. Nothing leaves your machine: no cloud, no accounts, no per-token costs.
 
 Under the hood it uses **llama.cpp** with patches specific to discrete AMD GPUs on macOS, bundled inside the app itself — nothing else to install.
 
@@ -430,7 +430,7 @@ There is nothing to switch on. MTP engages by itself whenever the GGUF ships the
         DocSection(title: "API for developers", icon: "terminal", body: """
 With the server running, you get an **OpenAI-compatible API** at `http://127.0.0.1:8080` (configurable port). Works with any library or app that speaks the protocol.
 
-By default it only accepts connections from this Mac. To expose the local API on the network, enable **Discoverable on local network** in Settings and restart the server. ToshLLM will listen on all interfaces and advertise `ToshLLM API` through Bonjour. Connect to `http://<Mac-IP>:8080/v1`, and enable **Protect the API with a key** before exposing it, especially outside a trusted network.
+By default it only accepts connections from this Mac. To expose the local API on the network, enable **Discoverable on local network** in Settings and restart the server. XeonLLM will listen on all interfaces and advertise `XeonLLM API` through Bonjour. Connect to `http://<Mac-IP>:8080/v1`, and enable **Protect the API with a key** before exposing it, especially outside a trusted network.
 
 Example with curl:
 
@@ -470,7 +470,7 @@ Useful endpoints:
 - `GET /health` — server status
 - `GET /props` — model metadata (context size, chat template, etc.)
 
-**Images / vision:** load a model with its `mmproj` and send OpenAI `image_url` content (a remote URL or `data:image/...;base64,...`). Configurable clients such as Raycast must also declare that the model supports vision. Use the model `id` returned by `/v1/models`. While an `mmproj` is loaded, ToshLLM disables cache-reuse and persistent conversation caching because `llama.cpp` cannot save/restore multimodal slots; normal in-memory prompt caching remains enabled.
+**Images / vision:** load a model with its `mmproj` and send OpenAI `image_url` content (a remote URL or `data:image/...;base64,...`). Configurable clients such as Raycast must also declare that the model supports vision. Use the model `id` returned by `/v1/models`. While an `mmproj` is loaded, XeonLLM disables cache-reuse and persistent conversation caching because `llama.cpp` cannot save/restore multimodal slots; normal in-memory prompt caching remains enabled.
 
 There's also a minimal web chat at the root (`http://127.0.0.1:8080`) for browser use.
 
@@ -498,7 +498,7 @@ Any OpenAI-compatible client (VS Code + Continue/Cline/Copilot with a custom mod
 ##### Cursor
 - Settings (⌘,) → Models tab → OpenAI section → enable **Override Base URL** and paste `http://127.0.0.1:8080/v1`.
 - The API key field can't be empty (type anything if you didn't protect the API).
-- **A real Cursor limitation, not ToshLLM's**: it requires HTTPS for that URL. A plain local HTTP endpoint won't connect directly, you'll need a TLS proxy in front (e.g. Caddy or an ngrok-style tunnel) pointing at `127.0.0.1:8080`.
+- **A real Cursor limitation, not XeonLLM's**: it requires HTTPS for that URL. A plain local HTTP endpoint won't connect directly, you'll need a TLS proxy in front (e.g. Caddy or an ngrok-style tunnel) pointing at `127.0.0.1:8080`.
 
 ##### Raycast
 - Settings → AI → Custom Providers.
@@ -568,7 +568,7 @@ Hybrid MoE generation is RAM-bandwidth-bound: a faster GPU won't improve it, but
 **It hangs "thinking" from VS Code or another client** — The model is reasoning or processing a huge prompt; the client doesn't display that phase. See the "API for developers" section.
 """),
         DocSection(title: "Credits & licenses", icon: "heart", body: """
-ToshLLM is developed by **Engelbert Delgado** ([@engeldlgado](https://github.com/engeldlgado)).
+XeonLLM is developed by **Engelbert Delgado** ([@engeldlgado](https://github.com/engeldlgado)).
 
 Built on the work of:
 - **llama.cpp** (ggml-org) — the inference engine

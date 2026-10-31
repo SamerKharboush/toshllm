@@ -1,4 +1,4 @@
-// ToshLLM - run LLMs locally on Intel Macs with AMD GPUs
+// XeonLLM - run LLMs (fork of ToshLLM) locally on Intel Macs with AMD GPUs
 // Copyright (C) 2026 Engelbert Delgado <engeldlgado@gmail.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -260,7 +260,7 @@ enum SettingsKeys {
     static let imagenStrength = "imagenStrength"
     /// Extra parallel generation instances (JSON: [ImageInstanceConfig]).
     static let imagenInstances = "imagenInstances"
-    /// Delete generated output images (toshllm_*) when the app quits.
+    /// Delete generated output images (xeonllm_*) when the app quits.
     static let imagenCleanupOnClose = "imagenCleanupOnClose"
     static let videoModel = "videoModel"
     static let videoFrames = "videoFrames"
@@ -364,7 +364,7 @@ final class RotatingFileLog: @unchecked Sendable {
     private let prefix: String
     private let maxBytes: UInt64
     private let retentionDays: Int
-    private let queue = DispatchQueue(label: "toshllm.filelog")
+    private let queue = DispatchQueue(label: "xeonllm.filelog")
     private var handle: FileHandle?
     private var currentURL: URL
 
@@ -450,9 +450,9 @@ final class RotatingFileLog: @unchecked Sendable {
 final class BenchmarkLog: @unchecked Sendable {
     let url: URL
     let directory: URL
-    private let queue = DispatchQueue(label: "toshllm.benchlog")
+    private let queue = DispatchQueue(label: "xeonllm.benchlog")
     private let retentionDays: Int
-    static let runMarker = "=== ToshLLM benchmark · "
+    static let runMarker = "=== XeonLLM benchmark · "
 
     init(retentionDays: Int = 3) {
         self.retentionDays = retentionDays

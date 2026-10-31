@@ -7,7 +7,7 @@
     "es": "Ejemplo mínimo: la hora actual en cualquier zona horaria.",
     "en": "Minimal example: the current time in any time zone."
   },
-  "author": "ToshLLM",
+  "author": "XeonLLM",
   "servers": {
     "clock": {
       "command": "{python}",

@@ -140,7 +140,7 @@ preflight_control() {
 #     scripts/build-engines.sh. It does NOT report the app's version.
 #   * the app bundle reports VERSION, in Info.plist, not on the command line.
 # Asserting --version against VERSION can never pass. Asserting nothing is how
-# dist/ToshLLM.app sat at 0.87.24-beta.1 while the tree said 0.87.26-beta.1, and every
+# dist/XeonLLM.app sat at 0.87.24-beta.1 while the tree said 0.87.26-beta.1, and every
 # measurement taken from it described a release nobody was shipping.
 assert_artifact() {
     local bin=$1 label=$2 bad=0 commit pin app ver

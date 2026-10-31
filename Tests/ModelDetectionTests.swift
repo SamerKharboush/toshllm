@@ -1,9 +1,9 @@
-// ToshLLM - run LLMs locally on Intel Macs with AMD GPUs
+// XeonLLM - run LLMs locally on Intel Macs with AMD GPUs
 // Copyright (C) 2026 Engelbert Delgado <engeldlgado@gmail.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 import XCTest
-@testable import ToshLLM
+@testable import XeonLLM
 
 final class ModelDetectionTests: XCTestCase {
     func testGGUFMetadataIsTheMoESourceOfTruth() throws {
@@ -480,7 +480,7 @@ final class ModelDetectionTests: XCTestCase {
 
     private func temporaryDirectory() throws -> URL {
         let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("toshllm-detection-\(UUID().uuidString)")
+            .appendingPathComponent("xeonllm-detection-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url
     }

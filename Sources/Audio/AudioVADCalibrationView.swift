@@ -1,4 +1,4 @@
-// ToshLLM - run LLMs locally on Intel Macs with AMD GPUs
+// XeonLLM - run LLMs (fork of ToshLLM) locally on Intel Macs with AMD GPUs
 // Copyright (C) 2026 Engelbert Delgado <engeldlgado@gmail.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -44,8 +44,8 @@ struct AudioVADCalibrationView: View {
                     }
                 }
                 .labelsHidden()
-                .help(loc.t("Desactiva VAD, usa los valores nativos de Whisper.cpp o aplica una calibración de ToshLLM.",
-                            "Disables VAD, uses Whisper.cpp native values, or applies a ToshLLM calibration."))
+                .help(loc.t("Desactiva VAD, usa los valores nativos de Whisper.cpp o aplica una calibración de XeonLLM.",
+                            "Disables VAD, uses Whisper.cpp native values, or applies a XeonLLM calibration."))
             }
 
             Text(modeDescription)
@@ -100,8 +100,8 @@ struct AudioVADCalibrationView: View {
             loc.t("Silero VAD usa los valores predeterminados de Whisper.cpp, sin calibración añadida.",
                   "Silero VAD uses Whisper.cpp defaults with no added calibration.")
         case .calibrated:
-            loc.t("ToshLLM ajusta la sensibilidad y los cortes de voz con el perfil elegido.",
-                  "ToshLLM adjusts speech sensitivity and segmentation with the selected profile.")
+            loc.t("XeonLLM ajusta la sensibilidad y los cortes de voz con el perfil elegido.",
+                  "XeonLLM adjusts speech sensitivity and segmentation with the selected profile.")
         }
     }
 

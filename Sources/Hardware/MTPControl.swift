@@ -1,4 +1,4 @@
-// ToshLLM - run LLMs locally on Intel Macs with AMD GPUs
+// XeonLLM - run LLMs (fork of ToshLLM) locally on Intel Macs with AMD GPUs
 // Copyright (C) 2026 Engelbert Delgado <engeldlgado@gmail.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -40,7 +40,7 @@ struct MTPControl: View {
     }
 
     private var detailRow: some View {
-        ToshDropdown(selection: $enabled, options: [
+        XeonDropdown(selection: $enabled, options: [
             .init(value: true, title: loc.t("Automático", "Automatic"),
                   subtitle: sourceText, systemImage: "hare.fill"),
             .init(value: false, title: loc.t("Desactivado", "Disabled"),

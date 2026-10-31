@@ -1,5 +1,5 @@
 #!/bin/zsh
-# Packages ToshLLM as a native .app bundle.
+# Packages XeonLLM as a native .app bundle.
 # TOSH_ARCH=x86_64 ./make-app.sh  -> cross-compile (CI on Apple Silicon runners)
 set -e
 cd "$(dirname "$0")"
@@ -34,19 +34,19 @@ echo "no-AVX2 variant: $NOAVX2"
 
 if [ "$TOSH_ARCH" = "universal" ]; then
     swift build -c release --arch x86_64 --arch arm64
-    SWIFT_BIN=".build/apple/Products/Release/ToshLLM"
+    SWIFT_BIN=".build/apple/Products/Release/XeonLLM"
 elif [ -n "$TOSH_ARCH" ]; then
     swift build -c release --arch "$TOSH_ARCH"
-    SWIFT_BIN=".build/$TOSH_ARCH-apple-macosx/release/ToshLLM"
+    SWIFT_BIN=".build/$TOSH_ARCH-apple-macosx/release/XeonLLM"
 else
     swift build -c release
-    SWIFT_BIN=".build/release/ToshLLM"
+    SWIFT_BIN=".build/release/XeonLLM"
 fi
 
 # Another product can be packaged from this tree without editing it: these set its name, bundle id,
-# data folder, version, icon, updater and defaults (TOSH_APP_DEFAULTS), and a plain build keeps ToshLLM's.
-APP_NAME="${TOSH_APP_NAME:-ToshLLM}"
-BUNDLE_ID="${TOSH_BUNDLE_ID:-dev.engel.toshllm}"
+# data folder, version, icon, updater and defaults (TOSH_APP_DEFAULTS), and a plain build keeps XeonLLM's.
+APP_NAME="${TOSH_APP_NAME:-XeonLLM}"
+BUNDLE_ID="${TOSH_BUNDLE_ID:-dev.xeonllm.app}"
 PRODUCT_VERSION="${TOSH_PRODUCT_VERSION:-$VERSION}"
 APP_ICON="${TOSH_APP_ICON:-AppIcon.icon}"
 
@@ -54,7 +54,7 @@ APP="dist/$APP_NAME.app"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
-cp "$SWIFT_BIN" "$APP/Contents/MacOS/ToshLLM"
+cp "$SWIFT_BIN" "$APP/Contents/MacOS/XeonLLM"
 [ -f AppIcon.icns ] && cp AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 
 # llama.cpp binaries (static build = portable): vendor/ first (reproducible,
@@ -203,7 +203,7 @@ cat > "$APP/Contents/Info.plist" <<EOF
     <key>CFBundleName</key>            <string>$APP_NAME</string>
     <key>CFBundleDisplayName</key>     <string>$APP_NAME</string>
     <key>CFBundleIdentifier</key>      <string>$BUNDLE_ID</string>
-    <key>CFBundleExecutable</key>      <string>ToshLLM</string>
+    <key>CFBundleExecutable</key>      <string>XeonLLM</string>
     <key>CFBundleVersion</key>         <string>$PRODUCT_VERSION</string>
     <key>CFBundleShortVersionString</key> <string>$PRODUCT_VERSION</string>
     <key>TOSHNoAVX2</key>              <$NOAVX2/>
@@ -231,12 +231,12 @@ EOF
 
 # the app reads its identity from these keys; a plain build has none of them
 PLIST="$APP/Contents/Info.plist"
-if [ "$APP_NAME" != ToshLLM ]; then
+if [ "$APP_NAME" != XeonLLM ]; then
     /usr/libexec/PlistBuddy -c "Add :TOSHProductName string $APP_NAME" \
         -c "Add :TOSHIdentifier string $BUNDLE_ID" \
         -c "Add :TOSHDataFolder string ${TOSH_DATA_FOLDER:-$APP_NAME}" \
         -c "Add :TOSHProductVersion string $PRODUCT_VERSION" "$PLIST"
-    echo "identity: $APP_NAME ($BUNDLE_ID) $PRODUCT_VERSION, built on ToshLLM $VERSION"
+    echo "identity: $APP_NAME ($BUNDLE_ID) $PRODUCT_VERSION, built on XeonLLM $VERSION"
 fi
 if [ "$TOSH_UPDATES" = 0 ]; then
     /usr/libexec/PlistBuddy -c "Add :TOSHUpdatesDisabled bool true" "$PLIST"
@@ -300,5 +300,5 @@ if [ -x "$APP/Contents/Resources/tosh-sympy/python/bin/python3" ]; then
     codesign --force -s - "$APP/Contents/Resources/tosh-sympy/"**/*.(so|dylib)(.N) \
                           "$APP/Contents/Resources/tosh-sympy/python/bin/python3"
 fi
-codesign --force --entitlements ToshLLM.entitlements -s - "$APP"
+codesign --force --entitlements XeonLLM.entitlements -s - "$APP"
 echo "Done: $APP"

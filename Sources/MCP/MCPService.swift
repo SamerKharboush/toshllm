@@ -1,4 +1,4 @@
-// ToshLLM - run LLMs locally on Intel Macs with AMD GPUs
+// XeonLLM - run LLMs (fork of ToshLLM) locally on Intel Macs with AMD GPUs
 // Copyright (C) 2026 Engelbert Delgado <engeldlgado@gmail.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -225,7 +225,7 @@ actor ToshMCPService {
             let result = try await request(serverID: server.id, method: "initialize", params: [
                 "protocolVersion": "2025-06-18",
                 "capabilities": ["roots": ["listChanged": false]],
-                "clientInfo": ["name": "ToshLLM", "version": "1"]
+                "clientInfo": ["name": "XeonLLM", "version": "1"]
             ])
             guard result["protocolVersion"] is String else { throw MCPError.invalidResponse }
             try await notify(serverID: server.id, method: "notifications/initialized", params: [:])

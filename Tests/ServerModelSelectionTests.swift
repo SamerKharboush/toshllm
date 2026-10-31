@@ -1,5 +1,5 @@
 import XCTest
-@testable import ToshLLM
+@testable import XeonLLM
 
 final class ServerModelSelectionTests: XCTestCase {
     @MainActor func testInstanceSelectionDoesNotChangeOtherServerOrGlobals() {

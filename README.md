@@ -1,6 +1,6 @@
 <div align="center">
 
-# ToshLLM
+# XeonLLM
 
 **Run large language models locally on Intel Macs with AMD GPUs.**
 
@@ -13,52 +13,83 @@ Native macOS app · Metal acceleration · No cloud, no accounts, no per-token co
 [![Sponsor](https://img.shields.io/badge/sponsor-%E2%9D%A4%EF%B8%8F%20support%20the%20project-ea4aaa)](#support-the-project)
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21908524.svg)](https://doi.org/10.5281/zenodo.21908524)
 
-### [⬇️ Download the latest release](https://github.com/engeldlgado/toshllm/releases/latest) · [📝 Changelog](CHANGELOG.md)
+### [⬇️ Download XeonLLM](https://github.com/SamerKharboush/xeonllm/releases) · [📝 Changelog](CHANGELOG.md)
 
-> ### Fork release: v0.87.27-beta.1
+> ### Fork release: v0.87.31-beta.5
 >
-> This fork publishes its own downloadable build:
-> **[⬇️ ToshLLM-v0.87.27-beta.1.dmg](https://github.com/SamerKharboush/toshllm/releases/download/v0.87.27-beta.1/ToshLLM-v0.87.27-beta.1.dmg)**
-> ([release notes](https://github.com/SamerKharboush/toshllm/releases/tag/v0.87.27-beta.1) ·
-> [checksums](https://github.com/SamerKharboush/toshllm/releases/download/v0.87.27-beta.1/checksums.txt))
+> **[⬇️ XeonLLM-v0.87.31-beta.5-noavx2.dmg](https://github.com/SamerKharboush/xeonllm/releases/download/v0.87.31-beta.5/XeonLLM-v0.87.31-beta.5-noavx2.dmg)**
+> ([release notes](https://github.com/SamerKharboush/xeonllm/releases/tag/v0.87.31-beta.5) ·
+> [checksums](https://github.com/SamerKharboush/xeonllm/releases/download/v0.87.31-beta.5/checksums.txt))
 >
 > **This build is x86_64 only. It will not run on Apple Silicon.** There is no arm64 slice,
 > and Rosetta cannot help: an Apple GPU never enters the code these fixes touch — the Metal
 > backend probes a 32-wide SIMD group there, which switches every AMD workaround in this fork
 > off by construction. On Apple Silicon, install upstream's build instead.
 >
-> **This particular `.dmg` is built for AVX-but-not-AVX2 Intel CPUs** (Ivy Bridge and
-> similar, e.g. a Xeon E5-2697 v2). Upstream's normal build needs AVX2 and dies with
-> "illegal hardware instruction" on those machines. macOS quarantines an unsigned build,
-> so right-click the app once and choose **Open**.
->
-> What this fork changes is listed under [Fork changes](#fork-changes) below. Everything
-> else, including the 0.87.27 work, is upstream's and unchanged.
+> **This `.dmg` is built for AVX-but-not-AVX2 Intel CPUs** (Ivy Bridge and similar, e.g. a
+> Xeon E5-2697 v2). Upstream's normal build needs AVX2 and dies with "illegal hardware
+> instruction" on those machines. The build is ad-hoc signed, not notarized: right-click the
+> app once and choose **Open**.
 
 
-*[Versión en español más abajo](#toshllm-en-español)*
+*[Versión en español más abajo](#xeonllm-en-español)*
 
-<img src="Assets/home.jpg" alt="ToshLLM home screen — hardware detection and model recommendations" width="760">
+<img src="Assets/home.jpg" alt="XeonLLM home screen — hardware detection and model recommendations" width="760">
 
 </div>
 
 ---
 
-## What is ToshLLM?
+## What is XeonLLM?
 
-ToshLLM lets you run modern open LLMs **entirely on your own Mac** — your chats never leave the machine, there are no accounts, and there's nothing to pay per token.
+XeonLLM lets you run modern open LLMs **entirely on your own Mac** — your chats never leave the machine, there are no accounts, and there's nothing to pay per token.
 
-Most local-LLM tools on macOS only target Apple Silicon. Intel Macs with discrete AMD GPUs — including Hackintosh builds — get left behind: the stock engines produce **corrupted output** on AMD dGPUs and read model weights over PCIe at a fraction of the possible speed.
+XeonLLM is a fork of [ToshLLM](https://github.com/engeldlgado/toshllm) by Engelbert Delgado
+(GPL-3.0). ToshLLM is what made Intel Macs with AMD GPUs usable for local LLMs in the first
+place: the stock engines produce **corrupted output** on AMD dGPUs, and ToshLLM bundles a
+`llama.cpp` with AMD-specific patches inside a native SwiftUI app. Upstream's own figures, on
+an RX 6700 XT:
 
-**ToshLLM fixes that.** It bundles `llama.cpp` built with AMD-specific patches and wraps it in a polished native SwiftUI app — so a card like the RX 6700 XT goes from unusable to genuinely fast:
-
-| | Stock llama.cpp on AMD dGPU | ToshLLM |
+| | Stock llama.cpp on AMD dGPU | ToshLLM (upstream) |
 |---|---|---|
 | Output | corrupted | correct |
 | Qwen3-8B generation | 0.6–2.6 t/s | **~61 t/s** |
 | Qwen3.6-35B (MoE) generation | unusable | **~29 t/s**, flat on long runs |
 
 It opens, detects your hardware, and recommends models that will actually run well — no guesswork.
+
+### Who it is for
+
+Intel Macs with discrete AMD GPUs, and in particular the machine this fork is measured on: a
+Mac Pro (Late 2013) with a Xeon E5-2697 v2 (AVX, no AVX2), 64 GB of RAM and two FirePro D700
+(GCN 1.0, 6 GB each, 64-wide SIMD groups under Metal). Most of the fork's engine work targets
+64-lane GCN cards and AVX1-only Xeons; on 32-lane cards it is inert by construction.
+
+### How this differs from upstream ToshLLM
+
+- **An AVX1 engine.** `TOSH_AVX1=1 ./scripts/build-engines.sh` builds the engine for CPUs with
+  AVX but no AVX2 or FMA, and the `-noavx2` DMG ships it. The build checks the binary for
+  AVX2/FMA instructions and refuses one that has any.
+- **64-lane Metal kernels for GCN.** Decode mat-vec kernels written for a 64-wide SIMD group,
+  with the rows-per-threadgroup and lane-count choices set from measured crossovers on the
+  D700 (patches `metal/0056`, `0065`, `0072`, `0074`); `TOSH_MV_ROWS8_DISABLE=1` restores the
+  older choice.
+- **Two cards, two split modes.** Tensor split and layer split across both D700s, with
+  cross-GPU peer access and events turned on only where they measured a difference. The two
+  modes are different constraints, not two speeds of one thing.
+- **A VRAM placement rule.** A model whose weights do not fit the usable VRAM runs on the host
+  (`-ngl 0`) instead of thrashing the cards; on the 35B that is the difference between 0.1454
+  and 10.1353 generated tok/s (rows R26 and R24 below).
+- **DFlash drafting for the host-resident 35B,** with the drafter on a card; from beta.5 the
+  drafter keeps its own copy of the borrowed output head on that card (patch `spec/0073`,
+  `TOSH_DFLASH_HEAD_HOST=1` keeps the old path).
+- **In-app updates are off.** The updater polls upstream's releases, which would replace this
+  build with one that needs AVX2; fork builds ship with `TOSHUpdatesDisabled`.
+- **Its own identity.** Bundle id `dev.xeonllm.app`, its own Application Support folder,
+  settings domain and Keychain service. The first launch **copies** a previous ToshLLM
+  install's settings, data folder and Keychain items; the originals are left untouched.
+
+Every change, with its evidence, is under [Fork changes](#fork-changes).
 
 ## Features
 
@@ -98,15 +129,15 @@ These are new and still being validated — enable them in Settings, but expect 
 Persistent conversations, Markdown with one-click code copy, and a live tokens/sec readout so you always know how fast the model is going.
 
 <div align="center">
-  <img src="Assets/chat.jpg" alt="ToshLLM native chat" width="760">
+  <img src="Assets/chat.jpg" alt="XeonLLM native chat" width="760">
 </div>
 
 ### Models picked for your machine
 
-ToshLLM reads your GPU and RAM and suggests models by use case — fastest, balanced, top quality, coding — each with an honest estimate of how it'll run. Browse a curated catalog or search Hugging Face directly.
+XeonLLM reads your GPU and RAM and suggests models by use case — fastest, balanced, top quality, coding — each with an honest estimate of how it'll run. Browse a curated catalog or search Hugging Face directly.
 
 <div align="center">
-  <img src="Assets/models.jpg" alt="ToshLLM model manager" width="760">
+  <img src="Assets/models.jpg" alt="XeonLLM model manager" width="760">
 </div>
 
 ### Measure it on your own hardware
@@ -114,7 +145,7 @@ ToshLLM reads your GPU and RAM and suggests models by use case — fastest, bala
 The built-in benchmark runs prompt and generation tests for any configuration and charts them side by side, so you can find the sweet spot for your card.
 
 <div align="center">
-  <img src="Assets/benchmarks.jpg" alt="ToshLLM benchmarks comparison" width="760">
+  <img src="Assets/benchmarks.jpg" alt="XeonLLM benchmarks comparison" width="760">
 </div>
 
 Measured on the development card (**RX 6700 XT 12 GB**, RDNA 2, bundled engine 0.85.5, KV f16, `pp512` / `tg128`):
@@ -148,7 +179,7 @@ A 2021 card holds its own: it trails the M3 Max on short prompts, leads it from 
 
 ## Fork changes
 
-Everything below is this fork's own work on top of upstream 0.87.27. Measured on a dual-
+Everything below is this fork's own work on top of upstream 0.87.31. Measured on a dual-
 FirePro-D700 Mac Pro (Xeon E5-2697 v2, AVX1 no AVX2, 64 GB RAM).
 
 ### Engine defects fixed
@@ -197,7 +228,7 @@ tok/s decode, against 6.4793 and 0.1451 before the change.
 
 ### App behaviour fixed
 
-**The LAN host toggle did nothing.** `ToshLLMApp.swift` wrote `localNetworkDiscovery` to the
+**The LAN host toggle did nothing.** `XeonLLMApp.swift` wrote `localNetworkDiscovery` to the
 profile but never read it back, and the server's pinned list only ever contained `model`, so
 `applyPinned` dropped it. The engine bound to localhost regardless of the setting.
 
@@ -239,6 +270,88 @@ machine was sized as if it were single-card. That is fixed too.
   are now warnings; the engine binaries are still bundled unconditionally.
 - `scripts/build-engines.sh` gained a `TOSH_AVX1=1` ISA variant for AVX-but-no-AVX2 chips,
   which is what this machine is. Without it the engine is built for AVX2 and dies with SIGILL.
+
+### The fork's engine, measured against itself
+
+Measured on the dual-FirePro-D700 Mac Pro this fork runs on. Method lines are copied from
+the release notes or evidence that produced each table, so each table keeps its own
+conditions; numbers from different tables are not comparable with each other.
+
+**0.87.31-beta.5** (from [`dist/beta31b5-notes.md`](dist/beta31b5-notes.md)). Method: the dev
+tree `build-static` of the same source (llama.cpp `d81235049` plus 84 patches), card 1,
+`llama-bench -p 0 -n 128 -r 5 -fa 1`; old and new binaries alternated, two rounds, 4
+processes per cell, llama-bench discards its own warmup. "old" is the same tree with the
+beta.4 q4_K rule. Each figure is one process's mean of 5.
+
+| model | placement | old tg128 t/s | new tg128 t/s |
+|---|---|---|---|
+| Qwen3-4B Q4_K_M | one card | 16.145–16.160 | 16.598–16.608 |
+| Nemotron-3.5-Bolt-E4B Q4_K_M | one card | 13.011–13.014 | 13.522–13.531 |
+
+The 35B on the host with its DFlash drafter on card 1. Method: dev tree `build-static`
+(llama.cpp `d81235049` plus 83 patches, 0073 included), Ornith-1.0-35B Q6_K `-ngl 0 -c 16384
+-t 12`, drafter Q8_0, `--spec-draft-n-max 3`, llama-server, 128 tokens greedy, 4 requests per
+server with the first discarded, N = 3 per server. The drafter's head on the host
+(`TOSH_DFLASH_HEAD_HOST=1`) against the copy on the card; two sets run at different times,
+reported separately:
+
+| set | head on the host, tok/s | head on the card, tok/s |
+|---|---|---|
+| A (2 servers per cell) | 11.69–11.85 | 12.35–12.67 |
+| B (1 server per cell) | 10.80, 10.75, 10.90 | 11.66, 11.63, 11.80 |
+
+Texts are byte-identical across cells and to plain decoding in both tables.
+
+**Threshold retuning, 0.87.31-beta.4** (from [`dist/beta31b4-notes.md`](dist/beta31b4-notes.md)).
+Method: engine `llama.cpp d81235049` plus 82 patches, AVX1 variant; llama-server sha256
+`22a21a08...`; `llama-bench -p 0 -n 128 -r 5 -fa 1`, N = 5, llama-bench discards its own
+warmup; cells alternated with a 10 s gap. "old" is `TOSH_MV_ROWS8_DISABLE=1` on the same binary.
+
+| model | placement | old tg128 t/s | new tg128 t/s |
+|---|---|---|---|
+| Qwen3-8B Q4_K_M | one card | 8.26 (0.00) | 10.20 (0.00) |
+| Qwen3-4B Q6_K | one card | 12.06 (0.00) | 13.84 (0.00) |
+| Qwen3-8B Q4_K_M | tensor split, both cards | 13.81 (0.02) | 16.39 (0.03) |
+| Qwen3-4B Q6_K | tensor split, both cards | 16.72 (0.01) | 19.10 (0.02) |
+
+Tensor split rows compare tensor split with itself only, not with layer split or one card.
+Text: llama-server, greedy, 256 tokens, two prompts. On one card (8B) and in tensor split (4B
+and 8B), old and new are byte-identical.
+
+**0.87.31-beta.3** (from [`dist/beta31b3-notes.md`](dist/beta31b3-notes.md)). Method: engine
+llama.cpp `d81235049` plus 81 patches, AVX1 variant, llama-server sha256 `4f87c3d8...`;
+`llama-bench -p 0 -n 128 -fa 1`, llama-bench discards its own warmup, cells alternated with a
+10 s gap. "old" is `TOSH_MV_ROWS8_DISABLE=1` on the same binary.
+
+| model | placement | N | old tg128 t/s | new tg128 t/s |
+|---|---|---|---|---|
+| Qwen3-8B Q4_K_M | one card | 5 | 8.26 (0.00) | 10.20 (0.00) |
+| Qwen3-4B Q6_K | one card | 5 | 12.06 (0.00) | 13.84 (0.00) |
+| Qwen3-14B Q4_K_M | layer split, both cards | 3 | 5.08 (0.00) | 6.61 (0.00) |
+
+**Baseline, 2026-09-30** (from [`docs/bench-baseline-2026-09-30.md`](docs/bench-baseline-2026-09-30.md)).
+Method: engine 0.87.11, `TOSH_NO_AVX2=1`, `GGML_METAL_CONCURRENCY_DISABLE=1`, 12 threads,
+`-ngl 99 --load-mode none -fa 1`, `TOSH_FA_AMD=1`; prompt figures are pp512. The tensor and
+layer rows are different split modes, not two speeds of one thing.
+
+| model | mode | pp512 t/s | tg t/s |
+|---|---|---:|---:|
+| Qwen3-0.6B-Q8_0 | single MTL | 368.72 | 51.06 |
+| Qwen3-4B-Q6_K | single MTL | 78.70 | 12.00 |
+| Qwen3-4B-Q6_K | tensor peer | 141.85 | 17.49 |
+| Qwen3-4B-Q6_K | tensor peer+events | 153.36 | 17.49 |
+| Qwen3-4B-Q6_K | layer dual (DEVICES=2) | 78.45 | 11.96 |
+| Qwen3-14B-Q4_K_M | layer dual (DEVICES=2) | 29.24 | 5.10 |
+
+Per-kernel bandwidth at the moved thresholds, card 1, `test-backend-ops perf`, N = 5, GB/s
+(also from `dist/beta31b4-notes.md`):
+
+| shape (k x rows) | old | new | kernel now |
+|---|---|---|---|
+| q6_K 2048 x 1792 | 28.08 | 38.77 | r8 |
+| q4_K 4096 x 8192 | 37.82 | 51.80 | r8 (was L16r8 in beta.3) |
+| q4_K 4096 x 10240 | 38.13 | 52.36 | r8 (was L16r8 in beta.3) |
+| q4_K 4096 x 12288 | 38.36 | 57.44 | L16r8 |
 
 ### Measured on this hardware
 
@@ -370,7 +483,7 @@ that replaces it.
   Apple GPU reports a 32-wide SIMD group, which switches every one of those paths off. For Apple
   Silicon, use upstream's release.
 - **The build is not notarized**, so macOS quarantines it. Right-click the app once and
-  choose **Open**, or `xattr -dr com.apple.quarantine /Applications/ToshLLM.app`. Deferred until
+  choose **Open**, or `xattr -dr com.apple.quarantine /Applications/XeonLLM.app`. Deferred until
   a rebrand; the CI pipeline is already wired for it.
 - A model whose recurrent-state tensor cannot be divided gets a layer split automatically. The
   engine reports which operation and dimensions refused, and the app says it fell back. There is
@@ -386,16 +499,18 @@ that replaces it.
 
 ## Install
 
-1. **[Download the latest `.dmg`](https://github.com/engeldlgado/toshllm/releases/latest)**, open it, and drag **ToshLLM** to Applications.
+1. **[Download the `-noavx2` `.dmg`](https://github.com/SamerKharboush/xeonllm/releases)** from this fork's releases, open it, and drag **XeonLLM** to Applications. It needs a CPU with AVX.
 2. The app is fully self-contained — the inference engines ship inside the bundle. No Homebrew, no Python, nothing else to install.
 
-> **First launch:** from 0.86.5 the app is signed with an Apple Developer ID and
-> notarized by Apple, so it opens straight away with no warning and nothing to
-> approve. On **0.86.4 and earlier** macOS blocks the first open: go to
-> **System Settings → Privacy & Security** and click **"Open Anyway"**, or run
-> `xattr -dr com.apple.quarantine /Applications/ToshLLM.app`.
+> **First launch:** fork builds are ad-hoc signed and not notarized, so macOS blocks the
+> first open: right-click the app and choose **Open**, or go to **System Settings → Privacy &
+> Security** and click **"Open Anyway"**, or run
+> `xattr -dr com.apple.quarantine /Applications/XeonLLM.app`. A previous ToshLLM install can
+> stay; XeonLLM copies its settings on first launch and leaves it working.
 
-> **Older Macs without AVX2 (e.g. Mac Pro 5,1 and other pre-2013 Xeons):** the normal build needs the AVX2 CPU instructions and will crash on launch with "illegal hardware instruction" on those machines. Each release also ships a dedicated **no-AVX2 build** — download the `.dmg` whose name ends in **`-noavx2`**. It updates on its own channel, so once installed it will only ever offer you no-AVX2 builds.
+> **CPUs without AVX2:** this fork's `-noavx2` build is the AVX1 engine (Ivy Bridge Xeons such
+> as the E5-2697 v2). In-app updates are off in fork builds; new versions come from this fork's
+> releases page.
 
 ## Requirements
 
@@ -403,14 +518,14 @@ that replaces it.
 - An Intel Mac with an AMD GPU that supports Metal (developed and tuned on an RX 6700 XT 12 GB)
 - 16 GB RAM minimum — 32 GB recommended for 35B-class MoE models
 
-> **Hackintosh note:** AMD RDNA 2 dGPUs work great with the [NootRX](https://github.com/ChefKissInc/NootRX) kext providing Metal support. ToshLLM runs on top of any working Metal setup. If your OpenCore config injects `ATY,Henbury` in `DeviceProperties`, try removing it: on an RX 6600 XT it cut generation from about 20 to 14 tokens a second ([#44](https://github.com/engeldlgado/toshllm/issues/44)). It was a workaround for macOS 12.3 and is only needed if your displays depend on it.
+> **Hackintosh note:** AMD RDNA 2 dGPUs work great with the [NootRX](https://github.com/ChefKissInc/NootRX) kext providing Metal support. XeonLLM runs on top of any working Metal setup. If your OpenCore config injects `ATY,Henbury` in `DeviceProperties`, try removing it: on an RX 6600 XT it cut generation from about 20 to 14 tokens a second ([#44](https://github.com/engeldlgado/toshllm/issues/44)). It was a workaround for macOS 12.3 and is only needed if your displays depend on it.
 
 ## Good to know
 
-ToshLLM is **beta** and under active development. It's solid for daily use, but you may still hit rough edges — please report anything you find in [Issues](https://github.com/engeldlgado/toshllm/issues) (you can export diagnostics from **Settings → Server log**). Two limitations are worth knowing up front:
+XeonLLM is **beta** and under active development. It's solid for daily use, but you may still hit rough edges — please report anything you find in [Issues](https://github.com/engeldlgado/toshllm/issues) (you can export diagnostics from **Settings → Server log**). Two limitations are worth knowing up front:
 
 - **External clients (VS Code Copilot, Cline, Continue…):** these send a fixed 15–19k-token prompt (system instructions + tool definitions) with *every* request. On GPUs without Metal Flash Attention that means minutes of prompt processing per cold request, which saturates the GPU and can thermally throttle it. Recent versions mitigate this (single slot with resumable prefill, prompt-cache reuse, inline reasoning) and more is on the way. The built-in chat isn't affected — it only sends your conversation.
-- **Vision cache:** `llama.cpp` does not support saving/restoring slots or cache-reuse while an `mmproj` is loaded. ToshLLM disables those features automatically for vision models; normal in-memory prompt caching still works.
+- **Vision cache:** `llama.cpp` does not support saving/restoring slots or cache-reuse while an `mmproj` is loaded. XeonLLM disables those features automatically for vision models; normal in-memory prompt caching still works.
 - **Large MoE models on AMD GPUs:** Mixture-of-Experts models that don't fully fit in VRAM (e.g. 26B/35B with `--n-cpu-moe` offload) cross the CPU↔GPU boundary many times per token. This used to slowly starve the AMD driver and stall generation mid-answer, but **0.81.49 fixed it** with a persistent staging buffer (see [Persistent staging](#persistent-staging-flat-sustained-generation) below) — these models now run flat and stable, confirmed on an RX 6700 XT and on a tester's dual-GPU Mac Pro, with no deadlock observed since. A **watchdog** stays in as a safety net, and dense models are still the simplest choice, but large MoE-with-offload is no longer something to avoid.
 - **Vision (image input):** works across the Qwen3-VL family (Qwen3-VL-2B, Qwen3.5-9B, Qwen3.6-14B/35B), Gemma 3 and Gemma 4. Since 0.82.0 the AMD attention kernel covers the vision encoders too (they attend bidirectionally, with no mask, at head dims 64 and 72), so describing an image costs ~250–360 MB of VRAM instead of 3.4–4.7 GB — the fallback path materializes the whole attention matrix. Note that reasoning models (Qwen 3.5/3.6) place the image description in their thinking output, which the in-app chat shows but some external clients may not.
 
@@ -419,10 +534,10 @@ ToshLLM is **beta** and under active development. It's solid for daily use, but 
 Prerequisites: Xcode Command Line Tools (`xcode-select --install`), CMake.
 
 ```bash
-git clone https://github.com/engeldlgado/toshllm
-cd toshllm
+git clone https://github.com/SamerKharboush/xeonllm
+cd xeonllm
 ./scripts/build-engines.sh      # clones llama.cpp, applies AMD patches, builds static engines
-./make-app.sh                   # builds the SwiftUI app and packages dist/ToshLLM.app
+./make-app.sh                   # builds the SwiftUI app and packages dist/XeonLLM.app
 ./scripts/make-dmg.sh           # optional: create an installable DMG (version from the VERSION file)
 ./scripts/test.sh               # optional: run the unit tests (needs Xcode for XCTest)
 ```
@@ -480,7 +595,7 @@ in 13 GiB of RAM instead of 22. Measurements and the reasoning behind each limit
 
 A recurring limitation on discrete AMD GPUs under Metal is that **Flash Attention** is gated on hardware features these GPUs report as unavailable (`simdgroup matrix multiply`), and the upstream "vec" decode kernel miscompiles on RDNA 2 (it produces garbage even though each SIMD primitive is correct in isolation). The practical consequence: any quantized KV cache **requires** Flash Attention, so on AMD that attention silently falls back to the CPU and generation collapses at longer contexts.
 
-ToshLLM ships a from-scratch **AMD attention kernel** (Metal) as a toggle next to the standard Flash Attention setting. It keeps a deliberately simple structure (one `float4` slice of the head per SIMD lane, simdgroups splitting the KV stream, online-softmax merge) that was validated bit-for-bit against a CPU reference. It supports head dims **64, 72, 128, 256 and 512** (72 covers the vision encoders, which are bidirectional and carry no mask) and KV types **f16, q8_0, q4_0** in **any keys/values combination**, so you can compress keys while keeping values at full precision, all on the GPU. The distinction the toggle makes explicit: standard Flash Attention runs on the CPU on AMD GPUs, this kernel runs on the GPU.
+XeonLLM ships a from-scratch **AMD attention kernel** (Metal) as a toggle next to the standard Flash Attention setting. It keeps a deliberately simple structure (one `float4` slice of the head per SIMD lane, simdgroups splitting the KV stream, online-softmax merge) that was validated bit-for-bit against a CPU reference. It supports head dims **64, 72, 128, 256 and 512** (72 covers the vision encoders, which are bidirectional and carry no mask) and KV types **f16, q8_0, q4_0** in **any keys/values combination**, so you can compress keys while keeping values at full precision, all on the GPU. The distinction the toggle makes explicit: standard Flash Attention runs on the CPU on AMD GPUs, this kernel runs on the GPU.
 
 The kernel splits the KV stream across as many simdgroups as the threadgroup-memory budget allows (32 for head dim 128, 16 for 256, 8 for 512 — the head dim Gemma 4's global layers use), turning the long serial decode loop into short parallel ones — a win that grows with context depth. On an RX 6700 XT with a quantized KV cache, generation at 4096 tokens of context improves from 19 → 33 t/s on an 8B (+75%) and 26 → 31 t/s on the 9B coder (+17%); at 2048 tokens, +42% and +11%. Prompt processing stays within ~3% and output is bit-for-bit unchanged.
 
@@ -567,7 +682,7 @@ Dense models gain ~4% and were never at risk (too few copies per token). The pro
 
 ### AMD GCN / Vega cards (RX 500-series, Vega, Radeon VII)
 
-These older AMD GPUs use a 64-wide wavefront ("wave64"), while llama.cpp's Metal kernels assume 32 — that mismatch produced garbage output, and GCN has no simdgroup-matrix or simdgroup-reduction units, so it can't run the stock fast paths at all. ToshLLM ships a **custom wave64 GPU path**, turned on automatically when a wave64 card is detected, and it now covers the whole model: weight decode (K-quants including Q2_K/Q3_K, the IQ and MXFP4 types, the Q4_0/Q4_1/Q5_0/Q5_1 legacy quants, the ternary Q1_0/Q2_0, bf16, and Mixture-of-Experts expert math), the reductions (softmax and normalization, plus sums, argmax and the SSM scan that Mamba-style models and speculative decoding need), the Gated Delta Net layers the Qwen3.5/3.6 family is built on, **attention** (the AMD kernel has wave64 variants since 0.81.55, quantized KV included, and since 0.83.10 prompt processing uses the blocked kernel instead of decomposing attention), and the prompt matmul for both dense and expert layers.
+These older AMD GPUs use a 64-wide wavefront ("wave64"), while llama.cpp's Metal kernels assume 32 — that mismatch produced garbage output, and GCN has no simdgroup-matrix or simdgroup-reduction units, so it can't run the stock fast paths at all. XeonLLM ships a **custom wave64 GPU path**, turned on automatically when a wave64 card is detected, and it now covers the whole model: weight decode (K-quants including Q2_K/Q3_K, the IQ and MXFP4 types, the Q4_0/Q4_1/Q5_0/Q5_1 legacy quants, the ternary Q1_0/Q2_0, bf16, and Mixture-of-Experts expert math), the reductions (softmax and normalization, plus sums, argmax and the SSM scan that Mamba-style models and speculative decoding need), the Gated Delta Net layers the Qwen3.5/3.6 family is built on, **attention** (the AMD kernel has wave64 variants since 0.81.55, quantized KV included, and since 0.83.10 prompt processing uses the blocked kernel instead of decomposing attention), and the prompt matmul for both dense and expert layers.
 
 The gains landed in three steps. `mul_mm_id` in 0.81.67 took a 35B MoE's prompt speed from 167 to **285 t/s (+70%)** on a Vega II. Then 0.83.9 moved the remaining quant types off the CPU: on a Radeon RX Vega 64, Qwen3 4B Q3_K_M went from **3.96 to 44 t/s** of generation, and gpt-oss 20B reached 18.2 t/s generation / 191 t/s prompt with the experts of 16 layers on the CPU. And 0.83.10 brought long prompts up on the same card, Qwen3 4B from **295 to 457 t/s at 8k of context** and Llama 3.2 1B from 917 to 1553, with identical perplexity.
 
@@ -606,12 +721,12 @@ Testers with several cards go much bigger: a **122B-A10B** MoE (Q5_K_M) across f
 
 ### Share yours from the app
 
-From 0.82.3 you can publish your numbers straight from **Benchmarks → Share with the community**. It runs the standard workload (`pp512` / `tg128`, three repetitions), shows you a summary plus the exact JSON, and only after you confirm submits it to [toshllm.com](https://toshllm.com). No GitHub or account is needed... each install signs its own submissions with a key kept in your Keychain, and you can reset that identity anytime. ToshLLM sends only the model identity, hardware description, configuration and the measurements... never local paths, account names, or chat content. Community results stay labeled until reproduced, and the project's own verified runs are marked separately. Sharing your numbers in an issue still works too.
+From 0.82.3 you can publish your numbers straight from **Benchmarks → Share with the community**. It runs the standard workload (`pp512` / `tg128`, three repetitions), shows you a summary plus the exact JSON, and only after you confirm submits it to [toshllm.com](https://toshllm.com). No GitHub or account is needed... each install signs its own submissions with a key kept in your Keychain, and you can reset that identity anytime. XeonLLM sends only the model identity, hardware description, configuration and the measurements... never local paths, account names, or chat content. Community results stay labeled until reproduced, and the project's own verified runs are marked separately. Sharing your numbers in an issue still works too.
 
 ## Architecture
 
 ```
-ToshLLM.app
+XeonLLM.app
 ├── SwiftUI app (this repo) — UI, server lifecycle, downloads, estimator, benchmarks
 └── Resources/
     ├── bin/        llama-server + llama-bench + llama-perplexity + the image engine (AMD-patched, static)
@@ -641,7 +756,7 @@ Components bundled under their own licenses are listed in [THIRD_PARTY_NOTICES.m
 
 ## Support the project
 
-ToshLLM is free and open source, built in the open for the Mac AMD community. If it's useful to you, sponsoring keeps it independent and moving forward.
+XeonLLM is free and open source, built in the open for the Mac AMD community. If it's useful to you, sponsoring keeps it independent and moving forward.
 
 ### 💜 [Become a sponsor](https://youpay.me/engeldlgado/bio)
 
@@ -654,19 +769,21 @@ Prefer crypto?
 
 ---
 
-## ToshLLM en español
+## XeonLLM en español
 
 **Ejecuta modelos de lenguaje grandes localmente en Macs Intel con GPU AMD.** Aceleración Metal. Sin nube, sin cuentas, sin costos por token.
 
-### [⬇️ Descarga la última versión](https://github.com/engeldlgado/toshllm/releases/latest) · [📝 Cambios](CHANGELOG.md) · [💜 Apoya el proyecto](#apoya-el-proyecto)
+### [⬇️ Descarga XeonLLM](https://github.com/SamerKharboush/xeonllm/releases) · [📝 Cambios](CHANGELOG.md) · [💜 Apoya el proyecto](#apoya-el-proyecto)
 
-### ¿Qué es ToshLLM?
+### ¿Qué es XeonLLM?
 
-ToshLLM te permite ejecutar modelos LLM modernos **completamente en tu propio Mac** — tus chats nunca salen del equipo, no hay cuentas y no pagas por token.
+XeonLLM te permite ejecutar modelos LLM modernos **completamente en tu propio Mac** — tus chats nunca salen del equipo, no hay cuentas y no pagas por token.
+
+XeonLLM es un fork de [ToshLLM](https://github.com/engeldlgado/toshllm) de Engelbert Delgado (GPL-3.0), orientado al Mac Pro 2013 (Xeon con AVX sin AVX2, dos FirePro D700): motor AVX1, kernels Metal de 64 lanes para GCN, reparto entre las dos tarjetas, la regla de colocación que lleva al host los modelos que no caben en VRAM y DFlash. Las actualizaciones dentro de la app están desactivadas. Los detalles y las mediciones están en la sección en inglés [Fork changes](#fork-changes).
 
 Casi todas las herramientas de LLM locales en macOS apuntan a Apple Silicon; los Macs Intel con GPU AMD dedicada (incluidos los Hackintosh) quedan fuera: los motores estándar producen **texto corrupto** en estas GPUs y leen los pesos por PCIe a una fracción de la velocidad posible.
 
-**ToshLLM lo resuelve.** Empaqueta `llama.cpp` con parches específicos para AMD dentro de una app nativa SwiftUI, de modo que una tarjeta como la RX 6700 XT pasa de inservible a realmente rápida (Qwen3-8B: de 0.6–2.6 t/s a ~61 t/s). Al abrirla detecta tu hardware y te recomienda modelos que correrán bien, sin adivinar.
+**ToshLLM, el proyecto original, lo resuelve.** Empaqueta `llama.cpp` con parches específicos para AMD dentro de una app nativa SwiftUI, de modo que una tarjeta como la RX 6700 XT pasa de inservible a realmente rápida (Qwen3-8B: de 0.6–2.6 t/s a ~61 t/s). Al abrirla detecta tu hardware y te recomienda modelos que correrán bien, sin adivinar.
 
 ### Funciones
 
@@ -698,13 +815,13 @@ Funciones nuevas, aún en validación — actívalas en Ajustes, pero pueden ten
 - **Recordar conversaciones (caché en disco)** — guarda la caché KV de cada chat, así al reabrirlo o reiniciar la app no se reprocesa el prompt; la restauración es byte-exacta y un chat de 8.6k tokens vuelve en 0.9 s en vez de 24.8 s. También pre-calienta la caché para clientes externos (VS Code/Cline), evitando el prefill frío de varios minutos en la primera petición.
 - **Generación de vídeo (experimental, primera versión)** — un modo Vídeo junto a Chat e Imágenes, sobre el mismo motor stable-diffusion.cpp, con Wan 2.1/2.2, LTX-2 y HunyuanVideo. Léelo antes de descargar 7 GB: unos segundos de vídeo tardan minutos, 49 fotogramas a 480p ya llenan una tarjeta de 12 GB y **solo entra Wan 2.1 1.3B**; los demás piden 24 GB o más. Pedir más fotogramas o más píxeles de los que caben falla, no degrada. El clip vuelve como fotogramas que puedes recorrer, y se exporta a mp4. El motor está medido; la interfaz es nueva y los valores por defecto van a cambiar.
 - **Repartir el modelo entre varias GPUs** — validado en un equipo con dos GPUs (RX 6900 XT + RX 6800 XT por eGPU): un MoE de 35B con todos los expertos en VRAM generó a ~3× la velocidad de una sola GPU con offload, y hay testers corriendo modelos de 122B repartidos en cuatro tarjetas. Puedes elegir el conjunto exacto de tarjetas por servidor; sigue marcado experimental mientras llegan más configuraciones.
-- **Tarjetas AMD GCN / Vega (RX 500, Vega, Radeon VII)** — usan wavefront de 64 (los kernels de Metal asumen 32), lo que producía salida corrupta. ToshLLM incluye un **path wave64 en GPU** que se activa solo al detectar una de estas tarjetas y ya cubre el modelo completo: decode de pesos (K-quants incluidos Q2_K/Q3_K, tipos IQ y MXFP4, quants legacy, ternarios Q1_0/Q2_0, bf16 y expertos MoE), las reducciones (softmax, normalización, sumas, argmax y el scan SSM), las capas Gated Delta Net de la familia Qwen3.5/3.6, la **atención** (variantes wave64 desde 0.81.55, con KV cuantizado, y desde 0.83.10 el prompt usa el kernel por bloques) y el matmul de prompt de capas densas y de expertos. En una Vega 64: Qwen3 4B Q3_K_M pasó de **3.96 a 44 t/s** de generación en 0.83.9, y sus prompts largos de **295 a 457 t/s** a 8k de contexto en 0.83.10. Un tester midió en una RX 580 un modelo K-quant pasar de **1.3 a ~51 t/s**, coherente. Recomendado: modelo K-quant, Flash Attention en **ON** y KV en f16. Es no-op verificado en RDNA (wave32); en GCN/Vega real sigue validándose con testers.
+- **Tarjetas AMD GCN / Vega (RX 500, Vega, Radeon VII)** — usan wavefront de 64 (los kernels de Metal asumen 32), lo que producía salida corrupta. XeonLLM incluye un **path wave64 en GPU** que se activa solo al detectar una de estas tarjetas y ya cubre el modelo completo: decode de pesos (K-quants incluidos Q2_K/Q3_K, tipos IQ y MXFP4, quants legacy, ternarios Q1_0/Q2_0, bf16 y expertos MoE), las reducciones (softmax, normalización, sumas, argmax y el scan SSM), las capas Gated Delta Net de la familia Qwen3.5/3.6, la **atención** (variantes wave64 desde 0.81.55, con KV cuantizado, y desde 0.83.10 el prompt usa el kernel por bloques) y el matmul de prompt de capas densas y de expertos. En una Vega 64: Qwen3 4B Q3_K_M pasó de **3.96 a 44 t/s** de generación en 0.83.9, y sus prompts largos de **295 a 457 t/s** a 8k de contexto en 0.83.10. Un tester midió en una RX 580 un modelo K-quant pasar de **1.3 a ~51 t/s**, coherente. Recomendado: modelo K-quant, Flash Attention en **ON** y KV en f16. Es no-op verificado en RDNA (wave32); en GCN/Vega real sigue validándose con testers.
 
 ### Instalación
 
-Descarga el `.dmg` desde [Releases](https://github.com/engeldlgado/toshllm/releases/latest), ábrelo y arrastra **ToshLLM** a Aplicaciones. Todo viene incluido — sin Homebrew, sin Python.
+Descarga el `.dmg` `-noavx2` desde las [releases de este fork](https://github.com/SamerKharboush/xeonllm/releases) (necesita una CPU con AVX), ábrelo y arrastra **XeonLLM** a Aplicaciones. Todo viene incluido — sin Homebrew, sin Python.
 
-> **Primer arranque:** desde la 0.86.5 la app va firmada con un Apple Developer ID y notarizada por Apple, así que se abre directamente, sin avisos ni nada que aprobar. En la **0.86.4 y anteriores** macOS bloquea la primera apertura: ve a **Ajustes del Sistema → Privacidad y Seguridad** y pulsa **"Abrir igualmente"**, o ejecuta `xattr -dr com.apple.quarantine /Applications/ToshLLM.app`.
+> **Primer arranque:** las builds del fork van firmadas ad hoc y sin notarizar, así que macOS bloquea la primera apertura: haz clic derecho y elige **Abrir**, o ve a **Ajustes del Sistema → Privacidad y Seguridad** y pulsa **"Abrir igualmente"**, o ejecuta `xattr -dr com.apple.quarantine /Applications/XeonLLM.app`.
 
 > **Macs antiguos sin AVX2 (p. ej. Mac Pro 5,1 y otros Xeon anteriores a 2013):** el build normal necesita las instrucciones AVX2 y arranca con "illegal hardware instruction" en esas máquinas. Cada versión publica además un **build sin AVX2** — descarga el `.dmg` cuyo nombre termina en **`-noavx2`**. Se actualiza por su propio canal, así que una vez instalado solo te ofrecerá builds sin AVX2.
 
@@ -714,11 +831,11 @@ Descarga el `.dmg` desde [Releases](https://github.com/engeldlgado/toshllm/relea
 - **Hackintosh:** las GPUs AMD RDNA 2 funcionan muy bien con el kext [NootRX](https://github.com/ChefKissInc/NootRX). Si tu configuración de OpenCore inyecta `ATY,Henbury` en `DeviceProperties`, prueba a quitarlo: en una RX 6600 XT bajaba la generación de unos 20 a 14 tokens por segundo ([#44](https://github.com/engeldlgado/toshllm/issues/44)). Era un parche para macOS 12.3 y solo hace falta si tus pantallas dependen de él.
 - **Beta:** funciona para uso diario pero pueden aparecer detalles por pulir; reporta lo que encuentres en [Issues](https://github.com/engeldlgado/toshllm/issues) (exporta diagnósticos desde Ajustes → Registro del servidor).
 - **Limitaciones conocidas:** los clientes externos (VS Code, Cline…) envían un prompt fijo de 15-19k tokens en cada petición, lo que en frío satura la GPU varios minutos (el chat integrado no se ve afectado). Los modelos MoE grandes con offload antes ahogaban al driver AMD y se estancaban a mitad de generación; **0.81.49 lo solucionó** con un buffer de staging persistente y ahora corren estables y planos (confirmado en RX 6700 XT y en el Mac Pro de dos GPUs de un tester). Queda un watchdog como red de seguridad.
-- **Caché con visión:** `llama.cpp` no permite guardar/restaurar slots ni usar cache-reuse mientras hay un `mmproj` cargado. ToshLLM desactiva esas funciones automáticamente para modelos de visión; la caché normal en memoria sigue funcionando.
+- **Caché con visión:** `llama.cpp` no permite guardar/restaurar slots ni usar cache-reuse mientras hay un `mmproj` cargado. XeonLLM desactiva esas funciones automáticamente para modelos de visión; la caché normal en memoria sigue funcionando.
 
 ### Apoya el proyecto
 
-ToshLLM es libre y de código abierto, hecho para la comunidad Mac AMD. Si te resulta útil, patrocinarlo lo mantiene independiente y avanzando.
+XeonLLM es libre y de código abierto, hecho para la comunidad Mac AMD. Si te resulta útil, patrocinarlo lo mantiene independiente y avanzando.
 
 #### 💜 [Conviértete en patrocinador](https://youpay.me/engeldlgado/bio)
 

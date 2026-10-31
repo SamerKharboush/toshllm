@@ -1,4 +1,4 @@
-// ToshLLM - run LLMs locally on Intel Macs with AMD GPUs
+// XeonLLM - run LLMs (fork of ToshLLM) locally on Intel Macs with AMD GPUs
 // Copyright (C) 2026 Engelbert Delgado <engeldlgado@gmail.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -185,7 +185,7 @@ private struct MCPServerEditor: View {
                         SettingsRow(icon: "point.3.connected.trianglepath.dotted",
                                     title: loc.t("Transporte", "Transport"),
                                     help: transportHelp) {
-                            ToshDropdown(selection: $server.transport,
+                            XeonDropdown(selection: $server.transport,
                                          options: transportOptions,
                                          width: 310,
                                          maximumListHeight: 250)
@@ -287,7 +287,7 @@ private struct MCPServerEditor: View {
         .background(WorkspaceStyle.surface)
     }
 
-    private var transportOptions: [ToshDropdown<MCPTransport>.Option] {
+    private var transportOptions: [XeonDropdown<MCPTransport>.Option] {
         [
             .init(value: .automatic, title: loc.t("Automático", "Automatic"),
                   subtitle: loc.t("Detecta el protocolo", "Detects the protocol"), systemImage: "wand.and.stars"),

@@ -1,4 +1,4 @@
-// ToshLLM - run LLMs locally on Intel Macs with AMD GPUs
+// XeonLLM - run LLMs (fork of ToshLLM) locally on Intel Macs with AMD GPUs
 // Copyright (C) 2026 Engelbert Delgado <engeldlgado@gmail.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -14,7 +14,7 @@ struct WorkspaceSidebar: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 12) {
-                ToshLLMLogo(size: 38)
+                XeonLLMLogo(size: 38)
                 Text(AppInfo.name).font(.system(size: 21, weight: .semibold))
             }
             .padding(.horizontal, 24).padding(.top, 20).padding(.bottom, 26)

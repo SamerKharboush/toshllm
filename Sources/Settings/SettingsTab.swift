@@ -1,4 +1,4 @@
-// ToshLLM - run LLMs locally on Intel Macs with AMD GPUs
+// XeonLLM - run LLMs (fork of ToshLLM) locally on Intel Macs with AMD GPUs
 // Copyright (C) 2026 Engelbert Delgado <engeldlgado@gmail.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -391,7 +391,7 @@ struct SettingsView: View {
                                 title: loc.t("Motor de inferencia", "Inference engine"),
                                 help: loc.t("Integrado: llama.cpp oficial con los kernels Metal para AMD, recomendado. Externo: cualquier llama-server tuyo.",
                                             "Bundled: official llama.cpp with the Metal kernels for AMD, recommended. External: any llama-server of yours.")) {
-                        ToshDropdown(selection: engineSelection, options: [
+                        XeonDropdown(selection: engineSelection, options: [
                             .init(value: "bundled", title: loc.t("Integrado (oficial)", "Bundled (official)")),
                             .init(value: "custom", title: loc.t("Externo…", "External…"))
                         ], width: 200)
@@ -474,9 +474,9 @@ struct SettingsView: View {
                 SettingsRowGroup {
                     SettingsRow(icon: "globe",
                                 title: loc.t("Idioma", "Language"),
-                                help: loc.t("Idioma de toda la interfaz de ToshLLM. Los idiomas aportados por la comunidad aparecen automáticamente.",
-                                            "Language for the entire ToshLLM interface. Community-contributed languages appear here automatically.")) {
-                        ToshDropdown(selection: $loc.language, options: loc.availableLanguages.map {
+                                help: loc.t("Idioma de toda la interfaz de XeonLLM. Los idiomas aportados por la comunidad aparecen automáticamente.",
+                                            "Language for the entire XeonLLM interface. Community-contributed languages appear here automatically.")) {
+                        XeonDropdown(selection: $loc.language, options: loc.availableLanguages.map {
                             .init(value: $0, title: loc.displayName($0))
                         })
                     }
@@ -484,7 +484,7 @@ struct SettingsView: View {
                                 title: loc.t("Color de la app", "App color"),
                                 help: loc.t("Color de marca de botones, iconos y controles de toda la app. Independiente del color de acento del sistema.",
                                             "Brand color for buttons, icons and controls across the app. Independent from the system accent color.")) {
-                        ToshDropdown(selection: $appAccentRaw, options: AppTheme.palette.map {
+                        XeonDropdown(selection: $appAccentRaw, options: AppTheme.palette.map {
                             .init(value: $0.key, title: AppTheme.label($0.key, loc),
                                   swatch: AppTheme.swatchImage($0.color))
                         })
@@ -499,7 +499,7 @@ struct SettingsView: View {
                                 title: loc.t("VRAM de la GPU en la barra", "GPU VRAM in the menu bar"),
                                 help: loc.t("Dónde mostrar el uso de VRAM: junto al icono (porcentaje agregado) o como barras por GPU al abrir el panel.",
                                             "Where to show VRAM usage: next to the icon (aggregate percentage) or as per-GPU bars when the panel opens.")) {
-                        ToshDropdown(selection: $menuBarGPU, options: [
+                        XeonDropdown(selection: $menuBarGPU, options: [
                             .init(value: "off", title: loc.t("Oculta", "Hidden")),
                             .init(value: "icon", title: loc.t("En el icono", "In the icon")),
                             .init(value: "panel", title: loc.t("En el panel", "In the panel"))
@@ -508,8 +508,8 @@ struct SettingsView: View {
                     }
                     SettingsRow(icon: "play.circle",
                                 title: loc.t("Iniciar servidor al abrir la app", "Start server on app launch"),
-                                help: loc.t("Arranca automáticamente el último modelo configurado al abrir ToshLLM.",
-                                            "Automatically starts the last configured model when ToshLLM opens.")) {
+                                help: loc.t("Arranca automáticamente el último modelo configurado al abrir XeonLLM.",
+                                            "Automatically starts the last configured model when XeonLLM opens.")) {
                         SettingsToggle(isOn: $autoStart)
                     }
                     if AppInfo.updatesEnabled {
@@ -528,8 +528,8 @@ struct SettingsView: View {
                     }
                     SettingsRow(icon: "network",
                                 title: loc.t("Descubrible en red local", "Discoverable on local network"),
-                                help: loc.t("Hace que el servidor escuche en la red local y lo anuncia con Bonjour como 'ToshLLM API'. Actívalo solo en redes confiables; reinicia el servidor si está activo.",
-                                            "Makes the server listen on the local network and advertises it with Bonjour as 'ToshLLM API'. Enable only on trusted networks; restarts the server if it's running.")) {
+                                help: loc.t("Hace que el servidor escuche en la red local y lo anuncia con Bonjour como 'XeonLLM API'. Actívalo solo en redes confiables; reinicia el servidor si está activo.",
+                                            "Makes the server listen on the local network and advertises it with Bonjour as 'XeonLLM API'. Enable only on trusted networks; restarts the server if it's running.")) {
                         SettingsToggle(isOn: Binding(get: { localNetworkDiscovery },
                                                      set: setDiscoverable))
                     }
@@ -633,7 +633,7 @@ struct SettingsView: View {
                                 "Off: MoE models use the standard expert offload with your settings below. On: the engine uses the GPU, RAM and the model file itself to fit the model; it keeps the most used experts in VRAM and in RAM what the machine can give right now, picks the KV and batch size, and when nothing fits safely it does not load the model and says why."))
                 if dynamicMoeEnabled {
                     LabeledContent(loc.t("Ejecución", "Execution")) {
-                        ToshDropdown(selection: $executionMode, options: [
+                        XeonDropdown(selection: $executionMode, options: [
                             .init(value: "auto", title: loc.t("Auto", "Auto")),
                             .init(value: "full", title: loc.t("GPU completa (manual)", "Full GPU (manual)")),
                             .init(value: "dmoe", title: "Dynamic MoE"),
@@ -644,7 +644,7 @@ struct SettingsView: View {
                     .infoTip(loc.t("Auto elige solo. GPU completa carga todo en la GPU aunque deje poco margen (para pruebas). Dynamic MoE lo fuerza en modelos MoE. Expertos en CPU usa el ajuste manual de ncmoe de abajo.",
                                 "Auto decides on its own. Full GPU loads everything on the GPU even with little headroom (for testing). Dynamic MoE forces it on MoE models. Legacy offload uses the manual ncmoe setting below."))
                     LabeledContent(loc.t("KV cache", "KV cache")) {
-                        ToshDropdown(selection: $autoKVMode, options: [
+                        XeonDropdown(selection: $autoKVMode, options: [
                             .init(value: "auto", title: loc.t("Auto", "Auto")),
                             .init(value: "f16", title: "F16"),
                             .init(value: "q8_0", title: "Q8"),
@@ -663,7 +663,7 @@ struct SettingsView: View {
 
             Section(loc.t("GPU y memoria", "GPU & memory")) {
                 LabeledContent(loc.t("GPU (Metal)", "GPU (Metal)")) {
-                    ToshDropdown(selection: $gpuIndex, options: [.init(value: -1, title: loc.t("Predeterminada", "Default"))]
+                    XeonDropdown(selection: $gpuIndex, options: [.init(value: -1, title: loc.t("Predeterminada", "Default"))]
                         + hardware.gpus.map {
                             .init(value: $0.index, title: "\($0.index): \($0.name) · \($0.vramGB) GB")
                         }, width: 220)
@@ -683,7 +683,7 @@ struct SettingsView: View {
                                     "Splits the model across all detected GPUs (--split-mode) instead of using one, e.g. to load a model that doesn't fit on a single card. Overrides the picker above."))
                     if multiGPU && hardware.gpus.count > 2 && splitSelection.count < 2 {
                         LabeledContent(loc.t("GPUs a usar", "GPUs to use")) {
-                            ToshDropdown(selection: $multiGPUCount, options: [.init(value: 0, title: loc.t("Todas (%@)", "All (%@)", "\(hardware.gpus.count)"))]
+                            XeonDropdown(selection: $multiGPUCount, options: [.init(value: 0, title: loc.t("Todas (%@)", "All (%@)", "\(hardware.gpus.count)"))]
                                 + (2...hardware.gpus.count).map { .init(value: $0, title: "\($0)") }, width: 130)
                         }
                         .settingsGlyph("number")
@@ -718,7 +718,7 @@ struct SettingsView: View {
                             .foregroundStyle(.orange)
                             .labelStyle(.titleAndIcon)
                         LabeledContent(loc.t("Cómo repartirlo", "How to split it")) {
-                            ToshDropdown(selection: $splitMode, options: [
+                            XeonDropdown(selection: $splitMode, options: [
                                 .init(value: "layer", title: loc.t("Por capas", "By layers")),
                                 .init(value: "tensor", title: loc.t("Por tensores", "By tensors"))
                             ])
@@ -728,7 +728,7 @@ struct SettingsView: View {
                                     "By layers: each GPU keeps whole layers and they take turns. Fastest at generating, and the best tested. By tensors: both GPUs work at once inside every layer, so they read the prompt much faster, but they sync up on every layer and that wait costs the same on each generated token: on a small model it eats the gain, on a big one (tens of GB) it wins at both."))
                         if splitMode == "tensor" && !splitGroupOptions.isEmpty {
                             LabeledContent(loc.t("TensorMesh: ancho de la malla", "TensorMesh: mesh width")) {
-                                ToshDropdown(selection: $splitGroupSize, options: [.init(value: 0, title: loc.t("Sin malla", "No mesh"))]
+                                XeonDropdown(selection: $splitGroupSize, options: [.init(value: 0, title: loc.t("Sin malla", "No mesh"))]
                                     + splitGroupOptions.map { .init(value: $0, title: "\($0)") }, width: 130)
                             }
                             .settingsGlyph("grid")
@@ -808,7 +808,7 @@ struct SettingsView: View {
                     .infoTip(loc.t("Impide que macOS mueva el modelo a swap o lo comprima: estabilidad de velocidad constante. Útil con modelos MoE grandes; requiere RAM suficiente.",
                                 "Prevents macOS from swapping or compressing the model: consistent speed. Useful with large MoE models; requires enough free RAM."))
                 LabeledContent(loc.t("Caché de prompts en RAM", "Prompt cache in RAM")) {
-                    ToshDropdown(selection: $cacheRAM, options: [
+                    XeonDropdown(selection: $cacheRAM, options: [
                         .init(value: 0, title: loc.t("Desactivada", "Disabled")),
                         .init(value: 1024, title: "1 GB"), .init(value: 2048, title: "2 GB"),
                         .init(value: 4096, title: "4 GB"), .init(value: 8192, title: "8 GB")
@@ -819,7 +819,7 @@ struct SettingsView: View {
                             "Extra RAM where the engine remembers recent conversations to avoid reprocessing them when switching chats or clients. Unlimited, the engine uses up to 8 GB: next to a large model that pushes the machine into swap and speed degrades over time. 2 GB is a good balance."))
 
                 LabeledContent(loc.t("Tope de tokens por imagen", "Image token cap")) {
-                    ToshDropdown(selection: $imageMaxTokens, options: [
+                    XeonDropdown(selection: $imageMaxTokens, options: [
                         .init(value: 0, title: loc.t("Del modelo", "Model's")),
                         .init(value: 4096, title: "4096"), .init(value: 2048, title: "2048"),
                         .init(value: 1024, title: "1024")
@@ -834,7 +834,7 @@ struct SettingsView: View {
             if settingsDestination == .inference {
             Section {
                 LabeledContent(loc.t("Contexto", "Context")) {
-                    ToshDropdown(selection: $ctx, options: ServerSettings.contextChoices(modelPath: modelPath).map {
+                    XeonDropdown(selection: $ctx, options: ServerSettings.contextChoices(modelPath: modelPath).map {
                         .init(value: $0, title: "\(ServerSettings.contextLabel($0)) tokens")
                     })
                 }
@@ -849,7 +849,7 @@ struct SettingsView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 LabeledContent(loc.t("KV cache: claves (-ctk)", "KV cache: keys (-ctk)")) {
-                    ToshDropdown(selection: $cacheTypeK, options: availableKVTypes.map { .init(value: $0, title: $0) }, width: 120)
+                    XeonDropdown(selection: $cacheTypeK, options: availableKVTypes.map { .init(value: $0, title: $0) }, width: 120)
                 }
                 .settingsGlyph("key")
                 .infoTip(amdFlashActive
@@ -858,7 +858,7 @@ struct SettingsView: View {
                     : loc.t("Cuantización de las claves del KV cache. En GPU AMD (sin el kernel Flash Attention AMD): q8_0 reduce las claves a la mitad casi sin costo de velocidad (recomendado), dejando los valores en f16; q4_0 a un cuarto.",
                             "Quantization for KV cache keys. On AMD GPUs (without the AMD Flash Attention kernel): q8_0 halves key memory at almost no speed cost (recommended), keeping values at f16; q4_0 quarters it."))
                 LabeledContent(loc.t("KV cache: valores (-ctv)", "KV cache: values (-ctv)")) {
-                    ToshDropdown(selection: $cacheTypeV, options: availableKVTypes.map { .init(value: $0, title: $0) }, width: 120)
+                    XeonDropdown(selection: $cacheTypeV, options: availableKVTypes.map { .init(value: $0, title: $0) }, width: 120)
                 }
                 .settingsGlyph("number.square")
                 .infoTip(amdFlashActive
@@ -928,7 +928,7 @@ struct SettingsView: View {
                                 String(hardware.logicalCores), String(hardware.physicalCores)))
                     .onAppear { if threads > hardware.physicalCores { threads = max(0, hardware.physicalCores) } }
                 LabeledContent(loc.t("Flash Attention estándar (CPU)", "Standard Flash Attention (CPU)")) {
-                    ToshDropdown(selection: $flashAttn, options: ["auto", "on", "off"].map { .init(value: $0, title: $0) }, width: 120)
+                    XeonDropdown(selection: $flashAttn, options: ["auto", "on", "off"].map { .init(value: $0, title: $0) }, width: 120)
                 }
                 .settingsGlyph("bolt.horizontal.circle")
                 .disabled(amdFlashActive || kvNeedsFlashAttention)
@@ -965,7 +965,7 @@ struct SettingsView: View {
                                     "For MoE models with experts in RAM (ncmoe > 0): uploads expert weights to the GPU through a parallel Metal queue, overlapping the upload with compute. Measured 1.8×-4.4× prompt speed (35B, gemma-4-26B, gpt-oss) at no generation cost; the first prompt after loading the model is slightly slower while buffers warm up."))
                     if routerMode || ServerSettings.modelIsMoE(at: modelPath) {
                         LabeledContent(loc.t("Micro-lote del prompt", "Prompt micro-batch")) {
-                            ToshDropdown(selection: $ubatch, options: ServerSettings.ubatchOptions.map {
+                            XeonDropdown(selection: $ubatch, options: ServerSettings.ubatchOptions.map {
                                 .init(value: $0, title: ServerSettings.ubatchLabel($0, loc: loc))
                             })
                         }
@@ -975,7 +975,7 @@ struct SettingsView: View {
                     }
                 }
                 LabeledContent(loc.t("Peticiones simultáneas", "Concurrent requests")) {
-                    ToshDropdown(selection: $parallelSlots, options: [
+                    XeonDropdown(selection: $parallelSlots, options: [
                         .init(value: 1, title: loc.t("1 (recomendado)", "1 (recommended)")),
                         .init(value: 2, title: "2"), .init(value: 4, title: "4"),
                         .init(value: 0, title: "Auto")
@@ -996,7 +996,7 @@ struct SettingsView: View {
                     .infoTip(loc.t("Envía el razonamiento dentro de la respuesta (<think>…) en vez del campo aparte reasoning_content. Actívalo si un cliente externo (VS Code, plugins) se queda 'pensando' sin mostrar nada. El chat de la app entiende ambos formatos.",
                                 "Sends the reasoning inline in the response (<think>…) instead of the separate reasoning_content field. Enable it if an external client (VS Code, plugins) appears stuck 'thinking' showing nothing. The in-app chat understands both formats."))
                 LabeledContent(loc.t("Razonamiento por defecto", "Default reasoning")) {
-                    ToshDropdown(selection: $serverDefaultReasoning, options: [
+                    XeonDropdown(selection: $serverDefaultReasoning, options: [
                         .init(value: "model", title: loc.t("El del modelo", "Model default")),
                         .init(value: "off", title: loc.t("Desactivado", "Off")),
                         .init(value: "low", title: loc.t("Bajo", "Low")),
@@ -1008,7 +1008,7 @@ struct SettingsView: View {
                 .infoTip(loc.t("Nivel de razonamiento para las peticiones que no eligen uno, como las de VS Code o muchos agentes. Una petición que lo indica siempre gana. Los niveles solo cambian algo en modelos cuya plantilla los acepta; «Desactivado» funciona en todos los que razonan.",
                             "Reasoning level for requests that do not choose one, such as those from VS Code or many agents. A request that sets it always wins. Levels only change anything on models whose template accepts them; Off works on every reasoning model."))
                 LabeledContent(loc.t("Longitud máxima por defecto", "Default response limit")) {
-                    ToshDropdown(selection: $serverDefaultMaxTokens, options: [
+                    XeonDropdown(selection: $serverDefaultMaxTokens, options: [
                         .init(value: -1, title: loc.t("Como el chat", "Same as the chat")),
                         .init(value: 0, title: loc.t("Sin límite", "No limit")),
                         .init(value: 2048, title: "2K"), .init(value: 4096, title: "4K"),

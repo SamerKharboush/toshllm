@@ -1,4 +1,4 @@
-// ToshLLM - run LLMs locally on Intel Macs with AMD GPUs
+// XeonLLM - run LLMs (fork of ToshLLM) locally on Intel Macs with AMD GPUs
 // Copyright (C) 2026 Engelbert Delgado <engeldlgado@gmail.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -30,7 +30,7 @@ final class AudioRecorderController: ObservableObject {
             return
         }
         let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("ToshLLM-recording-\(UUID().uuidString).wav")
+            .appendingPathComponent("XeonLLM-recording-\(UUID().uuidString).wav")
         let settings: [String: Any] = [
             AVFormatIDKey: kAudioFormatLinearPCM,
             AVSampleRateKey: 16_000,

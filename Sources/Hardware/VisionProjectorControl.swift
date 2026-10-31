@@ -1,4 +1,4 @@
-// ToshLLM - run LLMs locally on Intel Macs with AMD GPUs
+// XeonLLM - run LLMs (fork of ToshLLM) locally on Intel Macs with AMD GPUs
 // Copyright (C) 2026 Engelbert Delgado <engeldlgado@gmail.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -45,7 +45,7 @@ struct VisionProjectorControl: View {
 
     private func detailRow(override: String?, current: String, mismatch: Bool, candidates: [String]) -> some View {
         let selected = override == "" ? "off" : (override ?? "auto")
-        var options: [ToshDropdown<String>.Option] = [
+        var options: [XeonDropdown<String>.Option] = [
             .init(value: "auto", title: loc.t("Automático", "Automatic"), subtitle: current, systemImage: "wand.and.stars"),
             .init(value: "off", title: loc.t("Solo texto", "Text only"), subtitle: loc.t("No cargar proyector", "Do not load a projector"), systemImage: "eye.slash")
         ]
@@ -59,7 +59,7 @@ struct VisionProjectorControl: View {
         }
         options.append(.init(value: "choose", title: loc.t("Elegir archivo…", "Choose file…"),
                              subtitle: loc.t("Selecciona un archivo mmproj GGUF", "Select an mmproj GGUF file"), systemImage: "folder"))
-        return ToshDropdown(selection: Binding(get: { selected }, set: { value in
+        return XeonDropdown(selection: Binding(get: { selected }, set: { value in
             switch value {
             case "off": set("")
             case "auto": set(nil)
